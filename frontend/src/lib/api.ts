@@ -35,6 +35,8 @@ export interface Perp {
   symbol: string;
   tradingEnabled: boolean;
   samplingEnabled: boolean;
+  decisionFrequencySeconds: number;
+  samplingFrequencySeconds: number;
 }
 
 export async function fetchPerps(): Promise<Perp[]> {
@@ -46,9 +48,9 @@ export async function fetchPerps(): Promise<Perp[]> {
   return body.perps;
 }
 
-export async function updatePerpToggles(
+export async function updatePerpConfig(
   symbol: string,
-  patch: Partial<Pick<Perp, "tradingEnabled" | "samplingEnabled">>,
+  patch: Partial<Omit<Perp, "symbol">>,
 ): Promise<Perp> {
   const res = await fetch(`${API_URL}/perps/${encodeURIComponent(symbol)}`, {
     method: "PATCH",

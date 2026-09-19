@@ -1,9 +1,23 @@
 import type { Collection, Db } from "mongodb";
 import { applyToggleRules, type PerpToggles } from "./toggleRules.js";
 
-export interface PerpConfigDoc extends PerpToggles {
+export interface PerpFrequencies {
+  decisionFrequencySeconds: number;
+  samplingFrequencySeconds: number;
+}
+
+export interface PerpConfigDoc extends PerpToggles, PerpFrequencies {
   symbol: string;
 }
+
+export type PerpConfigPatch = Partial<PerpToggles & PerpFrequencies>;
+
+export const DEFAULT_PERP_CONFIG: PerpToggles & PerpFrequencies = {
+  tradingEnabled: false,
+  samplingEnabled: false,
+  decisionFrequencySeconds: 300,
+  samplingFrequencySeconds: 60,
+};
 
 const COLLECTION_NAME = "perpConfigs";
 
@@ -24,20 +38,32 @@ export async function getConfig(
   return collection(db).findOne({ symbol }, { projection: { _id: 0 } });
 }
 
-export async function updateToggles(
+export async function updatePerpConfig(
   db: Db,
   symbol: string,
-  patch: Partial<PerpToggles>,
+  patch: PerpConfigPatch,
 ): Promise<PerpConfigDoc> {
   const existing = await getConfig(db, symbol);
-  const current: PerpToggles = existing ?? {
-    tradingEnabled: false,
-    samplingEnabled: false,
+  const current: PerpConfigDoc = existing ?? {
+    symbol,
+    ...DEFAULT_PERP_CONFIG,
   };
-  const next = applyToggleRules(current, patch);
-  const doc: PerpConfigDoc = { symbol, ...next };
 
-  await collection(db).updateOne({ symbol }, { $set: doc }, { upsert: true });
+  const toggles = applyToggleRules(current, {
+    tradingEnabled: patch.tradingEnabled,
+    samplingEnabled: patch.samplingEnabled,
+  });
 
-  return doc;
+  const next: PerpConfigDoc = {
+    symbol,
+    ...toggles,
+    decisionFrequencySeconds:
+      patch.decisionFrequencySeconds ?? current.decisionFrequencySeconds,
+    samplingFrequencySeconds:
+      patch.samplingFrequencySeconds ?? current.samplingFrequencySeconds,
+  };
+
+  await collection(db).updateOne({ symbol }, { $set: next }, { upsert: true });
+
+  return next;
 }
