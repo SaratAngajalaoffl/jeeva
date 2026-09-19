@@ -31,6 +31,12 @@ export async function checkSession(): Promise<boolean> {
   return res.ok;
 }
 
+// The engine's DecisionMaker implementation for this PERP: `fake`
+// (synthetic, no network), `typesafe` (calls TypeSafe's Jev API
+// directly), or `openrouter` (calls Jev via OpenRouter — not yet
+// implemented on the engine side).
+export type DecisionMaker = "fake" | "typesafe" | "openrouter";
+
 export interface Perp {
   symbol: string;
   tradingEnabled: boolean;
@@ -39,6 +45,7 @@ export interface Perp {
   samplingFrequencySeconds: number;
   leverage: number;
   positionSizeUsd: number;
+  decisionMaker: DecisionMaker;
 }
 
 export async function fetchPerps(): Promise<Perp[]> {

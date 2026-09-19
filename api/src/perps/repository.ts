@@ -11,22 +11,36 @@ export interface PerpSizing {
   positionSizeUsd: number;
 }
 
+// The engine's DecisionMaker implementation for this PERP: `fake`
+// (synthetic, no network), `typesafe` (calls TypeSafe's Jev API
+// directly), or `openrouter` (calls Jev via OpenRouter — not yet
+// implemented on the engine side, see GH issue).
+export type DecisionMaker = "fake" | "typesafe" | "openrouter";
+
+export interface PerpDecisionMaker {
+  decisionMaker: DecisionMaker;
+}
+
 export interface PerpConfigDoc
-  extends PerpToggles, PerpFrequencies, PerpSizing {
+  extends PerpToggles, PerpFrequencies, PerpSizing, PerpDecisionMaker {
   symbol: string;
 }
 
 export type PerpConfigPatch = Partial<
-  PerpToggles & PerpFrequencies & PerpSizing
+  PerpToggles & PerpFrequencies & PerpSizing & PerpDecisionMaker
 >;
 
-export const DEFAULT_PERP_CONFIG: PerpToggles & PerpFrequencies & PerpSizing = {
+export const DEFAULT_PERP_CONFIG: PerpToggles &
+  PerpFrequencies &
+  PerpSizing &
+  PerpDecisionMaker = {
   tradingEnabled: false,
   samplingEnabled: false,
   decisionFrequencySeconds: 300,
   samplingFrequencySeconds: 60,
   leverage: 1,
   positionSizeUsd: 100,
+  decisionMaker: "fake",
 };
 
 const COLLECTION_NAME = "perpConfigs";
@@ -73,6 +87,7 @@ export async function updatePerpConfig(
       patch.samplingFrequencySeconds ?? current.samplingFrequencySeconds,
     leverage: patch.leverage ?? current.leverage,
     positionSizeUsd: patch.positionSizeUsd ?? current.positionSizeUsd,
+    decisionMaker: patch.decisionMaker ?? current.decisionMaker,
   };
 
   await collection(db).updateOne({ symbol }, { $set: next }, { upsert: true });

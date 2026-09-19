@@ -9,6 +9,7 @@ import {
   fetchPerpStats,
   fetchPositions,
   updatePerpConfig,
+  type DecisionMaker,
   type Perp,
   type PerpHealth,
   type PerpStats,
@@ -53,6 +54,12 @@ const PAGE_SIZE = 10;
 // Mirrors the engine's AUTO_FLATTEN_THRESHOLD (#12) so the dashboard
 // warns the operator before the auto-flatten safety net kicks in.
 const AUTO_FLATTEN_THRESHOLD = 5;
+
+const DECISION_MAKER_LABELS: Record<DecisionMaker, string> = {
+  fake: "Fake",
+  typesafe: "TypeSafe Jev",
+  openrouter: "OpenRouter Jev",
+};
 
 const SORT_COLUMNS: { key: SortKey; label: string }[] = [
   { key: "symbol", label: "Symbol" },
@@ -639,6 +646,10 @@ function TradingMarketCard({
             value={`$${market.positionSizeUsd.toLocaleString()}`}
           />
           <CardStat label="Leverage" value={`${market.leverage}x`} />
+          <CardStat
+            label="Decision maker"
+            value={DECISION_MAKER_LABELS[market.decisionMaker]}
+          />
         </div>
         <div className="flex items-center justify-between border-t border-surface-1 pt-2">
           <span className="text-[11px] uppercase tracking-wide text-subtext-0">
@@ -708,6 +719,7 @@ function TradingForm({
     decisionFrequencySeconds: number;
     leverage: number;
     positionSizeUsd: number;
+    decisionMaker: DecisionMaker;
   }) => Promise<void>;
   onCancel: () => void;
 }) {
@@ -717,6 +729,9 @@ function TradingForm({
   const [leverage, setLeverage] = useState(String(perp.leverage));
   const [positionSizeUsd, setPositionSizeUsd] = useState(
     String(perp.positionSizeUsd),
+  );
+  const [decisionMaker, setDecisionMaker] = useState<DecisionMaker>(
+    perp.decisionMaker ?? "fake",
   );
   const [submitting, setSubmitting] = useState(false);
 
@@ -743,6 +758,7 @@ function TradingForm({
           decisionFrequencySeconds: decision,
           leverage: lev,
           positionSizeUsd: size,
+          decisionMaker,
         });
         setSubmitting(false);
       }}
@@ -750,6 +766,19 @@ function TradingForm({
       <p className="text-xs text-subtext-0">
         Enabling trading also enables sampling for this market.
       </p>
+      <label className="flex flex-col gap-1">
+        <Label>Decision maker</Label>
+        <Select
+          value={decisionMaker}
+          onChange={(e) => setDecisionMaker(e.target.value as DecisionMaker)}
+        >
+          <option value="fake">Fake (synthetic decisions)</option>
+          <option value="typesafe">TypeSafe Jev</option>
+          <option value="openrouter">
+            OpenRouter Jev (not yet implemented)
+          </option>
+        </Select>
+      </label>
       <label className="flex flex-col gap-1">
         <Label>Decision frequency (seconds)</Label>
         <Input

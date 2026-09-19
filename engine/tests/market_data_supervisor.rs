@@ -66,6 +66,7 @@ fn config(symbol: &str, sampling_enabled: bool, frequency_seconds: f64) -> PerpC
         sampling_frequency_seconds: frequency_seconds,
         leverage: 1.0,
         position_size_usd: 100.0,
+        decision_maker: Default::default(),
     }
 }
 

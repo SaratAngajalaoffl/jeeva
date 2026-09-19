@@ -3,9 +3,10 @@ use std::time::Duration;
 
 use engine::config::{run_with_reconnect, ConfigStore};
 use engine::decision::{
-    self, ExecutionAdapter, FakeJevAdapter, JevDecisionSource, LiveExecutionAdapter,
-    MockExecutionAdapter, PerpHealthTracker, PostgresDecisionLogWriter,
-    PostgresMarketDataHistoryReader, PrivateKey, RealJevAdapter,
+    self, DecisionMaker, DecisionMakerRegistry, ExecutionAdapter, FakeDecisionMaker,
+    LiveExecutionAdapter, MockExecutionAdapter, OpenRouterJevDecisionMaker, PerpHealthTracker,
+    PostgresDecisionLogWriter, PostgresMarketDataHistoryReader, PrivateKey,
+    TypeSafeJevDecisionMaker, UnconfiguredDecisionMaker,
 };
 use engine::funding::{
     self, HyperliquidFundingRateSource, PostgresFundingHistoryReader, PostgresFundingPaymentWriter,
@@ -35,14 +36,27 @@ fn slippage_bps() -> f64 {
         .unwrap_or(DEFAULT_SLIPPAGE_BPS)
 }
 
-/// Selects the decision source via `JEV_ADAPTER` (`fake`, the default,
-/// or `real`) without any change to the decision-loop code that
-/// consumes it.
-fn jev_adapter() -> Arc<dyn JevDecisionSource> {
-    match std::env::var("JEV_ADAPTER").as_deref() {
-        Ok("real") => Arc::new(RealJevAdapter::from_env()),
-        _ => Arc::new(FakeJevAdapter::cycling()),
-    }
+/// Builds one `DecisionMaker` per `DecisionMakerKind`, so each PERP can
+/// pick its decision maker independently via `PerpConfig::decision_maker`
+/// without restarting the engine. `typesafe` falls back to an
+/// `UnconfiguredDecisionMaker` when `TYPESAFE_API_KEY` isn't set, so the
+/// engine still starts — it only fails once a PERP is actually switched
+/// to `typesafe`. `openrouter` is always unimplemented for now.
+fn decision_maker_registry() -> DecisionMakerRegistry {
+    let fake: Arc<dyn DecisionMaker> = Arc::new(FakeDecisionMaker::cycling());
+
+    let typesafe: Arc<dyn DecisionMaker> = if std::env::var("TYPESAFE_API_KEY").is_ok() {
+        Arc::new(TypeSafeJevDecisionMaker::from_env())
+    } else {
+        tracing::warn!(
+            "TYPESAFE_API_KEY not set; the typesafe decision maker will reject every call until configured"
+        );
+        Arc::new(UnconfiguredDecisionMaker { name: "typesafe" })
+    };
+
+    let openrouter: Arc<dyn DecisionMaker> = Arc::new(OpenRouterJevDecisionMaker::unimplemented());
+
+    DecisionMakerRegistry::new(fake, typesafe, openrouter)
 }
 
 /// Builds the `live` delegate for `ModeSwitchedExecutionAdapter`. When
@@ -137,7 +151,7 @@ async fn main() {
 
     let history: Arc<dyn decision::MarketDataHistoryReader> =
         Arc::new(PostgresMarketDataHistoryReader::new(pool.clone()));
-    let jev: Arc<dyn decision::JevDecisionSource> = jev_adapter();
+    let decision_makers = Arc::new(decision_maker_registry());
     let mock_execution: Arc<dyn decision::ExecutionAdapter> =
         Arc::new(MockExecutionAdapter::new(pool.clone(), slippage_bps()));
     let live_execution = live_execution_adapter(&pool).await;
@@ -160,7 +174,7 @@ async fn main() {
         _ = run_with_reconnect(&mongo_url, store.clone()) => {},
         _ = engine_mode::run_with_reconnect(&mongo_url, mode_store) => {},
         _ = market_data::run(store.clone(), market_data_client, market_data_writer, SAMPLING_POLL_INTERVAL) => {},
-        _ = decision::run(store, history, jev, execution.clone(), funding_history, decision_log, health, DECISION_POLL_INTERVAL) => {},
+        _ = decision::run(store, history, decision_makers, execution.clone(), funding_history, decision_log, health, DECISION_POLL_INTERVAL) => {},
         _ = funding::run(execution, funding_rate_source, funding_payment_writer, FUNDING_INTERVAL) => {},
     }
 }

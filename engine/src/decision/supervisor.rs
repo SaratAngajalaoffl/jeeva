@@ -5,10 +5,11 @@ use std::time::Duration;
 use tokio::task::JoinHandle;
 use tokio::time::{interval_at, Instant, MissedTickBehavior};
 
+use super::decision_maker::DecisionMaker;
+use super::decision_maker_registry::DecisionMakerRegistry;
 use super::execution::ExecutionAdapter;
 use super::health::FailureTracker;
 use super::history::{build_context_summary, MarketDataHistoryReader};
-use super::jev::JevDecisionSource;
 use super::log::{DecisionLogEntry, DecisionLogWriter};
 use super::model::decide_action;
 use crate::config::{ConfigStore, PerpConfig};
@@ -29,17 +30,18 @@ pub fn desired_state(configs: &HashMap<String, PerpConfig>) -> HashMap<String, f
 }
 
 /// Runs a single decision cycle for one PERP: builds context from
-/// recent market history, asks Jev for a Target Direction, compares it
-/// to the current Position State, applies the resulting action, and
-/// always writes a decision-log row — including when there's no market
-/// data yet or Jev/execution fails, so the log is a complete audit
-/// trail. Free of any scheduling concerns, so it's directly testable.
+/// recent market history, asks its configured `DecisionMaker` for a
+/// Target Direction, compares it to the current Position State, applies
+/// the resulting action, and always writes a decision-log row —
+/// including when there's no market data yet or the decision
+/// maker/execution fails, so the log is a complete audit trail. Free of
+/// any scheduling concerns, so it's directly testable.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_decision_cycle(
     symbol: &str,
     config: &PerpConfig,
     history: &dyn MarketDataHistoryReader,
-    jev: &dyn JevDecisionSource,
+    decision_maker: &dyn DecisionMaker,
     execution: &dyn ExecutionAdapter,
     funding: &dyn FundingHistoryReader,
     decision_log: &dyn DecisionLogWriter,
@@ -118,10 +120,10 @@ pub async fn run_decision_cycle(
         latest_funding.as_ref(),
     );
 
-    let decision = match jev.decide(symbol, &context_summary).await {
+    let decision = match decision_maker.decide(symbol, &context_summary).await {
         Ok(decision) => decision,
         Err(error) => {
-            tracing::error!(symbol, %error, "jev decision failed");
+            tracing::error!(symbol, %error, "decision maker failed");
             handle_cycle_failure(
                 symbol,
                 &error.to_string(),
@@ -190,7 +192,7 @@ pub async fn run_decision_cycle(
     }
 }
 
-/// Common handling for a Jev/`ExecutionAdapter` failure that happens
+/// Common handling for a `DecisionMaker`/`ExecutionAdapter` failure that happens
 /// before a decision is even reached: logs the normal failure entry,
 /// increments the PERP's consecutive-failure count, and — once that
 /// count hits the auto-flatten threshold — force-flattens the position
@@ -290,7 +292,7 @@ fn spawn_task(
     frequency_seconds: f64,
     store: ConfigStore,
     history: Arc<dyn MarketDataHistoryReader>,
-    jev: Arc<dyn JevDecisionSource>,
+    decision_makers: Arc<DecisionMakerRegistry>,
     execution: Arc<dyn ExecutionAdapter>,
     funding: Arc<dyn FundingHistoryReader>,
     decision_log: Arc<dyn DecisionLogWriter>,
@@ -305,11 +307,12 @@ fn spawn_task(
         loop {
             ticker.tick().await;
             if let Some(config) = store.get(&symbol) {
+                let decision_maker = decision_makers.get(config.decision_maker);
                 run_decision_cycle(
                     &symbol,
                     &config,
                     history.as_ref(),
-                    jev.as_ref(),
+                    decision_maker.as_ref(),
                     execution.as_ref(),
                     funding.as_ref(),
                     decision_log.as_ref(),
@@ -330,7 +333,7 @@ fn spawn_task(
 pub async fn run(
     store: ConfigStore,
     history: Arc<dyn MarketDataHistoryReader>,
-    jev: Arc<dyn JevDecisionSource>,
+    decision_makers: Arc<DecisionMakerRegistry>,
     execution: Arc<dyn ExecutionAdapter>,
     funding: Arc<dyn FundingHistoryReader>,
     decision_log: Arc<dyn DecisionLogWriter>,
@@ -363,7 +366,7 @@ pub async fn run(
                 frequency,
                 store.clone(),
                 history.clone(),
-                jev.clone(),
+                decision_makers.clone(),
                 execution.clone(),
                 funding.clone(),
                 decision_log.clone(),
@@ -383,10 +386,10 @@ mod tests {
 
     use async_trait::async_trait;
 
+    use super::super::decision_maker::DecisionError;
     use super::super::execution::{ExecutionError, OpenPosition};
     use super::super::health::InMemoryFailureTracker;
     use super::super::history::HistoryError;
-    use super::super::jev::JevError;
     use super::super::log::LogError;
     use super::super::model::{Direction, JevDecision, Probabilities, TargetDirection};
     use super::*;
@@ -402,6 +405,7 @@ mod tests {
             sampling_frequency_seconds: 60.0,
             leverage: 1.0,
             position_size_usd: 100.0,
+            decision_maker: crate::decision::DecisionMakerKind::Fake,
         }
     }
 
@@ -488,28 +492,28 @@ mod tests {
         }
     }
 
-    /// A `JevDecisionSource` that always fails, for exercising the
+    /// A `DecisionMaker` that always fails, for exercising the
     /// failure-handling/auto-flatten path.
-    struct AlwaysFailingJev;
+    struct AlwaysFailingDecisionMaker;
 
     #[async_trait]
-    impl JevDecisionSource for AlwaysFailingJev {
-        async fn decide(&self, _symbol: &str, _state: &str) -> Result<JevDecision, JevError> {
-            Err(JevError("jev unavailable".to_string()))
+    impl DecisionMaker for AlwaysFailingDecisionMaker {
+        async fn decide(&self, _symbol: &str, _state: &str) -> Result<JevDecision, DecisionError> {
+            Err(DecisionError("decision maker unavailable".to_string()))
         }
     }
 
-    /// A `JevDecisionSource` that fails on every call except the
+    /// A `DecisionMaker` that fails on every call except the
     /// `succeed_on` (1-indexed) call, for exercising "a success resets
     /// the counter" behavior.
-    struct SucceedsOnceJev {
+    struct SucceedsOnceDecisionMaker {
         succeed_on: usize,
         calls: AtomicUsize,
     }
 
     #[async_trait]
-    impl JevDecisionSource for SucceedsOnceJev {
-        async fn decide(&self, _symbol: &str, _state: &str) -> Result<JevDecision, JevError> {
+    impl DecisionMaker for SucceedsOnceDecisionMaker {
+        async fn decide(&self, _symbol: &str, _state: &str) -> Result<JevDecision, DecisionError> {
             let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
             if call == self.succeed_on {
                 Ok(JevDecision {
@@ -522,7 +526,7 @@ mod tests {
                     },
                 })
             } else {
-                Err(JevError("jev unavailable".to_string()))
+                Err(DecisionError("decision maker unavailable".to_string()))
             }
         }
     }
@@ -612,7 +616,7 @@ mod tests {
             "BTC",
             &config,
             &FakeHistory,
-            &AlwaysFailingJev,
+            &AlwaysFailingDecisionMaker,
             &execution,
             &FakeFunding,
             &NoopDecisionLog,
@@ -634,7 +638,7 @@ mod tests {
         health.record_failure("BTC", "previous failure").await;
         health.record_failure("BTC", "previous failure").await;
 
-        let jev = SucceedsOnceJev {
+        let decision_maker = SucceedsOnceDecisionMaker {
             succeed_on: 1,
             calls: AtomicUsize::new(0),
         };
@@ -643,7 +647,7 @@ mod tests {
             "BTC",
             &config,
             &FakeHistory,
-            &jev,
+            &decision_maker,
             &execution,
             &FakeFunding,
             &NoopDecisionLog,
@@ -666,7 +670,7 @@ mod tests {
                 "BTC",
                 &config,
                 &FakeHistory,
-                &AlwaysFailingJev,
+                &AlwaysFailingDecisionMaker,
                 &execution,
                 &FakeFunding,
                 &decision_log,
@@ -688,7 +692,7 @@ mod tests {
         let health = InMemoryFailureTracker::new();
         let decision_log = CapturingDecisionLog::default();
 
-        let jev = SucceedsOnceJev {
+        let decision_maker = SucceedsOnceDecisionMaker {
             succeed_on: 4,
             calls: AtomicUsize::new(0),
         };
@@ -698,7 +702,7 @@ mod tests {
                 "BTC",
                 &config,
                 &FakeHistory,
-                &jev,
+                &decision_maker,
                 &execution,
                 &FakeFunding,
                 &decision_log,

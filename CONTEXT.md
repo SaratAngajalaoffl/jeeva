@@ -1,25 +1,29 @@
 # Jeeva
 
-An AI-assisted trading application that uses Jev (a TypeSafe "System One" decision model) to make buy/hold/sell calls on Hyperliquid perpetual futures, with a dashboard to control the trading engine.
+An AI-assisted trading application that uses a DecisionMaker backed by Jev (a TypeSafe "System One" decision model) to make buy/hold/sell calls on Hyperliquid perpetual futures, with a dashboard to control the trading engine.
 
 ## Language
 
 **PERP**:
-A perpetual futures market on Hyperliquid (e.g. BTC-PERP). Each PERP has two independent switches: **trading enabled** (whether the decision loop consults Jev and places/mock-places orders for it) and **sampling enabled** (whether the market-data loop records its price/OI/volume/spread history). A PERP can be sampled without trading, or (less usefully) traded without a sampling history.
+A perpetual futures market on Hyperliquid (e.g. BTC-PERP). Each PERP has two independent switches: **trading enabled** (whether the decision loop consults its configured DecisionMaker and places/mock-places orders for it) and **sampling enabled** (whether the market-data loop records its price/OI/volume/spread history). A PERP can be sampled without trading, or (less usefully) traded without a sampling history. A PERP's **decision maker** (see DecisionMaker) is a third, independent per-PERP setting, chosen when trading is enabled.
 
 **Jev**:
-The TypeSafe System One model that answers structured questions (Choice/Score/Noul) against a text `state`, used here to decide buy/hold/sell. Not a chat/agent loop — a single evaluation call.
+The TypeSafe System One model that answers structured questions (Choice/Score/Noul) against a text `state`, used here to decide buy/hold/sell. Not a chat/agent loop — a single evaluation call. Reachable through more than one DecisionMaker backend (see DecisionMaker).
 _Avoid_: "the AI", "the model" (ambiguous with other models in the system)
 
-**JevDecisionSource**:
-The interface for obtaining a trading decision from Jev. Has two implementations: `FakeJevAdapter` (synthetic decisions, for testing without Jev access) and `RealJevAdapter` (calls the real TypeSafe API).
-_Avoid_: "mock Jev" (reserve "mock" for the execution axis, see ExecutionAdapter)
+**DecisionMaker**:
+The interface for obtaining a trading decision. Chosen per PERP (`PerpConfig.decisionMaker` / `perpConfigs.decisionMaker`), independent of the PERP's ExecutionAdapter/mock-live axis. Three implementations:
+- `FakeDecisionMaker` — synthetic decisions, for testing without Jev access.
+- `TypeSafeJevDecisionMaker` — calls TypeSafe's real Jev `systemOne` API directly.
+- `OpenRouterJevDecisionMaker` — calls Jev via OpenRouter (`openrouter.ai/~typesafe/jev-latest`) instead of TypeSafe directly. **Not yet implemented** — always errors; tracked in a GitHub issue.
+
+_Avoid_: "mock Jev" or "mock decision maker" (reserve "mock" for the execution axis, see ExecutionAdapter); "JevDecisionSource" (old name, renamed to DecisionMaker since Jev is now reachable through more than one backend).
 
 **ExecutionAdapter**:
 The interface for placing/simulating orders against Hyperliquid. Has two implementations: `MockExecutionAdapter` (simulates fills locally, never touches the real orderbook) and `LiveExecutionAdapter` (places real orders via a Hyperliquid wallet).
-_Avoid_: "fake execution" (reserve "fake" for the decision axis, see JevDecisionSource)
+_Avoid_: "fake execution" (reserve "fake" for the decision axis, see DecisionMaker)
 
-These two adapters are independent axes — decision source and execution path can be toggled separately, e.g. RealJev decisions against MockExecution for paper-trading with real intelligence.
+DecisionMaker and ExecutionAdapter are independent axes — decision maker and execution path can be toggled separately, e.g. TypeSafeJevDecisionMaker decisions against MockExecution for paper-trading with real intelligence.
 
 **Target Direction**:
 Jev's decision output for a PERP: one of `long`, `short`, or `flat`. Represents the position direction the engine should be in after this cycle, not a raw action.

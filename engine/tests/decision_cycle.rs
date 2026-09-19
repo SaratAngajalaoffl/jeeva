@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use engine::config::PerpConfig;
 use engine::decision::{
     run_decision_cycle, DecisionLogEntry, DecisionLogWriter, Direction, ExecutionAdapter,
-    ExecutionError, FakeJevAdapter, HistoryError, InMemoryFailureTracker, MarketDataHistoryReader,
+    ExecutionError, FakeDecisionMaker, HistoryError, InMemoryFailureTracker, MarketDataHistoryReader,
     OpenPosition, TargetDirection,
 };
 use engine::funding::{FundingHistoryError, FundingHistoryReader, FundingRecord};
@@ -148,6 +148,7 @@ fn config() -> PerpConfig {
         sampling_frequency_seconds: 60.0,
         leverage: 2.0,
         position_size_usd: 500.0,
+        decision_maker: Default::default(),
     }
 }
 
@@ -156,7 +157,7 @@ async fn opens_a_position_from_flat_when_jev_says_long() {
     let history = FakeHistory {
         samples: vec![sample(100.0)],
     };
-    let jev = FakeJevAdapter::with_sequence(vec![TargetDirection::Long]);
+    let decision_maker = FakeDecisionMaker::with_sequence(vec![TargetDirection::Long]);
     let execution = FakeExecution::default();
     let log = FakeDecisionLog::default();
 
@@ -164,7 +165,7 @@ async fn opens_a_position_from_flat_when_jev_says_long() {
         "BTC",
         &config(),
         &history,
-        &jev,
+        &decision_maker,
         &execution,
         &EmptyFunding,
         &log,
@@ -188,7 +189,7 @@ async fn repeating_the_same_direction_is_a_no_op() {
     let history = FakeHistory {
         samples: vec![sample(100.0)],
     };
-    let jev = FakeJevAdapter::with_sequence(vec![TargetDirection::Long]);
+    let decision_maker = FakeDecisionMaker::with_sequence(vec![TargetDirection::Long]);
     let execution = FakeExecution::default();
     let log = FakeDecisionLog::default();
 
@@ -196,7 +197,7 @@ async fn repeating_the_same_direction_is_a_no_op() {
         "BTC",
         &config(),
         &history,
-        &jev,
+        &decision_maker,
         &execution,
         &EmptyFunding,
         &log,
@@ -207,7 +208,7 @@ async fn repeating_the_same_direction_is_a_no_op() {
         "BTC",
         &config(),
         &history,
-        &jev,
+        &decision_maker,
         &execution,
         &EmptyFunding,
         &log,
@@ -226,7 +227,7 @@ async fn flipping_direction_closes_then_opens() {
     let history = FakeHistory {
         samples: vec![sample(100.0)],
     };
-    let jev = FakeJevAdapter::with_sequence(vec![TargetDirection::Long, TargetDirection::Short]);
+    let decision_maker = FakeDecisionMaker::with_sequence(vec![TargetDirection::Long, TargetDirection::Short]);
     let execution = FakeExecution::default();
     let log = FakeDecisionLog::default();
 
@@ -234,7 +235,7 @@ async fn flipping_direction_closes_then_opens() {
         "BTC",
         &config(),
         &history,
-        &jev,
+        &decision_maker,
         &execution,
         &EmptyFunding,
         &log,
@@ -245,7 +246,7 @@ async fn flipping_direction_closes_then_opens() {
         "BTC",
         &config(),
         &history,
-        &jev,
+        &decision_maker,
         &execution,
         &EmptyFunding,
         &log,
@@ -264,7 +265,7 @@ async fn going_flat_closes_the_position() {
     let history = FakeHistory {
         samples: vec![sample(100.0)],
     };
-    let jev = FakeJevAdapter::with_sequence(vec![TargetDirection::Long, TargetDirection::Flat]);
+    let decision_maker = FakeDecisionMaker::with_sequence(vec![TargetDirection::Long, TargetDirection::Flat]);
     let execution = FakeExecution::default();
     let log = FakeDecisionLog::default();
 
@@ -272,7 +273,7 @@ async fn going_flat_closes_the_position() {
         "BTC",
         &config(),
         &history,
-        &jev,
+        &decision_maker,
         &execution,
         &EmptyFunding,
         &log,
@@ -283,7 +284,7 @@ async fn going_flat_closes_the_position() {
         "BTC",
         &config(),
         &history,
-        &jev,
+        &decision_maker,
         &execution,
         &EmptyFunding,
         &log,
@@ -300,7 +301,7 @@ async fn staying_flat_while_already_flat_is_a_no_op() {
     let history = FakeHistory {
         samples: vec![sample(100.0)],
     };
-    let jev = FakeJevAdapter::with_sequence(vec![TargetDirection::Flat]);
+    let decision_maker = FakeDecisionMaker::with_sequence(vec![TargetDirection::Flat]);
     let execution = FakeExecution::default();
     let log = FakeDecisionLog::default();
 
@@ -308,7 +309,7 @@ async fn staying_flat_while_already_flat_is_a_no_op() {
         "BTC",
         &config(),
         &history,
-        &jev,
+        &decision_maker,
         &execution,
         &EmptyFunding,
         &log,
@@ -326,7 +327,7 @@ async fn staying_flat_while_already_flat_is_a_no_op() {
 #[tokio::test]
 async fn writes_a_decision_log_entry_even_with_no_market_data() {
     let history = EmptyHistory;
-    let jev = FakeJevAdapter::with_sequence(vec![TargetDirection::Long]);
+    let decision_maker = FakeDecisionMaker::with_sequence(vec![TargetDirection::Long]);
     let execution = FakeExecution::default();
     let log = FakeDecisionLog::default();
 
@@ -334,7 +335,7 @@ async fn writes_a_decision_log_entry_even_with_no_market_data() {
         "BTC",
         &config(),
         &history,
-        &jev,
+        &decision_maker,
         &execution,
         &EmptyFunding,
         &log,
@@ -359,7 +360,7 @@ async fn every_cycle_writes_exactly_one_log_entry_across_a_full_state_machine_wa
         samples: vec![sample(100.0)],
     };
     // flat -> long -> short -> flat -> flat (repeat, no-op)
-    let jev = FakeJevAdapter::with_sequence(vec![
+    let decision_maker = FakeDecisionMaker::with_sequence(vec![
         TargetDirection::Flat,
         TargetDirection::Long,
         TargetDirection::Short,
@@ -374,7 +375,7 @@ async fn every_cycle_writes_exactly_one_log_entry_across_a_full_state_machine_wa
             "BTC",
             &config(),
             &history,
-            &jev,
+            &decision_maker,
             &execution,
             &EmptyFunding,
             &log,

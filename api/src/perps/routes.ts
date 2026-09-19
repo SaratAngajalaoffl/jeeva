@@ -10,7 +10,14 @@ import {
   DEFAULT_PERP_CONFIG,
   getAllConfigs,
   updatePerpConfig,
+  type DecisionMaker,
 } from "./repository.js";
+
+const DECISION_MAKERS: readonly DecisionMaker[] = [
+  "fake",
+  "typesafe",
+  "openrouter",
+];
 import { isValidLeverage, isValidPositionSizeUsd } from "./sizing.js";
 
 export function createPerpsRouter(
@@ -45,6 +52,8 @@ export function createPerpsRouter(
         leverage: config?.leverage ?? DEFAULT_PERP_CONFIG.leverage,
         positionSizeUsd:
           config?.positionSizeUsd ?? DEFAULT_PERP_CONFIG.positionSizeUsd,
+        decisionMaker:
+          config?.decisionMaker ?? DEFAULT_PERP_CONFIG.decisionMaker,
       };
     });
 
@@ -65,12 +74,16 @@ export function createPerpsRouter(
       samplingFrequencySeconds,
       leverage,
       positionSizeUsd,
+      decisionMaker,
     } = req.body ?? {};
 
     const isValidToggle = (value: unknown) =>
       value === undefined || typeof value === "boolean";
     const isValidFrequency = (value: unknown) =>
       value === undefined || isValidFrequencySeconds(value);
+    const isValidDecisionMaker = (value: unknown) =>
+      value === undefined ||
+      DECISION_MAKERS.includes(value as DecisionMaker);
 
     if (
       !isValidToggle(tradingEnabled) ||
@@ -79,7 +92,8 @@ export function createPerpsRouter(
       !isValidFrequency(samplingFrequencySeconds) ||
       (leverage !== undefined && !isValidLeverage(leverage)) ||
       (positionSizeUsd !== undefined &&
-        !isValidPositionSizeUsd(positionSizeUsd))
+        !isValidPositionSizeUsd(positionSizeUsd)) ||
+      !isValidDecisionMaker(decisionMaker)
     ) {
       res.status(400).json({ error: "invalid request" });
       return;
@@ -92,6 +106,7 @@ export function createPerpsRouter(
       samplingFrequencySeconds,
       leverage,
       positionSizeUsd,
+      decisionMaker,
     });
     res.status(200).json(updated);
   });

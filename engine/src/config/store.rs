@@ -58,6 +58,7 @@ mod tests {
             sampling_frequency_seconds: 60.0,
             leverage: 1.0,
             position_size_usd: 100.0,
+            decision_maker: Default::default(),
         }
     }
 

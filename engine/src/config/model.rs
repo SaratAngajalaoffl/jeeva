@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::decision::DecisionMakerKind;
+
 /// Mirrors the `perpConfigs` document shape written by the Express API
 /// (see api/src/perps/repository.ts). Unknown/extra fields (e.g. Mongo's
 /// `_id`) are ignored during deserialization.
@@ -13,4 +15,6 @@ pub struct PerpConfig {
     pub sampling_frequency_seconds: f64,
     pub leverage: f64,
     pub position_size_usd: f64,
+    #[serde(default)]
+    pub decision_maker: DecisionMakerKind,
 }
