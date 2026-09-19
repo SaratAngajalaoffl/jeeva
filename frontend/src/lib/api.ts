@@ -88,3 +88,39 @@ export async function fetchMarketData(
   const body = (await res.json()) as { samples: MarketDataPoint[] };
   return body.samples;
 }
+
+export interface MockWallet {
+  initialBalanceUsd: number;
+  currentBalanceUsd: number;
+  allTimePnlUsd: number;
+  createdAt: string;
+}
+
+export async function fetchMockWallet(): Promise<MockWallet | null> {
+  const res = await fetch(`${API_URL}/mock-wallet`, {
+    credentials: "include",
+  });
+  if (res.status === 404) {
+    return null;
+  }
+  if (!res.ok) {
+    throw new Error("Failed to load mock wallet");
+  }
+  return res.json();
+}
+
+export async function createMockWallet(
+  initialBalanceUsd: number,
+): Promise<{ ok: true; wallet: MockWallet } | { ok: false; error: string }> {
+  const res = await fetch(`${API_URL}/mock-wallet`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ initialBalanceUsd }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    return { ok: false, error: body?.error ?? "Failed to create mock wallet" };
+  }
+  return { ok: true, wallet: await res.json() };
+}
