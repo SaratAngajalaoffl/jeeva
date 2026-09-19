@@ -4,6 +4,26 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { checkSession, logout } from "@/lib/api";
+import { SiteHeader } from "@/components/SiteHeader";
+import { Card } from "@/components/ui";
+
+const LINKS = [
+  {
+    href: "/dashboard/markets",
+    title: "Markets",
+    description: "Configure trading and sampling for each perp.",
+  },
+  {
+    href: "/dashboard/wallet",
+    title: "Mock wallet",
+    description: "Balance, P&L, and funding payments.",
+  },
+  {
+    href: "/dashboard/decisions",
+    title: "Positions & decisions",
+    description: "Live positions and the Jev decision log.",
+  },
+];
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -36,22 +56,25 @@ export default function DashboardPage() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col gap-4 p-8">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Dashboard</h1>
-        <button onClick={handleLogout} className="rounded border px-3 py-1">
-          Log out
-        </button>
-      </div>
-      <Link href="/dashboard/markets" className="underline">
-        Markets
-      </Link>
-      <Link href="/dashboard/wallet" className="underline">
-        Mock wallet
-      </Link>
-      <Link href="/dashboard/decisions" className="underline">
-        Positions &amp; decisions
-      </Link>
-    </main>
+    <div className="min-h-screen">
+      <SiteHeader onLogout={handleLogout} />
+      <main className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-8 sm:px-6 lg:px-8">
+        <h1 className="text-xl font-semibold tracking-tight text-text">
+          Dashboard
+        </h1>
+        <div className="grid gap-4 sm:grid-cols-3">
+          {LINKS.map((link) => (
+            <Link key={link.href} href={link.href}>
+              <Card className="h-full transition-colors hover:border-ember/50">
+                <h2 className="font-medium text-text">{link.title}</h2>
+                <p className="mt-1 text-sm text-subtext-1">
+                  {link.description}
+                </p>
+              </Card>
+            </Link>
+          ))}
+        </div>
+      </main>
+    </div>
   );
 }

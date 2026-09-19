@@ -9,8 +9,19 @@ import {
   type Perp,
   type Position,
 } from "@/lib/api";
+import { SiteHeader } from "@/components/SiteHeader";
+import { Card, Label, Select } from "@/components/ui";
 
 type PositionState = "flat" | "long" | "short";
+
+const TH = "border-b border-surface-1 py-2 pr-4 text-left text-xs font-medium uppercase tracking-wide text-subtext-0";
+const TD = "border-b border-surface-1 py-2 pr-4";
+
+const STATE_COLOR: Record<PositionState, string> = {
+  flat: "text-subtext-0",
+  long: "text-emerald-400",
+  short: "text-destructive",
+};
 
 export default function DecisionsPage() {
   const [perps, setPerps] = useState<Perp[] | null>(null);
@@ -39,110 +50,123 @@ export default function DecisionsPage() {
     return position?.direction ?? "flat";
   }
 
-  if (error) {
-    return <p className="p-8 text-red-600">{error}</p>;
-  }
-
   return (
-    <main className="flex flex-col gap-8 p-8">
-      <section>
-        <h1 className="mb-2 text-xl font-semibold">Positions</h1>
-        {!perps || !positions ? (
-          <p>Loading...</p>
-        ) : (
-          <table className="w-full max-w-2xl border-collapse text-left">
-            <thead>
-              <tr>
-                <th className="border-b py-2">Symbol</th>
-                <th className="border-b py-2">Position state</th>
-                <th className="border-b py-2">Entry price</th>
-                <th className="border-b py-2">Notional (USD)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {perps
-                .filter((p) => p.tradingEnabled)
-                .map((perp) => {
-                  const position = positions.find(
-                    (p) => p.symbol === perp.symbol,
-                  );
-                  return (
-                    <tr key={perp.symbol}>
-                      <td className="border-b py-2">{perp.symbol}</td>
-                      <td className="border-b py-2">
-                        {positionStateFor(perp.symbol)}
+    <div className="min-h-screen">
+      <SiteHeader />
+      <main className="mx-auto flex max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
+        {error && <p className="text-sm text-destructive">{error}</p>}
+
+        <section>
+          <h1 className="mb-3 text-xl font-semibold tracking-tight text-text">
+            Positions
+          </h1>
+          {!perps || !positions ? (
+            <p className="text-sm text-subtext-1">Loading...</p>
+          ) : (
+            <Card className="max-w-2xl overflow-x-auto p-0">
+              <table className="w-full border-collapse text-left text-sm text-text">
+                <thead>
+                  <tr>
+                    <th className={TH}>Symbol</th>
+                    <th className={TH}>State</th>
+                    <th className={TH}>Entry price</th>
+                    <th className={TH}>Notional (USD)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {perps
+                    .filter((p) => p.tradingEnabled)
+                    .map((perp) => {
+                      const position = positions.find(
+                        (p) => p.symbol === perp.symbol,
+                      );
+                      const state = positionStateFor(perp.symbol);
+                      return (
+                        <tr key={perp.symbol} className="hover:bg-surface-0/60">
+                          <td className={`${TD} font-medium`}>{perp.symbol}</td>
+                          <td className={`${TD} ${STATE_COLOR[state]}`}>
+                            {state}
+                          </td>
+                          <td className={TD}>
+                            {position ? position.entryPrice.toLocaleString() : "-"}
+                          </td>
+                          <td className={TD}>
+                            {position ? position.notionalUsd.toLocaleString() : "-"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </Card>
+          )}
+        </section>
+
+        <section>
+          <div className="mb-3 flex items-center gap-3">
+            <h2 className="text-xl font-semibold tracking-tight text-text">
+              Decision history
+            </h2>
+            <label className="flex items-center gap-2">
+              <Label>Filter by symbol</Label>
+              <Select
+                value={symbolFilter}
+                onChange={(e) => setSymbolFilter(e.target.value)}
+              >
+                <option value="">All</option>
+                {perps?.map((p) => (
+                  <option key={p.symbol} value={p.symbol}>
+                    {p.symbol}
+                  </option>
+                ))}
+              </Select>
+            </label>
+          </div>
+
+          {!decisions ? (
+            <p className="text-sm text-subtext-1">Loading...</p>
+          ) : decisions.length === 0 ? (
+            <p className="text-sm text-subtext-1">No decisions yet.</p>
+          ) : (
+            <Card className="max-w-4xl overflow-x-auto p-0">
+              <table className="w-full border-collapse text-left text-sm text-text">
+                <thead>
+                  <tr>
+                    <th className={TH}>Time</th>
+                    <th className={TH}>Symbol</th>
+                    <th className={TH}>Target direction</th>
+                    <th className={TH}>Confidence</th>
+                    <th className={TH}>Action</th>
+                    <th className={TH}>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {decisions.map((d, i) => (
+                    <tr key={i} className="hover:bg-surface-0/60">
+                      <td className={TD}>
+                        {new Date(d.time).toLocaleString()}
                       </td>
-                      <td className="border-b py-2">
-                        {position ? position.entryPrice.toLocaleString() : "-"}
+                      <td className={TD}>{d.symbol}</td>
+                      <td className={TD}>{d.targetDirection ?? "-"}</td>
+                      <td className={TD}>
+                        {d.confidence !== null ? d.confidence.toFixed(2) : "-"}
                       </td>
-                      <td className="border-b py-2">
-                        {position ? position.notionalUsd.toLocaleString() : "-"}
+                      <td className={TD}>{d.positionAction ?? "-"}</td>
+                      <td className={TD}>
+                        {d.success ? (
+                          <span className="text-emerald-400">ok</span>
+                        ) : (
+                          <span className="text-destructive">{`error: ${d.error}`}</span>
+                        )}
                       </td>
                     </tr>
-                  );
-                })}
-            </tbody>
-          </table>
-        )}
-      </section>
-
-      <section>
-        <div className="mb-2 flex items-center gap-3">
-          <h2 className="text-xl font-semibold">Decision history</h2>
-          <label className="flex items-center gap-2 text-sm">
-            <span>Filter by symbol</span>
-            <select
-              className="rounded border px-2 py-1"
-              value={symbolFilter}
-              onChange={(e) => setSymbolFilter(e.target.value)}
-            >
-              <option value="">All</option>
-              {perps?.map((p) => (
-                <option key={p.symbol} value={p.symbol}>
-                  {p.symbol}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        {!decisions ? (
-          <p>Loading...</p>
-        ) : decisions.length === 0 ? (
-          <p>No decisions yet.</p>
-        ) : (
-          <table className="w-full max-w-4xl border-collapse text-left text-sm">
-            <thead>
-              <tr>
-                <th className="border-b py-2">Time</th>
-                <th className="border-b py-2">Symbol</th>
-                <th className="border-b py-2">Target direction</th>
-                <th className="border-b py-2">Confidence</th>
-                <th className="border-b py-2">Action</th>
-                <th className="border-b py-2">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {decisions.map((d, i) => (
-                <tr key={i}>
-                  <td className="border-b py-2">
-                    {new Date(d.time).toLocaleString()}
-                  </td>
-                  <td className="border-b py-2">{d.symbol}</td>
-                  <td className="border-b py-2">{d.targetDirection ?? "-"}</td>
-                  <td className="border-b py-2">
-                    {d.confidence !== null ? d.confidence.toFixed(2) : "-"}
-                  </td>
-                  <td className="border-b py-2">{d.positionAction ?? "-"}</td>
-                  <td className="border-b py-2">
-                    {d.success ? "ok" : `error: ${d.error}`}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
-    </main>
+                  ))}
+                </tbody>
+              </table>
+            </Card>
+          )}
+        </section>
+      </main>
+    </div>
   );
 }

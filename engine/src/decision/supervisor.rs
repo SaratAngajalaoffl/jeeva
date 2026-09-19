@@ -10,9 +10,10 @@ use super::jev::JevDecisionSource;
 use super::log::{DecisionLogEntry, DecisionLogWriter};
 use super::model::decide_action;
 use crate::config::{ConfigStore, PerpConfig};
+use crate::funding::FundingHistoryReader;
 use crate::scheduler::reconcile;
 
-const HISTORY_WINDOW: u32 = 20;
+const HISTORY_WINDOW: u32 = 1000;
 
 /// The set of symbols that should currently be evaluated, each mapped
 /// to its configured decision frequency (in seconds).
@@ -30,12 +31,14 @@ pub fn desired_state(configs: &HashMap<String, PerpConfig>) -> HashMap<String, f
 /// always writes a decision-log row — including when there's no market
 /// data yet or Jev/execution fails, so the log is a complete audit
 /// trail. Free of any scheduling concerns, so it's directly testable.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_decision_cycle(
     symbol: &str,
     config: &PerpConfig,
     history: &dyn MarketDataHistoryReader,
     jev: &dyn JevDecisionSource,
     execution: &dyn ExecutionAdapter,
+    funding: &dyn FundingHistoryReader,
     decision_log: &dyn DecisionLogWriter,
 ) {
     let samples = match history.recent_samples(symbol, HISTORY_WINDOW).await {
@@ -56,7 +59,7 @@ pub async fn run_decision_cycle(
     };
 
     if samples.is_empty() {
-        let context_summary = build_context_summary(symbol, &samples);
+        let context_summary = build_context_summary(symbol, &samples, None, None);
         tracing::warn!(
             symbol,
             "no market data available yet; skipping decision cycle"
@@ -73,7 +76,34 @@ pub async fn run_decision_cycle(
         return;
     }
 
-    let context_summary = build_context_summary(symbol, &samples);
+    let current_position = match execution.get_position(symbol).await {
+        Ok(position) => position,
+        Err(error) => {
+            tracing::error!(symbol, %error, "failed to read current position");
+            let context_summary = build_context_summary(symbol, &samples, None, None);
+            let _ = decision_log
+                .write(DecisionLogEntry {
+                    symbol,
+                    context_summary: &context_summary,
+                    decision: None,
+                    position_action: None,
+                    error: Some(&error.to_string()),
+                })
+                .await;
+            return;
+        }
+    };
+
+    let latest_funding = match funding.latest(symbol).await {
+        Ok(funding) => funding,
+        Err(error) => {
+            tracing::warn!(symbol, %error, "failed to read latest funding rate; continuing without it");
+            None
+        }
+    };
+
+    let context_summary =
+        build_context_summary(symbol, &samples, current_position.as_ref(), latest_funding.as_ref());
     let latest_mid_price = samples.last().unwrap().mid_price;
 
     let decision = match jev.decide(symbol, &context_summary).await {
@@ -93,22 +123,7 @@ pub async fn run_decision_cycle(
         }
     };
 
-    let current_direction = match execution.get_position(symbol).await {
-        Ok(position) => position.map(|p| p.direction),
-        Err(error) => {
-            tracing::error!(symbol, %error, "failed to read current position");
-            let _ = decision_log
-                .write(DecisionLogEntry {
-                    symbol,
-                    context_summary: &context_summary,
-                    decision: Some(&decision),
-                    position_action: None,
-                    error: Some(&error.to_string()),
-                })
-                .await;
-            return;
-        }
-    };
+    let current_direction = current_position.map(|p| p.direction);
 
     let action = decide_action(current_direction, decision.direction);
 
@@ -188,6 +203,7 @@ fn spawn_task(
     history: Arc<dyn MarketDataHistoryReader>,
     jev: Arc<dyn JevDecisionSource>,
     execution: Arc<dyn ExecutionAdapter>,
+    funding: Arc<dyn FundingHistoryReader>,
     decision_log: Arc<dyn DecisionLogWriter>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
@@ -199,6 +215,7 @@ fn spawn_task(
                     history.as_ref(),
                     jev.as_ref(),
                     execution.as_ref(),
+                    funding.as_ref(),
                     decision_log.as_ref(),
                 )
                 .await;
@@ -219,6 +236,7 @@ pub async fn run(
     history: Arc<dyn MarketDataHistoryReader>,
     jev: Arc<dyn JevDecisionSource>,
     execution: Arc<dyn ExecutionAdapter>,
+    funding: Arc<dyn FundingHistoryReader>,
     decision_log: Arc<dyn DecisionLogWriter>,
     poll_interval: Duration,
 ) -> ! {
@@ -250,6 +268,7 @@ pub async fn run(
                 history.clone(),
                 jev.clone(),
                 execution.clone(),
+                funding.clone(),
                 decision_log.clone(),
             );
             running.insert(symbol, (frequency, handle));

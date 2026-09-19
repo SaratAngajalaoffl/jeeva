@@ -6,6 +6,7 @@ const pushMock = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: replaceMock, push: pushMock }),
+  usePathname: () => "/dashboard",
 }));
 
 import DashboardPage from "./page";

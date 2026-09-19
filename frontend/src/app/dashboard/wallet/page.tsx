@@ -8,6 +8,11 @@ import {
   type FundingPayment,
   type MockWallet,
 } from "@/lib/api";
+import { SiteHeader } from "@/components/SiteHeader";
+import { Button, Card, Input, Label } from "@/components/ui";
+
+const TH = "border-b border-surface-1 py-2 pr-4 text-left text-xs font-medium uppercase tracking-wide text-subtext-0";
+const TD = "border-b border-surface-1 py-2 pr-4";
 
 export default function WalletPage() {
   const [wallet, setWallet] = useState<MockWallet | null | undefined>(
@@ -49,90 +54,95 @@ export default function WalletPage() {
     setWallet(result.wallet);
   }
 
-  if (wallet === undefined && !error) {
-    return <p className="p-8">Loading...</p>;
-  }
-
   return (
-    <main className="flex flex-col gap-8 p-8">
-      <section>
-        <h1 className="mb-2 text-xl font-semibold">Mock wallet</h1>
-        {error && <p className="text-red-600">{error}</p>}
-
-        {wallet ? (
-          <dl className="grid max-w-sm grid-cols-2 gap-2">
-            <dt className="text-sm text-gray-500">Initial balance</dt>
-            <dd>{`$${wallet.initialBalanceUsd.toLocaleString()}`}</dd>
-            <dt className="text-sm text-gray-500">Current balance</dt>
-            <dd>{`$${wallet.currentBalanceUsd.toLocaleString()}`}</dd>
-            <dt className="text-sm text-gray-500">All-time P&amp;L</dt>
-            <dd>{`$${wallet.allTimePnlUsd.toLocaleString()}`}</dd>
-          </dl>
-        ) : (
-          <form
-            onSubmit={handleCreate}
-            className="flex max-w-sm flex-col gap-3 rounded border p-4"
-          >
-            <label className="flex flex-col gap-1">
-              <span className="text-sm">Initial balance (USD)</span>
-              <input
-                type="number"
-                min={1}
-                className="rounded border px-3 py-2"
-                value={initialBalance}
-                onChange={(e) => setInitialBalance(e.target.value)}
-              />
-            </label>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="rounded bg-black px-4 py-2 text-white disabled:opacity-50"
-            >
-              {submitting ? "Creating..." : "Create wallet"}
-            </button>
-          </form>
-        )}
-      </section>
-
-      {wallet && (
+    <div className="min-h-screen">
+      <SiteHeader />
+      <main className="mx-auto flex max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
         <section>
-          <h2 className="mb-2 text-lg font-semibold">
-            Recent funding payments
-          </h2>
-          {!fundingPayments ? (
-            <p>Loading...</p>
-          ) : fundingPayments.length === 0 ? (
-            <p>No funding payments yet.</p>
+          <h1 className="mb-3 text-xl font-semibold tracking-tight text-text">
+            Mock wallet
+          </h1>
+          {error && <p className="mb-2 text-sm text-destructive">{error}</p>}
+
+          {wallet === undefined && !error ? (
+            <p className="text-sm text-subtext-1">Loading...</p>
+          ) : wallet ? (
+            <Card className="max-w-sm">
+              <dl className="grid grid-cols-2 gap-y-3 text-sm">
+                <dt className="text-subtext-0">Initial balance</dt>
+                <dd className="text-right text-text">{`$${wallet.initialBalanceUsd.toLocaleString()}`}</dd>
+                <dt className="text-subtext-0">Current balance</dt>
+                <dd className="text-right text-text">{`$${wallet.currentBalanceUsd.toLocaleString()}`}</dd>
+                <dt className="text-subtext-0">All-time P&amp;L</dt>
+                <dd
+                  className={`text-right font-medium ${
+                    wallet.allTimePnlUsd >= 0 ? "text-emerald-400" : "text-destructive"
+                  }`}
+                >{`$${wallet.allTimePnlUsd.toLocaleString()}`}</dd>
+              </dl>
+            </Card>
           ) : (
-            <table className="w-full max-w-2xl border-collapse text-left text-sm">
-              <thead>
-                <tr>
-                  <th className="border-b py-2">Time</th>
-                  <th className="border-b py-2">Symbol</th>
-                  <th className="border-b py-2">Direction</th>
-                  <th className="border-b py-2">Rate</th>
-                  <th className="border-b py-2">Amount (USD)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {fundingPayments.map((p, i) => (
-                  <tr key={i}>
-                    <td className="border-b py-2">
-                      {new Date(p.time).toLocaleString()}
-                    </td>
-                    <td className="border-b py-2">{p.symbol}</td>
-                    <td className="border-b py-2">{p.direction}</td>
-                    <td className="border-b py-2">
-                      {(p.fundingRate * 100).toFixed(4)}%
-                    </td>
-                    <td className="border-b py-2">{p.amountUsd.toFixed(4)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <Card className="max-w-sm">
+              <form onSubmit={handleCreate} className="flex flex-col gap-3">
+                <label className="flex flex-col gap-1">
+                  <Label>Initial balance (USD)</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={initialBalance}
+                    onChange={(e) => setInitialBalance(e.target.value)}
+                  />
+                </label>
+                <Button type="submit" disabled={submitting}>
+                  {submitting ? "Creating..." : "Create wallet"}
+                </Button>
+              </form>
+            </Card>
           )}
         </section>
-      )}
-    </main>
+
+        {wallet && (
+          <section>
+            <h2 className="mb-3 text-lg font-semibold tracking-tight text-text">
+              Recent funding payments
+            </h2>
+            {!fundingPayments ? (
+              <p className="text-sm text-subtext-1">Loading...</p>
+            ) : fundingPayments.length === 0 ? (
+              <p className="text-sm text-subtext-1">No funding payments yet.</p>
+            ) : (
+              <Card className="max-w-2xl overflow-x-auto p-0">
+                <table className="w-full border-collapse text-left text-sm text-text">
+                  <thead>
+                    <tr>
+                      <th className={TH}>Time</th>
+                      <th className={TH}>Symbol</th>
+                      <th className={TH}>Direction</th>
+                      <th className={TH}>Rate</th>
+                      <th className={TH}>Amount (USD)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fundingPayments.map((p, i) => (
+                      <tr key={i} className="hover:bg-surface-0/60">
+                        <td className={TD}>
+                          {new Date(p.time).toLocaleString()}
+                        </td>
+                        <td className={TD}>{p.symbol}</td>
+                        <td className={TD}>{p.direction}</td>
+                        <td className={TD}>
+                          {(p.fundingRate * 100).toFixed(4)}%
+                        </td>
+                        <td className={TD}>{p.amountUsd.toFixed(4)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+            )}
+          </section>
+        )}
+      </main>
+    </div>
   );
 }

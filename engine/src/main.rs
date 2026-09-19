@@ -6,7 +6,9 @@ use engine::decision::{
     self, FakeJevAdapter, MockExecutionAdapter, PostgresDecisionLogWriter,
     PostgresMarketDataHistoryReader,
 };
-use engine::funding::{self, HyperliquidFundingRateSource, PostgresFundingPaymentWriter};
+use engine::funding::{
+    self, HyperliquidFundingRateSource, PostgresFundingHistoryReader, PostgresFundingPaymentWriter,
+};
 use engine::market_data::{self, HyperliquidMarketDataClient, PostgresMarketDataWriter};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
@@ -92,11 +94,13 @@ async fn main() {
         Arc::new(HyperliquidFundingRateSource::default());
     let funding_payment_writer: Arc<dyn funding::FundingPaymentWriter> =
         Arc::new(PostgresFundingPaymentWriter::new(pool.clone()));
+    let funding_history: Arc<dyn funding::FundingHistoryReader> =
+        Arc::new(PostgresFundingHistoryReader::new(pool.clone()));
 
     tokio::select! {
         _ = run_with_reconnect(&mongo_url, store.clone()) => {},
         _ = market_data::run(store.clone(), market_data_client, market_data_writer, SAMPLING_POLL_INTERVAL) => {},
-        _ = decision::run(store, history, jev, execution.clone(), decision_log, DECISION_POLL_INTERVAL) => {},
+        _ = decision::run(store, history, jev, execution.clone(), funding_history, decision_log, DECISION_POLL_INTERVAL) => {},
         _ = funding::run(execution, funding_rate_source, funding_payment_writer, FUNDING_INTERVAL) => {},
     }
 }

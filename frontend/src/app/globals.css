@@ -1,3 +1,25 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/*
+  Ember — dark, red-primary palette in the same shape as the reference
+  design language (near-black base, single accent hue, layered surfaces).
+*/
+:root {
+  color-scheme: dark;
+}
+
+html {
+  background-color: #0a0607;
+}
+
+body {
+  background-color: #150d0f;
+  color: #f6e9ea;
+}
+
+::selection {
+  background-color: #ff3b3b;
+  color: #150d0f;
+}

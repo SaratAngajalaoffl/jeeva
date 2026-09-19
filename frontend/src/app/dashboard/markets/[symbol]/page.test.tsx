@@ -10,6 +10,7 @@ vi.mock("@/lib/api", () => ({
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ symbol: "BTC" }),
+  usePathname: () => "/dashboard/markets/BTC",
 }));
 
 import MarketDataPage from "./page";

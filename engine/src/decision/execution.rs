@@ -1,6 +1,7 @@
 use std::fmt;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
 use crate::pg::execute_idempotent;
@@ -23,6 +24,7 @@ pub struct OpenPosition {
     pub direction: Direction,
     pub entry_price: f64,
     pub notional_usd: f64,
+    pub opened_at: DateTime<Utc>,
 }
 
 /// Opens/closes a PERP's mock position against the shared mock wallet.
@@ -121,16 +123,16 @@ impl MockExecutionAdapter {
 #[async_trait]
 impl ExecutionAdapter for MockExecutionAdapter {
     async fn get_position(&self, symbol: &str) -> Result<Option<OpenPosition>, ExecutionError> {
-        let row = sqlx::query_as::<_, (String, f64, f64)>(
-            "SELECT direction, entry_price, notional_usd FROM mock_positions WHERE symbol = $1",
+        let row = sqlx::query_as::<_, (String, f64, f64, DateTime<Utc>)>(
+            "SELECT direction, entry_price, notional_usd, opened_at FROM mock_positions WHERE symbol = $1",
         )
         .bind(symbol)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| ExecutionError(format!("failed to read position: {e}")))?;
 
-        Ok(
-            row.map(|(direction, entry_price, notional_usd)| OpenPosition {
+        Ok(row.map(
+            |(direction, entry_price, notional_usd, opened_at)| OpenPosition {
                 direction: if direction == "long" {
                     Direction::Long
                 } else {
@@ -138,8 +140,9 @@ impl ExecutionAdapter for MockExecutionAdapter {
                 },
                 entry_price,
                 notional_usd,
-            }),
-        )
+                opened_at,
+            },
+        ))
     }
 
     async fn open(
@@ -153,17 +156,18 @@ impl ExecutionAdapter for MockExecutionAdapter {
         let notional_usd = position_size_usd * leverage;
         let entry_price = fill_price(mid_price, direction, true, self.slippage_bps);
 
-        sqlx::query(
+        let (opened_at,) = sqlx::query_as::<_, (DateTime<Utc>,)>(
             r#"
             INSERT INTO mock_positions (symbol, direction, entry_price, notional_usd)
             VALUES ($1, $2, $3, $4)
+            RETURNING opened_at
             "#,
         )
         .bind(symbol)
         .bind(direction.as_str())
         .bind(entry_price)
         .bind(notional_usd)
-        .execute(&self.pool)
+        .fetch_one(&self.pool)
         .await
         .map_err(|e| ExecutionError(format!("failed to open position: {e}")))?;
 
@@ -179,6 +183,7 @@ impl ExecutionAdapter for MockExecutionAdapter {
             direction,
             entry_price,
             notional_usd,
+            opened_at,
         })
     }
 
@@ -232,8 +237,8 @@ impl ExecutionAdapter for MockExecutionAdapter {
     }
 
     async fn list_open_positions(&self) -> Result<Vec<(String, OpenPosition)>, ExecutionError> {
-        let rows = sqlx::query_as::<_, (String, String, f64, f64)>(
-            "SELECT symbol, direction, entry_price, notional_usd FROM mock_positions",
+        let rows = sqlx::query_as::<_, (String, String, f64, f64, DateTime<Utc>)>(
+            "SELECT symbol, direction, entry_price, notional_usd, opened_at FROM mock_positions",
         )
         .fetch_all(&self.pool)
         .await
@@ -241,7 +246,7 @@ impl ExecutionAdapter for MockExecutionAdapter {
 
         Ok(rows
             .into_iter()
-            .map(|(symbol, direction, entry_price, notional_usd)| {
+            .map(|(symbol, direction, entry_price, notional_usd, opened_at)| {
                 let position = OpenPosition {
                     direction: if direction == "long" {
                         Direction::Long
@@ -250,6 +255,7 @@ impl ExecutionAdapter for MockExecutionAdapter {
                     },
                     entry_price,
                     notional_usd,
+                    opened_at,
                 };
                 (symbol, position)
             })

@@ -3,12 +3,19 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { fetchPerps, updatePerpConfig, type Perp } from "@/lib/api";
+import { SiteHeader } from "@/components/SiteHeader";
+import { Card } from "@/components/ui";
 
 type NumericField =
   | "decisionFrequencySeconds"
   | "samplingFrequencySeconds"
   | "leverage"
   | "positionSizeUsd";
+
+const NUMERIC_INPUT =
+  "w-24 rounded-md border border-surface-1 bg-mantle px-2 py-1 text-sm text-text outline-none focus:border-ember/70 focus:ring-1 focus:ring-ember/50";
+const TH = "border-b border-surface-1 py-2 pr-4 text-left text-xs font-medium uppercase tracking-wide text-subtext-0";
+const TD = "border-b border-surface-1 py-2 pr-4";
 
 export default function MarketsPage() {
   const [perps, setPerps] = useState<Perp[] | null>(null);
@@ -53,130 +60,138 @@ export default function MarketsPage() {
     }
   }
 
-  if (error) {
-    return <p className="p-8 text-red-600">{error}</p>;
-  }
-
-  if (!perps) {
-    return <p className="p-8">Loading markets...</p>;
-  }
-
   return (
-    <main className="flex flex-col gap-4 p-8">
-      <h1 className="text-xl font-semibold">Markets</h1>
-      <table className="w-full max-w-6xl border-collapse text-left">
-        <thead>
-          <tr>
-            <th className="border-b py-2">Symbol</th>
-            <th className="border-b py-2">Trading enabled</th>
-            <th className="border-b py-2">Sampling enabled</th>
-            <th className="border-b py-2">Decision frequency (s)</th>
-            <th className="border-b py-2">Sampling frequency (s)</th>
-            <th className="border-b py-2">Leverage</th>
-            <th className="border-b py-2">Position size (USD)</th>
-            <th className="border-b py-2">Chart</th>
-          </tr>
-        </thead>
-        <tbody>
-          {perps.map((perp) => (
-            <tr key={perp.symbol}>
-              <td className="border-b py-2">{perp.symbol}</td>
-              <td className="border-b py-2">
-                <input
-                  type="checkbox"
-                  aria-label={`${perp.symbol} trading enabled`}
-                  checked={perp.tradingEnabled}
-                  onChange={(e) =>
-                    applyPatch(perp.symbol, {
-                      tradingEnabled: e.target.checked,
-                    })
-                  }
-                />
-              </td>
-              <td className="border-b py-2">
-                <input
-                  type="checkbox"
-                  aria-label={`${perp.symbol} sampling enabled`}
-                  checked={perp.samplingEnabled}
-                  onChange={(e) =>
-                    applyPatch(perp.symbol, {
-                      samplingEnabled: e.target.checked,
-                    })
-                  }
-                />
-              </td>
-              <td className="border-b py-2">
-                <input
-                  type="number"
-                  min={1}
-                  className="w-24 rounded border px-2 py-1"
-                  aria-label={`${perp.symbol} decision frequency seconds`}
-                  defaultValue={perp.decisionFrequencySeconds}
-                  onBlur={(e) =>
-                    handleNumericBlur(
-                      perp.symbol,
-                      "decisionFrequencySeconds",
-                      e.target.value,
-                    )
-                  }
-                />
-              </td>
-              <td className="border-b py-2">
-                <input
-                  type="number"
-                  min={1}
-                  className="w-24 rounded border px-2 py-1"
-                  aria-label={`${perp.symbol} sampling frequency seconds`}
-                  defaultValue={perp.samplingFrequencySeconds}
-                  onBlur={(e) =>
-                    handleNumericBlur(
-                      perp.symbol,
-                      "samplingFrequencySeconds",
-                      e.target.value,
-                    )
-                  }
-                />
-              </td>
-              <td className="border-b py-2">
-                <input
-                  type="number"
-                  min={1}
-                  className="w-20 rounded border px-2 py-1"
-                  aria-label={`${perp.symbol} leverage`}
-                  defaultValue={perp.leverage}
-                  onBlur={(e) =>
-                    handleNumericBlur(perp.symbol, "leverage", e.target.value)
-                  }
-                />
-              </td>
-              <td className="border-b py-2">
-                <input
-                  type="number"
-                  min={1}
-                  className="w-28 rounded border px-2 py-1"
-                  aria-label={`${perp.symbol} position size usd`}
-                  defaultValue={perp.positionSizeUsd}
-                  onBlur={(e) =>
-                    handleNumericBlur(
-                      perp.symbol,
-                      "positionSizeUsd",
-                      e.target.value,
-                    )
-                  }
-                />
-              </td>
-              <td className="border-b py-2">
-                <Link
-                  href={`/dashboard/markets/${perp.symbol}`}
-                  className="underline"
-                >
-                  View
-                </Link>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </main>
+    <div className="min-h-screen">
+      <SiteHeader />
+      <main className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-8 sm:px-6 lg:px-8">
+        <h1 className="text-xl font-semibold tracking-tight text-text">
+          Markets
+        </h1>
+
+        {error && <p className="text-sm text-destructive">{error}</p>}
+
+        {!perps ? (
+          <p className="text-sm text-subtext-1">Loading markets...</p>
+        ) : (
+          <Card className="overflow-x-auto p-0">
+            <table className="w-full min-w-[720px] border-collapse text-left text-sm text-text">
+              <thead>
+                <tr>
+                  <th className={TH}>Symbol</th>
+                  <th className={TH}>Trading</th>
+                  <th className={TH}>Sampling</th>
+                  <th className={TH}>Decision freq (s)</th>
+                  <th className={TH}>Sampling freq (s)</th>
+                  <th className={TH}>Leverage</th>
+                  <th className={TH}>Position size (USD)</th>
+                  <th className={TH}>Chart</th>
+                </tr>
+              </thead>
+              <tbody>
+                {perps.map((perp) => (
+                  <tr key={perp.symbol} className="hover:bg-surface-0/60">
+                    <td className={`${TD} font-medium`}>{perp.symbol}</td>
+                    <td className={TD}>
+                      <input
+                        type="checkbox"
+                        aria-label={`${perp.symbol} trading enabled`}
+                        checked={perp.tradingEnabled}
+                        onChange={(e) =>
+                          applyPatch(perp.symbol, {
+                            tradingEnabled: e.target.checked,
+                          })
+                        }
+                        className="h-4 w-4 accent-ember"
+                      />
+                    </td>
+                    <td className={TD}>
+                      <input
+                        type="checkbox"
+                        aria-label={`${perp.symbol} sampling enabled`}
+                        checked={perp.samplingEnabled}
+                        onChange={(e) =>
+                          applyPatch(perp.symbol, {
+                            samplingEnabled: e.target.checked,
+                          })
+                        }
+                        className="h-4 w-4 accent-ember"
+                      />
+                    </td>
+                    <td className={TD}>
+                      <input
+                        type="number"
+                        min={1}
+                        className={NUMERIC_INPUT}
+                        aria-label={`${perp.symbol} decision frequency seconds`}
+                        defaultValue={perp.decisionFrequencySeconds}
+                        onBlur={(e) =>
+                          handleNumericBlur(
+                            perp.symbol,
+                            "decisionFrequencySeconds",
+                            e.target.value,
+                          )
+                        }
+                      />
+                    </td>
+                    <td className={TD}>
+                      <input
+                        type="number"
+                        min={1}
+                        className={NUMERIC_INPUT}
+                        aria-label={`${perp.symbol} sampling frequency seconds`}
+                        defaultValue={perp.samplingFrequencySeconds}
+                        onBlur={(e) =>
+                          handleNumericBlur(
+                            perp.symbol,
+                            "samplingFrequencySeconds",
+                            e.target.value,
+                          )
+                        }
+                      />
+                    </td>
+                    <td className={TD}>
+                      <input
+                        type="number"
+                        min={1}
+                        className={`${NUMERIC_INPUT} w-20`}
+                        aria-label={`${perp.symbol} leverage`}
+                        defaultValue={perp.leverage}
+                        onBlur={(e) =>
+                          handleNumericBlur(perp.symbol, "leverage", e.target.value)
+                        }
+                      />
+                    </td>
+                    <td className={TD}>
+                      <input
+                        type="number"
+                        min={1}
+                        className={`${NUMERIC_INPUT} w-28`}
+                        aria-label={`${perp.symbol} position size usd`}
+                        defaultValue={perp.positionSizeUsd}
+                        onBlur={(e) =>
+                          handleNumericBlur(
+                            perp.symbol,
+                            "positionSizeUsd",
+                            e.target.value,
+                          )
+                        }
+                      />
+                    </td>
+                    <td className={TD}>
+                      <Link
+                        href={`/dashboard/markets/${perp.symbol}`}
+                        className="text-ember hover:underline"
+                      >
+                        View
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
+        )}
+      </main>
+    </div>
   );
 }

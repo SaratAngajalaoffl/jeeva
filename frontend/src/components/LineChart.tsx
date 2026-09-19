@@ -17,13 +17,13 @@ const WIDTH = 640;
 const HEIGHT = 200;
 const PADDING = 32;
 
-// Single-series chart: one hue (categorical slot 1, blue) is enough —
+// Single-series chart: one hue (categorical slot 1, ember) is enough —
 // a legend would be redundant since the title already names the series.
-const SERIES_COLOR = "#2a78d6";
-const GRIDLINE_COLOR = "#e1e0d9";
-const AXIS_COLOR = "#c3c2b7";
-const MUTED_TEXT = "#898781";
-const PRIMARY_TEXT = "#0b0b0b";
+const SERIES_COLOR = "#ff3b3b";
+const GRIDLINE_COLOR = "#33191d";
+const AXIS_COLOR = "#452127";
+const MUTED_TEXT = "#c29a9d";
+const PRIMARY_TEXT = "#f6e9ea";
 
 export default function LineChart({ title, unit, points }: LineChartProps) {
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
@@ -58,7 +58,7 @@ export default function LineChart({ title, unit, points }: LineChartProps) {
 
   if (points.length === 0) {
     return (
-      <div className="rounded border p-4">
+      <div className="rounded-xl border border-surface-1 bg-surface-0/60 p-4">
         <h3
           className="mb-2 text-sm font-medium"
           style={{ color: PRIMARY_TEXT }}
@@ -76,7 +76,7 @@ export default function LineChart({ title, unit, points }: LineChartProps) {
   const hoveredCoord = hoverIndex !== null ? coords[hoverIndex] : null;
 
   return (
-    <div className="rounded border p-4">
+    <div className="rounded-xl border border-surface-1 bg-surface-0/60 p-4">
       <h3 className="mb-2 text-sm font-medium" style={{ color: PRIMARY_TEXT }}>
         {title}
       </h3>
@@ -151,7 +151,7 @@ export default function LineChart({ title, unit, points }: LineChartProps) {
               cy={hoveredCoord[1]}
               r={4}
               fill={SERIES_COLOR}
-              stroke="#fcfcfb"
+              stroke="#150d0f"
               strokeWidth={2}
             />
           </>

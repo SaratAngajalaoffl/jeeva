@@ -123,6 +123,7 @@ fn position(direction: Direction, notional_usd: f64) -> OpenPosition {
         direction,
         entry_price: 100.0,
         notional_usd,
+        opened_at: chrono::Utc::now(),
     }
 }
 
