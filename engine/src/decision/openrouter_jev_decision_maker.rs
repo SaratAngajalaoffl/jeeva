@@ -7,48 +7,51 @@ use serde_json::{json, Value};
 use super::decision_maker::{parse_direction, DecisionError, DecisionMaker};
 use super::model::{JevDecision, Probabilities};
 
-const DEFAULT_BASE_URL: &str = "https://openrouter.ai/api/v1";
+const DEFAULT_BASE_URL: &str = "https://openrouter.ai/api/alpha";
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The Jev model on OpenRouter (docs: openrouter.ai/~typesafe/jev-latest).
-const MODEL: &str = "typesafe/jev-latest";
+/// Note the leading `~`: OpenRouter's Decisions API addresses Jev with a
+/// tilde-prefixed model id, unlike ordinary `/chat/completions` models.
+const MODEL: &str = "~typesafe/jev-latest";
 
-/// The three criteria Jev chooses between. Mirrors the `criteria` sent
-/// to TypeSafe's `systemOne` API, so both decision makers ask the same
-/// question and answer in the same vocabulary.
-const CRITERIA: [&str; 3] = ["long", "short", "flat"];
+/// The id of the (sole) question sent to Jev, and the key its answer is
+/// returned under in `answers`.
+const QUESTION_ID: &str = "direction";
 
-const SYSTEM_PROMPT: &str = "You are Jev, a trading decision model. Given the current market \
-state of a perpetual futures position, decide the Target Direction the position should be in \
-after this cycle. Answer with the requested JSON object: `choice` (the criterion you select), \
-`confidence` (0 to 1), and `probabilities` (a distribution over every criterion, summing to 1).";
-
-#[derive(Debug, Serialize)]
-struct ChatMessage<'a> {
-    role: &'static str,
-    content: &'a str,
-}
+const QUESTION_INSTRUCTIONS: &str =
+    "Given the current market state of a perpetual futures position, decide the Target \
+Direction the position should be in after this cycle.";
 
 #[derive(Debug, Serialize)]
-struct ChatCompletionRequest<'a> {
+struct DecisionRequest<'a> {
     model: &'static str,
-    messages: [ChatMessage<'a>; 2],
-    response_format: Value,
+    state: &'a str,
+    questions: Value,
+}
+
+/// Jev is queried through OpenRouter's Decisions API rather than
+/// `/chat/completions`: it doesn't generate text, it answers typed
+/// questions about a `state` and returns calibrated probabilities. A
+/// `choice` question mirrors `SystemOneRequest`'s `question.criteria`,
+/// so the reply can be parsed into the same `JevDecision` shape.
+fn questions() -> Value {
+    json!({
+        QUESTION_ID: {
+            "type": "choice",
+            "instructions": QUESTION_INSTRUCTIONS,
+            "criteria": {
+                "long": "Open or hold a long position",
+                "short": "Open or hold a short position",
+                "flat": "Stay out of the market"
+            }
+        }
+    })
 }
 
 #[derive(Debug, Deserialize)]
-struct ChatCompletionResponse {
-    choices: Vec<ChatChoice>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChatChoice {
-    message: ChatCompletionMessage,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChatCompletionMessage {
-    content: String,
+struct DecisionResponse {
+    answers: std::collections::HashMap<String, DirectionAnswer>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -59,42 +62,10 @@ struct JevProbabilities {
 }
 
 #[derive(Debug, Deserialize)]
-struct JevChoice {
+struct DirectionAnswer {
     choice: String,
     confidence: f64,
     probabilities: JevProbabilities,
-}
-
-/// The JSON Schema Jev's answer is constrained to — the OpenRouter
-/// equivalent of `SystemOneRequest`'s `question.criteria`, so the reply
-/// can be parsed into the same `JevDecision` shape.
-fn response_format() -> Value {
-    json!({
-        "type": "json_schema",
-        "json_schema": {
-            "name": "jev_decision",
-            "strict": true,
-            "schema": {
-                "type": "object",
-                "properties": {
-                    "choice": { "type": "string", "enum": CRITERIA },
-                    "confidence": { "type": "number" },
-                    "probabilities": {
-                        "type": "object",
-                        "properties": {
-                            "long": { "type": "number" },
-                            "short": { "type": "number" },
-                            "flat": { "type": "number" }
-                        },
-                        "required": ["long", "short", "flat"],
-                        "additionalProperties": false
-                    }
-                },
-                "required": ["choice", "confidence", "probabilities"],
-                "additionalProperties": false
-            }
-        }
-    })
 }
 
 /// Calls Jev via OpenRouter (`openrouter.ai/~typesafe/jev-latest`)
@@ -133,25 +104,16 @@ impl OpenRouterJevDecisionMaker {
 #[async_trait]
 impl DecisionMaker for OpenRouterJevDecisionMaker {
     async fn decide(&self, symbol: &str, state: &str) -> Result<JevDecision, DecisionError> {
-        let url = format!("{}/chat/completions", self.base_url);
+        let url = format!("{}/decisions", self.base_url);
 
         let response = self
             .http
             .post(&url)
             .bearer_auth(&self.api_key)
-            .json(&ChatCompletionRequest {
+            .json(&DecisionRequest {
                 model: MODEL,
-                messages: [
-                    ChatMessage {
-                        role: "system",
-                        content: SYSTEM_PROMPT,
-                    },
-                    ChatMessage {
-                        role: "user",
-                        content: state,
-                    },
-                ],
-                response_format: response_format(),
+                state,
+                questions: questions(),
             })
             .send()
             .await
@@ -163,35 +125,26 @@ impl DecisionMaker for OpenRouterJevDecisionMaker {
             ))
         })?;
 
-        let body: ChatCompletionResponse = response
+        let mut body: DecisionResponse = response
             .json()
             .await
             .map_err(|e| DecisionError(format!("OpenRouter response invalid for {symbol}: {e}")))?;
 
-        let content = body
-            .choices
-            .first()
-            .ok_or_else(|| {
-                DecisionError(format!(
-                    "OpenRouter response contained no choices for {symbol}"
-                ))
-            })?
-            .message
-            .content
-            .clone();
-        let choice: JevChoice = serde_json::from_str(&content).map_err(|e| {
-            DecisionError(format!("OpenRouter completion invalid for {symbol}: {e}"))
+        let answer = body.answers.remove(QUESTION_ID).ok_or_else(|| {
+            DecisionError(format!(
+                "OpenRouter response contained no '{QUESTION_ID}' answer for {symbol}"
+            ))
         })?;
 
-        let direction = parse_direction(&choice.choice)?;
+        let direction = parse_direction(&answer.choice)?;
 
         Ok(JevDecision {
             direction,
-            confidence: choice.confidence,
+            confidence: answer.confidence,
             probabilities: Probabilities {
-                long: choice.probabilities.long,
-                short: choice.probabilities.short,
-                flat: choice.probabilities.flat,
+                long: answer.probabilities.long,
+                short: answer.probabilities.short,
+                flat: answer.probabilities.flat,
             },
         })
     }
@@ -205,12 +158,22 @@ mod tests {
     use wiremock::matchers::{body_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    /// A chat-completion body wrapping Jev's answer, as OpenRouter
-    /// returns it: the choice itself arrives as a JSON *string* inside
-    /// `choices[0].message.content`.
-    fn completion(answer: serde_json::Value) -> ResponseTemplate {
+    /// A Decisions API response wrapping Jev's answer to the `direction`
+    /// question, as OpenRouter returns it.
+    fn decision_response(choice: &str, confidence: f64, probs: serde_json::Value) -> ResponseTemplate {
         ResponseTemplate::new(200).set_body_json(json!({
-            "choices": [{ "message": { "content": answer.to_string() } }]
+            "model": "typesafe/jev-1.13-20260917",
+            "answers": {
+                QUESTION_ID: {
+                    "type": "choice",
+                    "choice": choice,
+                    "probabilities": probs,
+                    "confidence": confidence
+                }
+            },
+            "usage": { "input_tokens": 1, "output_tokens": 1, "cost": 0.0 },
+            "id": "gen-dec-test",
+            "provider": "TypeSafe"
         }))
     }
 
@@ -223,21 +186,18 @@ mod tests {
         let server = MockServer::start().await;
 
         Mock::given(method("POST"))
-            .and(path("/chat/completions"))
+            .and(path("/decisions"))
             .and(header("authorization", "Bearer test-api-key"))
             .and(body_json(json!({
-                "model": "typesafe/jev-latest",
-                "messages": [
-                    { "role": "system", "content": SYSTEM_PROMPT },
-                    { "role": "user", "content": "BTC context" }
-                ],
-                "response_format": response_format()
+                "model": "~typesafe/jev-latest",
+                "state": "BTC context",
+                "questions": questions()
             })))
-            .respond_with(completion(json!({
-                "choice": "long",
-                "confidence": 0.82,
-                "probabilities": { "long": 0.7, "short": 0.1, "flat": 0.2 }
-            })))
+            .respond_with(decision_response(
+                "long",
+                0.82,
+                json!({ "long": 0.7, "short": 0.1, "flat": 0.2 }),
+            ))
             .mount(&server)
             .await;
 
@@ -256,7 +216,7 @@ mod tests {
         let server = MockServer::start().await;
 
         Mock::given(method("POST"))
-            .and(path("/chat/completions"))
+            .and(path("/decisions"))
             .respond_with(ResponseTemplate::new(500))
             .mount(&server)
             .await;
@@ -271,7 +231,7 @@ mod tests {
         let server = MockServer::start().await;
 
         Mock::given(method("POST"))
-            .and(path("/chat/completions"))
+            .and(path("/decisions"))
             .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
             .mount(&server)
             .await;
@@ -282,20 +242,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_completion_that_is_not_the_expected_object_is_a_failure_not_a_crash() {
+    async fn a_response_missing_the_direction_answer_is_a_failure_not_a_crash() {
         let server = MockServer::start().await;
 
         Mock::given(method("POST"))
-            .and(path("/chat/completions"))
+            .and(path("/decisions"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "choices": [{ "message": { "content": "The market looks bullish to me." } }]
+                "model": "typesafe/jev-1.13-20260917",
+                "answers": {},
+                "usage": { "input_tokens": 1, "output_tokens": 1, "cost": 0.0 },
+                "id": "gen-dec-test",
+                "provider": "TypeSafe"
             })))
             .mount(&server)
             .await;
 
         let dm = adapter_against(&server);
         let error = dm.decide("BTC", "state").await.unwrap_err();
-        assert!(error.0.contains("invalid"));
+        assert!(error.0.contains("no 'direction' answer"));
     }
 
     #[tokio::test]
@@ -303,12 +267,12 @@ mod tests {
         let server = MockServer::start().await;
 
         Mock::given(method("POST"))
-            .and(path("/chat/completions"))
-            .respond_with(completion(json!({
-                "choice": "sideways",
-                "confidence": 0.5,
-                "probabilities": { "long": 0.3, "short": 0.3, "flat": 0.4 }
-            })))
+            .and(path("/decisions"))
+            .respond_with(decision_response(
+                "sideways",
+                0.5,
+                json!({ "long": 0.3, "short": 0.3, "flat": 0.4 }),
+            ))
             .mount(&server)
             .await;
 
@@ -322,7 +286,7 @@ mod tests {
         let server = MockServer::start().await;
 
         Mock::given(method("POST"))
-            .and(path("/chat/completions"))
+            .and(path("/decisions"))
             .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_millis(200)))
             .mount(&server)
             .await;
