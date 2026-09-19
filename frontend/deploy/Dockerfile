@@ -2,7 +2,13 @@ FROM node:20-slim AS builder
 WORKDIR /repo
 COPY package.json package-lock.json* ./
 COPY frontend/package.json frontend/package.json
-RUN npm ci --workspace=frontend --include-workspace-root
+# Two copies of esbuild get installed here (0.21.5 via vite, 0.28.2 via tsx),
+# and each postinstall hardlinks its platform binary and then execs it. On some
+# builders (BuildKit/overlayfs on CI) that exec intermittently fails with
+# ETXTBSY because the freshly written file still has an open write handle,
+# which aborts the whole install. Retry once to absorb the race.
+RUN npm ci --workspace=frontend --include-workspace-root \
+ || npm ci --workspace=frontend --include-workspace-root
 COPY frontend ./frontend
 # NEXT_PUBLIC_* vars are inlined into the client bundle at build time, so
 # the publicly reachable api URL must be supplied here, not at container
