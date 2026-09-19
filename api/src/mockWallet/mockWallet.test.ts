@@ -4,7 +4,6 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../app.js";
 import { SESSION_COOKIE_NAME } from "../auth/config.js";
 import { signSessionToken } from "../auth/session.js";
-import { migrateMockWallet } from "./repository.js";
 
 const DATABASE_URL =
   process.env.TEST_DATABASE_URL ??
@@ -17,7 +16,6 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await migrateMockWallet(pgPool);
   await pgPool.query("DELETE FROM mock_wallet");
 });
 

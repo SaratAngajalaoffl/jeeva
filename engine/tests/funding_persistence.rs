@@ -18,7 +18,6 @@ async fn pool() -> PgPool {
 #[tokio::test]
 async fn writes_a_row_readable_back_with_all_fields() {
     let pool = pool().await;
-    PostgresFundingPaymentWriter::migrate(&pool).await.unwrap();
     let writer = PostgresFundingPaymentWriter::new(pool.clone());
 
     sqlx::query("DELETE FROM funding_payments WHERE symbol = $1")
@@ -56,7 +55,6 @@ async fn writes_a_row_readable_back_with_all_fields() {
 #[tokio::test]
 async fn every_call_writes_a_separate_row() {
     let pool = pool().await;
-    PostgresFundingPaymentWriter::migrate(&pool).await.unwrap();
     let writer = PostgresFundingPaymentWriter::new(pool.clone());
 
     sqlx::query("DELETE FROM funding_payments WHERE symbol = $1")
@@ -84,7 +82,6 @@ async fn every_call_writes_a_separate_row() {
 #[tokio::test]
 async fn funding_payments_table_is_a_hypertable() {
     let pool = pool().await;
-    PostgresFundingPaymentWriter::migrate(&pool).await.unwrap();
 
     let row = sqlx::query(
         "SELECT count(*) as count FROM timescaledb_information.hypertables WHERE hypertable_name = 'funding_payments'",

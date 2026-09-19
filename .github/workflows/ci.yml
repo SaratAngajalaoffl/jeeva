@@ -62,6 +62,18 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: engine
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install API deps and run Postgres migrations
+        working-directory: .
+        run: |
+          npm ci --workspace=api --include-workspace-root
+          npm run migrate up --workspace=api
+        env:
+          DATABASE_URL: postgres://jeeva:jeeva@localhost:5432/jeeva_test
       - name: Start a single-node MongoDB replica set
         # Change streams (used by the config watcher) require a replica
         # set, which GitHub's declarative `services:` block can't
@@ -118,6 +130,9 @@ jobs:
       - run: npm ci
       - run: npm run lint --workspace=api
       - run: npm run build --workspace=api
+      - run: npm run migrate up --workspace=api
+        env:
+          DATABASE_URL: postgres://jeeva:jeeva@localhost:5432/jeeva_test
       - run: npm run test --workspace=api
         env:
           TEST_MONGO_URL: mongodb://localhost:27017/jeeva_test

@@ -17,7 +17,7 @@ async fn pool() -> PgPool {
 const TEST_KEY_HEX: &str = "0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318";
 
 async fn reset_engine_wallet_table(pool: &PgPool) {
-    sqlx::query("DROP TABLE IF EXISTS engine_wallet")
+    sqlx::query("DELETE FROM engine_wallet")
         .execute(pool)
         .await
         .unwrap();
@@ -27,7 +27,6 @@ async fn reset_engine_wallet_table(pool: &PgPool) {
 async fn publish_public_address_persists_only_the_address_never_the_key() {
     let pool = pool().await;
     reset_engine_wallet_table(&pool).await;
-    LiveExecutionAdapter::migrate(&pool).await.unwrap();
 
     let key = PrivateKey::from_hex(TEST_KEY_HEX).unwrap();
     let adapter = LiveExecutionAdapter::new("https://example.invalid", key, true);
@@ -64,7 +63,6 @@ async fn publish_public_address_persists_only_the_address_never_the_key() {
 async fn publish_public_address_is_idempotent_across_restarts() {
     let pool = pool().await;
     reset_engine_wallet_table(&pool).await;
-    LiveExecutionAdapter::migrate(&pool).await.unwrap();
 
     let key = PrivateKey::from_hex(TEST_KEY_HEX).unwrap();
     let adapter = LiveExecutionAdapter::new("https://example.invalid", key, true);

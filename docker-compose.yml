@@ -39,6 +39,22 @@ services:
       - "5432:5432"
     volumes:
       - timescale_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "jeeva"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      dockerfile: api/Dockerfile.dev
+    environment:
+      DATABASE_URL: postgres://jeeva:jeeva@timescaledb:5432/jeeva
+    entrypoint: ["npm", "run", "migrate", "up"]
+    depends_on:
+      timescaledb:
+        condition: service_healthy
 
   api:
     build:
@@ -59,23 +75,31 @@ services:
     depends_on:
       mongo-init:
         condition: service_completed_successfully
-      timescaledb:
-        condition: service_started
+      migrate:
+        condition: service_completed_successfully
 
   engine:
     build:
       context: ./engine
       dockerfile: Dockerfile.dev
     environment:
-      MONGO_URL: mongodb://mongo:27017/jeeva
-      DATABASE_URL: postgres://jeeva:jeeva@timescaledb:5432/jeeva
+      - MONGO_URL=mongodb://mongo:27017/jeeva
+      - DATABASE_URL=postgres://jeeva:jeeva@timescaledb:5432/jeeva
+      # Bare names (no value) pass these through from .env only when set
+      # there; unlike `VAR=${VAR:-}`, an unset var is left out of the
+      # container entirely instead of becoming an empty string, which the
+      # engine would otherwise misread as "configured".
+      - TYPESAFE_API_KEY
+      - TYPESAFE_BASE_URL
+      - HYPERLIQUID_PRIVATE_KEY
+      - HYPERLIQUID_TESTNET
     volumes:
       - ./engine/src:/app/src
     depends_on:
       mongo-init:
         condition: service_completed_successfully
-      timescaledb:
-        condition: service_started
+      migrate:
+        condition: service_completed_successfully
 
   frontend:
     build:

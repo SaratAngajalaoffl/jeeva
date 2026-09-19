@@ -4,8 +4,6 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use sqlx::PgPool;
 
-use crate::pg::execute_idempotent;
-
 /// Tracks each PERP's consecutive decision-cycle failure count so the
 /// decision loop knows when to auto-flatten (5 in a row) and so the
 /// dashboard can show a health indicator before that threshold is hit.
@@ -66,22 +64,6 @@ impl PerpHealthTracker {
             pool,
             counts: Mutex::new(HashMap::new()),
         }
-    }
-
-    pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {
-        execute_idempotent(
-            pool,
-            r#"
-            CREATE TABLE IF NOT EXISTS perp_health (
-                symbol TEXT PRIMARY KEY,
-                consecutive_failures INT NOT NULL DEFAULT 0,
-                last_failure_reason TEXT,
-                last_failure_at TIMESTAMPTZ,
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            "#,
-        )
-        .await
     }
 }
 

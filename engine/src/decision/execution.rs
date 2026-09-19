@@ -4,8 +4,6 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
-use crate::pg::execute_idempotent;
-
 use super::model::Direction;
 
 #[derive(Debug)]
@@ -101,22 +99,6 @@ pub struct MockExecutionAdapter {
 impl MockExecutionAdapter {
     pub fn new(pool: PgPool, slippage_bps: f64) -> Self {
         Self { pool, slippage_bps }
-    }
-
-    pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {
-        execute_idempotent(
-            pool,
-            r#"
-            CREATE TABLE IF NOT EXISTS mock_positions (
-                symbol TEXT PRIMARY KEY,
-                direction TEXT NOT NULL,
-                entry_price DOUBLE PRECISION NOT NULL,
-                notional_usd DOUBLE PRECISION NOT NULL,
-                opened_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            "#,
-        )
-        .await
     }
 }
 

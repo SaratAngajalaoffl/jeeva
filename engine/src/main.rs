@@ -108,27 +108,6 @@ async fn connect_postgres_with_retry(database_url: &str) -> PgPool {
     }
 }
 
-async fn migrate(pool: &PgPool) {
-    PostgresMarketDataWriter::migrate(pool)
-        .await
-        .expect("failed to migrate market_data table");
-    MockExecutionAdapter::migrate(pool)
-        .await
-        .expect("failed to migrate mock_positions table");
-    PostgresDecisionLogWriter::migrate(pool)
-        .await
-        .expect("failed to migrate decisions table");
-    PostgresFundingPaymentWriter::migrate(pool)
-        .await
-        .expect("failed to migrate funding_payments table");
-    PerpHealthTracker::migrate(pool)
-        .await
-        .expect("failed to migrate perp_health table");
-    LiveExecutionAdapter::migrate(pool)
-        .await
-        .expect("failed to migrate engine_wallet table");
-}
-
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
@@ -142,7 +121,6 @@ async fn main() {
     let store = ConfigStore::new();
 
     let pool = connect_postgres_with_retry(&database_url).await;
-    migrate(&pool).await;
 
     let market_data_client: Arc<dyn market_data::MarketDataClient> =
         Arc::new(HyperliquidMarketDataClient::default());

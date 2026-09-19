@@ -3,8 +3,6 @@ use std::fmt;
 use async_trait::async_trait;
 use sqlx::PgPool;
 
-use crate::pg::execute_idempotent;
-
 use super::model::{JevDecision, PositionAction};
 
 #[derive(Debug)]
@@ -57,43 +55,6 @@ pub struct PostgresDecisionLogWriter {
 impl PostgresDecisionLogWriter {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
-    }
-
-    pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {
-        execute_idempotent(
-            pool,
-            r#"
-            CREATE TABLE IF NOT EXISTS decisions (
-                time TIMESTAMPTZ NOT NULL DEFAULT now(),
-                symbol TEXT NOT NULL,
-                context_summary TEXT NOT NULL,
-                target_direction TEXT,
-                confidence DOUBLE PRECISION,
-                prob_long DOUBLE PRECISION,
-                prob_short DOUBLE PRECISION,
-                prob_flat DOUBLE PRECISION,
-                position_action TEXT,
-                success BOOLEAN NOT NULL,
-                error TEXT,
-                auto_flatten BOOLEAN NOT NULL DEFAULT false
-            )
-            "#,
-        )
-        .await?;
-
-        execute_idempotent(
-            pool,
-            "ALTER TABLE decisions ADD COLUMN IF NOT EXISTS auto_flatten BOOLEAN NOT NULL DEFAULT false",
-        )
-        .await?;
-
-        execute_idempotent(
-            pool,
-            "SELECT create_hypertable('decisions', 'time', if_not_exists => TRUE)",
-        )
-        .await?;
-
-        Ok(())
     }
 }
 

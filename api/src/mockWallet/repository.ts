@@ -16,17 +16,6 @@ export class MockWalletAlreadyExistsError extends Error {
 
 const POSTGRES_UNIQUE_VIOLATION = "23505";
 
-export async function migrateMockWallet(pool: Pool): Promise<void> {
-  await pool.query(
-    `CREATE TABLE IF NOT EXISTS mock_wallet (
-       id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-       initial_balance_usd DOUBLE PRECISION NOT NULL,
-       current_balance_usd DOUBLE PRECISION NOT NULL,
-       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-     )`,
-  );
-}
-
 function toMockWallet(row: {
   initial_balance_usd: string;
   current_balance_usd: string;

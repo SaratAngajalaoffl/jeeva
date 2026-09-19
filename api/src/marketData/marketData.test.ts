@@ -1,7 +1,7 @@
 import { MongoClient, type Db } from "mongodb";
 import { Pool } from "pg";
 import request from "supertest";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../app.js";
 import { SESSION_COOKIE_NAME } from "../auth/config.js";
 import { signSessionToken } from "../auth/session.js";
@@ -49,22 +49,6 @@ function authCookie(): string {
 function buildApp() {
   return createApp({ db, pgPool, hyperliquidClient: fakeHyperliquidClient });
 }
-
-beforeAll(async () => {
-  // Mirrors the engine's migration (api/tests run independently of
-  // whether the engine has started and migrated yet).
-  await pgPool.query(
-    `CREATE TABLE IF NOT EXISTS market_data (
-       time TIMESTAMPTZ NOT NULL,
-       symbol TEXT NOT NULL,
-       price DOUBLE PRECISION NOT NULL,
-       open_interest DOUBLE PRECISION NOT NULL,
-       volume DOUBLE PRECISION NOT NULL,
-       spread DOUBLE PRECISION NOT NULL,
-       mid_price DOUBLE PRECISION NOT NULL
-     )`,
-  );
-});
 
 afterAll(async () => {
   await mongoClient.close();

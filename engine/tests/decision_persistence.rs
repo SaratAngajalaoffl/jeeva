@@ -22,22 +22,6 @@ async fn pool() -> PgPool {
 // mutate it must not run concurrently with each other.
 static WALLET_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-async fn ensure_mock_wallet_table(pool: &PgPool) {
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS mock_wallet (
-            id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-            initial_balance_usd DOUBLE PRECISION NOT NULL,
-            current_balance_usd DOUBLE PRECISION NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-        )
-        "#,
-    )
-    .execute(pool)
-    .await
-    .unwrap();
-}
-
 async fn reset_wallet(pool: &PgPool, balance: f64) {
     sqlx::query("DELETE FROM mock_wallet")
         .execute(pool)
@@ -67,8 +51,6 @@ mod execution {
     async fn opening_a_position_persists_it_without_touching_the_wallet() {
         let pool = pool().await;
         let _guard = WALLET_LOCK.lock().await;
-        MockExecutionAdapter::migrate(&pool).await.unwrap();
-        ensure_mock_wallet_table(&pool).await;
         reset_wallet(&pool, 10_000.0).await;
         sqlx::query("DELETE FROM mock_positions WHERE symbol = $1")
             .bind("TESTOPEN")
@@ -95,8 +77,6 @@ mod execution {
     async fn closing_a_winning_long_credits_the_wallet_and_clears_the_position() {
         let pool = pool().await;
         let _guard = WALLET_LOCK.lock().await;
-        MockExecutionAdapter::migrate(&pool).await.unwrap();
-        ensure_mock_wallet_table(&pool).await;
         reset_wallet(&pool, 10_000.0).await;
         sqlx::query("DELETE FROM mock_positions WHERE symbol = $1")
             .bind("TESTCLOSEWIN")
@@ -125,8 +105,6 @@ mod execution {
     async fn closing_a_losing_short_debits_the_wallet() {
         let pool = pool().await;
         let _guard = WALLET_LOCK.lock().await;
-        MockExecutionAdapter::migrate(&pool).await.unwrap();
-        ensure_mock_wallet_table(&pool).await;
         reset_wallet(&pool, 10_000.0).await;
         sqlx::query("DELETE FROM mock_positions WHERE symbol = $1")
             .bind("TESTCLOSELOSE")
@@ -150,8 +128,6 @@ mod execution {
     async fn closing_a_symbol_with_no_open_position_is_a_no_op() {
         let pool = pool().await;
         let _guard = WALLET_LOCK.lock().await;
-        MockExecutionAdapter::migrate(&pool).await.unwrap();
-        ensure_mock_wallet_table(&pool).await;
         reset_wallet(&pool, 5_000.0).await;
         sqlx::query("DELETE FROM mock_positions WHERE symbol = $1")
             .bind("TESTNOOP")
@@ -172,7 +148,6 @@ mod decision_log {
     #[tokio::test]
     async fn writes_a_row_readable_back_with_all_fields() {
         let pool = pool().await;
-        PostgresDecisionLogWriter::migrate(&pool).await.unwrap();
         let writer = PostgresDecisionLogWriter::new(pool.clone());
 
         sqlx::query("DELETE FROM decisions WHERE symbol = $1")
@@ -227,7 +202,6 @@ mod decision_log {
     #[tokio::test]
     async fn writes_a_row_for_a_failed_cycle_with_no_decision() {
         let pool = pool().await;
-        PostgresDecisionLogWriter::migrate(&pool).await.unwrap();
         let writer = PostgresDecisionLogWriter::new(pool.clone());
 
         sqlx::query("DELETE FROM decisions WHERE symbol = $1")
@@ -267,7 +241,6 @@ mod decision_log {
     #[tokio::test]
     async fn every_call_writes_a_separate_row() {
         let pool = pool().await;
-        PostgresDecisionLogWriter::migrate(&pool).await.unwrap();
         let writer = PostgresDecisionLogWriter::new(pool.clone());
 
         sqlx::query("DELETE FROM decisions WHERE symbol = $1")
@@ -306,10 +279,6 @@ mod history {
     #[tokio::test]
     async fn reads_back_recent_samples_oldest_first() {
         let pool = pool().await;
-        engine::market_data::PostgresMarketDataWriter::migrate(&pool)
-            .await
-            .unwrap();
-
         sqlx::query("DELETE FROM market_data WHERE symbol = $1")
             .bind("TESTHIST1")
             .execute(&pool)
@@ -342,10 +311,6 @@ mod history {
     #[tokio::test]
     async fn returns_empty_for_a_symbol_with_no_samples() {
         let pool = pool().await;
-        engine::market_data::PostgresMarketDataWriter::migrate(&pool)
-            .await
-            .unwrap();
-
         let reader = PostgresMarketDataHistoryReader::new(pool.clone());
         let samples = reader.recent_samples("TESTHISTNONE", 10).await.unwrap();
         assert!(samples.is_empty());

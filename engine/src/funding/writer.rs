@@ -4,7 +4,6 @@ use async_trait::async_trait;
 use sqlx::PgPool;
 
 use crate::decision::Direction;
-use crate::pg::execute_idempotent;
 
 #[derive(Debug)]
 pub struct FundingWriteError(pub String);
@@ -39,31 +38,6 @@ pub struct PostgresFundingPaymentWriter {
 impl PostgresFundingPaymentWriter {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
-    }
-
-    pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {
-        execute_idempotent(
-            pool,
-            r#"
-            CREATE TABLE IF NOT EXISTS funding_payments (
-                time TIMESTAMPTZ NOT NULL DEFAULT now(),
-                symbol TEXT NOT NULL,
-                direction TEXT NOT NULL,
-                funding_rate DOUBLE PRECISION NOT NULL,
-                notional_usd DOUBLE PRECISION NOT NULL,
-                amount_usd DOUBLE PRECISION NOT NULL
-            )
-            "#,
-        )
-        .await?;
-
-        execute_idempotent(
-            pool,
-            "SELECT create_hypertable('funding_payments', 'time', if_not_exists => TRUE)",
-        )
-        .await?;
-
-        Ok(())
     }
 }
 

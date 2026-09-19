@@ -3,8 +3,6 @@ use chrono::Utc;
 use serde::Deserialize;
 use sqlx::PgPool;
 
-use crate::pg::execute_idempotent;
-
 use super::execution::{ExecutionAdapter, ExecutionError, OpenPosition};
 use super::hyperliquid_signing::{
     market_order_price, sign_order_action, KeyError, OrderAction, OrderRequest, OrderType,
@@ -139,20 +137,6 @@ impl LiveExecutionAdapter {
     /// Express for dashboard display.
     pub fn public_address(&self) -> String {
         self.key.public_address()
-    }
-
-    pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {
-        execute_idempotent(
-            pool,
-            r#"
-            CREATE TABLE IF NOT EXISTS engine_wallet (
-                id INTEGER PRIMARY KEY DEFAULT 1,
-                public_address TEXT NOT NULL,
-                CONSTRAINT engine_wallet_singleton CHECK (id = 1)
-            )
-            "#,
-        )
-        .await
     }
 
     /// Persists the wallet's public address (never the key) so Express

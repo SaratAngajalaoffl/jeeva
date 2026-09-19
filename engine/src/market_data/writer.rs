@@ -2,8 +2,6 @@ use async_trait::async_trait;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 
-use crate::pg::execute_idempotent;
-
 use super::client::MarketDataError;
 use super::model::MarketDataSample;
 
@@ -20,48 +18,20 @@ pub struct PostgresMarketDataWriter {
 }
 
 impl PostgresMarketDataWriter {
-    /// Connects its own pool and runs the migration. Used where nothing
-    /// else shares the database connection (engine tests).
+    /// Connects its own pool. Used where nothing else shares the database
+    /// connection (engine tests). Schema is expected to already exist,
+    /// applied via the API's node-pg-migrate migrations.
     pub async fn connect(database_url: &str) -> Result<Self, sqlx::Error> {
         let pool = PgPoolOptions::new()
             .max_connections(5)
             .connect(database_url)
             .await?;
-        Self::migrate(&pool).await?;
         Ok(Self { pool })
     }
 
     /// Builds on an already-connected, already-migrated shared pool.
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
-    }
-
-    pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {
-        execute_idempotent(pool, "CREATE EXTENSION IF NOT EXISTS timescaledb").await?;
-
-        execute_idempotent(
-            pool,
-            r#"
-            CREATE TABLE IF NOT EXISTS market_data (
-                time TIMESTAMPTZ NOT NULL,
-                symbol TEXT NOT NULL,
-                price DOUBLE PRECISION NOT NULL,
-                open_interest DOUBLE PRECISION NOT NULL,
-                volume DOUBLE PRECISION NOT NULL,
-                spread DOUBLE PRECISION NOT NULL,
-                mid_price DOUBLE PRECISION NOT NULL
-            )
-            "#,
-        )
-        .await?;
-
-        execute_idempotent(
-            pool,
-            "SELECT create_hypertable('market_data', 'time', if_not_exists => TRUE)",
-        )
-        .await?;
-
-        Ok(())
     }
 }
 

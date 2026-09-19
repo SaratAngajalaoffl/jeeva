@@ -1,7 +1,7 @@
 import { MongoClient, type Db } from "mongodb";
 import { Pool } from "pg";
 import request from "supertest";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../app.js";
 import { SESSION_COOKIE_NAME } from "../auth/config.js";
 import { signSessionToken } from "../auth/session.js";
@@ -22,15 +22,6 @@ await client.connect();
 const db: Db = client.db();
 const engineConfig = () => db.collection<EngineModeDoc>("engineConfig");
 const pgPool = new Pool({ connectionString: DATABASE_URL });
-
-beforeAll(async () => {
-  await pgPool.query(
-    `CREATE TABLE IF NOT EXISTS engine_wallet (
-       id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-       public_address TEXT NOT NULL
-     )`,
-  );
-});
 
 afterAll(async () => {
   await client.close();

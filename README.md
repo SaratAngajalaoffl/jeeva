@@ -126,7 +126,9 @@ cp .env.example .env   # set AUTH_USERNAME / AUTH_PASSWORD / JWT_SECRET
 docker compose up --build
 ```
 
-This starts MongoDB (as a single-node replica set, required for the config change streams), TimescaleDB, the API on `:4000`, the engine, and the dashboard on `:3000`. With no further configuration, every PERP you enable defaults to mock execution and the Fake decision maker, so you can explore the whole flow with no external credentials.
+This starts MongoDB (as a single-node replica set, required for the config change streams), TimescaleDB, a one-off `migrate` service that applies the Postgres schema via [node-pg-migrate](https://github.com/salsita/node-pg-migrate) before anything else starts, the API on `:4000`, the engine, and the dashboard on `:3000`. With no further configuration, every PERP you enable defaults to mock execution and the Fake decision maker, so you can explore the whole flow with no external credentials.
+
+Postgres schema is owned entirely by the migrations in `api/migrations/` — neither the API nor the engine create or alter tables at runtime. To change the schema, add a migration with `npm run migrate create <name> --workspace=api` and run it with `npm run migrate up --workspace=api` (reads `DATABASE_URL` from the environment).
 
 To use real Jev decisions or real Hyperliquid execution, set the corresponding engine environment variables before enabling them from the dashboard:
 

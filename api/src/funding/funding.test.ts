@@ -1,6 +1,6 @@
 import { Pool } from "pg";
 import request from "supertest";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../app.js";
 import { SESSION_COOKIE_NAME } from "../auth/config.js";
 import { signSessionToken } from "../auth/session.js";
@@ -10,19 +10,6 @@ const DATABASE_URL =
   "postgres://jeeva:jeeva@localhost:5432/jeeva_test";
 
 const pgPool = new Pool({ connectionString: DATABASE_URL });
-
-beforeAll(async () => {
-  await pgPool.query(
-    `CREATE TABLE IF NOT EXISTS funding_payments (
-       time TIMESTAMPTZ NOT NULL DEFAULT now(),
-       symbol TEXT NOT NULL,
-       direction TEXT NOT NULL,
-       funding_rate DOUBLE PRECISION NOT NULL,
-       notional_usd DOUBLE PRECISION NOT NULL,
-       amount_usd DOUBLE PRECISION NOT NULL
-     )`,
-  );
-});
 
 afterAll(async () => {
   await pgPool.end();
