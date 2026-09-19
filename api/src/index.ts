@@ -1,6 +1,7 @@
 import { getAuthConfig } from "./auth/config.js";
 import { createApp } from "./app.js";
 import { connectMongo } from "./db.js";
+import { connectPostgres } from "./postgres.js";
 
 getAuthConfig(); // fail fast on missing auth env vars
 
@@ -13,9 +14,10 @@ function requireEnv(name: string): string {
 }
 
 const db = await connectMongo(requireEnv("MONGO_URL"));
+const pgPool = connectPostgres(requireEnv("DATABASE_URL"));
 
 const port = process.env.PORT ?? 4000;
-const app = createApp({ db });
+const app = createApp({ db, pgPool });
 
 app.listen(port, () => {
   console.log(`api listening on port ${port}`);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { fetchPerps, updatePerpConfig, type Perp } from "@/lib/api";
 
 type NumericField =
@@ -73,6 +74,7 @@ export default function MarketsPage() {
             <th className="border-b py-2">Sampling frequency (s)</th>
             <th className="border-b py-2">Leverage</th>
             <th className="border-b py-2">Position size (USD)</th>
+            <th className="border-b py-2">Chart</th>
           </tr>
         </thead>
         <tbody>
@@ -162,6 +164,14 @@ export default function MarketsPage() {
                     )
                   }
                 />
+              </td>
+              <td className="border-b py-2">
+                <Link
+                  href={`/dashboard/markets/${perp.symbol}`}
+                  className="underline"
+                >
+                  View
+                </Link>
               </td>
             </tr>
           ))}

@@ -65,3 +65,26 @@ export async function updatePerpConfig(
   }
   return res.json();
 }
+
+export interface MarketDataPoint {
+  time: string;
+  price: number;
+  openInterest: number;
+  volume: number;
+  spread: number;
+  midPrice: number;
+}
+
+export async function fetchMarketData(
+  symbol: string,
+): Promise<MarketDataPoint[]> {
+  const res = await fetch(
+    `${API_URL}/perps/${encodeURIComponent(symbol)}/market-data`,
+    { credentials: "include" },
+  );
+  if (!res.ok) {
+    throw new Error("Failed to load market data");
+  }
+  const body = (await res.json()) as { samples: MarketDataPoint[] };
+  return body.samples;
+}

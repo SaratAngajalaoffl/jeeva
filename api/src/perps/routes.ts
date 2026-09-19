@@ -1,7 +1,10 @@
 import { Router } from "express";
 import type { Db } from "mongodb";
+import type { Pool } from "pg";
 import { requireAuth } from "../auth/requireAuth.js";
 import type { HyperliquidClient } from "../hyperliquid/client.js";
+import { getMarketDataHistory } from "../marketData/repository.js";
+import { parseTimeRange } from "../marketData/timeRange.js";
 import { isValidFrequencySeconds } from "./frequency.js";
 import {
   DEFAULT_PERP_CONFIG,
@@ -13,6 +16,7 @@ import { isValidLeverage, isValidPositionSizeUsd } from "./sizing.js";
 export function createPerpsRouter(
   db: Db,
   hyperliquidClient: HyperliquidClient,
+  pgPool: Pool,
 ): Router {
   const router = Router();
   router.use(requireAuth);
@@ -85,6 +89,24 @@ export function createPerpsRouter(
       positionSizeUsd,
     });
     res.status(200).json(updated);
+  });
+
+  router.get("/:symbol/market-data", async (req, res) => {
+    const { symbol } = req.params;
+    const range = parseTimeRange(req.query);
+
+    if (!range) {
+      res.status(400).json({ error: "invalid time range" });
+      return;
+    }
+
+    const samples = await getMarketDataHistory(
+      pgPool,
+      symbol,
+      range.from,
+      range.to,
+    );
+    res.status(200).json({ samples });
   });
 
   return router;

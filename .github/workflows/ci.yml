@@ -40,6 +40,20 @@ jobs:
     defaults:
       run:
         working-directory: engine
+    services:
+      timescaledb:
+        image: timescale/timescaledb:latest-pg16
+        env:
+          POSTGRES_USER: jeeva
+          POSTGRES_PASSWORD: jeeva
+          POSTGRES_DB: jeeva_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -68,6 +82,7 @@ jobs:
       - run: cargo test
         env:
           TEST_MONGO_URL: mongodb://localhost:27017
+          TEST_DATABASE_URL: postgres://jeeva:jeeva@localhost:5432/jeeva_test
       - name: Stop MongoDB
         if: always()
         run: docker rm -f mongo
@@ -81,6 +96,19 @@ jobs:
         image: mongo:7
         ports:
           - 27017:27017
+      timescaledb:
+        image: timescale/timescaledb:latest-pg16
+        env:
+          POSTGRES_USER: jeeva
+          POSTGRES_PASSWORD: jeeva
+          POSTGRES_DB: jeeva_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -93,6 +121,7 @@ jobs:
       - run: npm run test --workspace=api
         env:
           TEST_MONGO_URL: mongodb://localhost:27017/jeeva_test
+          TEST_DATABASE_URL: postgres://jeeva:jeeva@localhost:5432/jeeva_test
 
   frontend:
     needs: changes

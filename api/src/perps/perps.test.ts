@@ -1,4 +1,5 @@
 import { MongoClient, type Db } from "mongodb";
+import { Pool } from "pg";
 import request from "supertest";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../app.js";
@@ -9,13 +10,18 @@ import { DEFAULT_PERP_CONFIG } from "./repository.js";
 
 const MONGO_URL =
   process.env.TEST_MONGO_URL ?? "mongodb://localhost:27017/jeeva_test";
+const DATABASE_URL =
+  process.env.TEST_DATABASE_URL ??
+  "postgres://jeeva:jeeva@localhost:5432/jeeva_test";
 
 const client = new MongoClient(MONGO_URL);
 await client.connect();
 const db: Db = client.db();
+const pgPool = new Pool({ connectionString: DATABASE_URL });
 
 afterAll(async () => {
   await client.close();
+  await pgPool.end();
 });
 
 beforeEach(async () => {
@@ -34,7 +40,7 @@ function authCookie(): string {
 }
 
 function buildApp() {
-  return createApp({ db, hyperliquidClient: fakeHyperliquidClient });
+  return createApp({ db, pgPool, hyperliquidClient: fakeHyperliquidClient });
 }
 
 describe("GET /perps", () => {

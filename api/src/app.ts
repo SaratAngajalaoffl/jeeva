@@ -2,6 +2,7 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import express, { type Express } from "express";
 import type { Db } from "mongodb";
+import type { Pool } from "pg";
 import { authRouter } from "./auth/authRoutes.js";
 import {
   createHyperliquidClient,
@@ -11,6 +12,7 @@ import { createPerpsRouter } from "./perps/routes.js";
 
 export interface AppDeps {
   db?: Db;
+  pgPool?: Pool;
   hyperliquidClient?: HyperliquidClient;
 }
 
@@ -32,12 +34,13 @@ export function createApp(deps: AppDeps = {}): Express {
 
   app.use("/auth", authRouter);
 
-  if (deps.db) {
+  if (deps.db && deps.pgPool) {
     app.use(
       "/perps",
       createPerpsRouter(
         deps.db,
         deps.hyperliquidClient ?? createHyperliquidClient(),
+        deps.pgPool,
       ),
     );
   }
