@@ -15,7 +15,7 @@ _Avoid_: "the AI", "the model" (ambiguous with other models in the system)
 The interface for obtaining a trading decision. Chosen per PERP (`PerpConfig.decisionMaker` / `perpConfigs.decisionMaker`), independent of the PERP's ExecutionAdapter/mock-live axis. Three implementations:
 - `FakeDecisionMaker` — synthetic decisions, for testing without Jev access.
 - `TypeSafeJevDecisionMaker` — calls TypeSafe's real Jev `systemOne` API directly.
-- `OpenRouterJevDecisionMaker` — calls Jev via OpenRouter (`openrouter.ai/~typesafe/jev-latest`) instead of TypeSafe directly. **Not yet implemented** — always errors; tracked in a GitHub issue.
+- `OpenRouterJevDecisionMaker` — calls Jev via OpenRouter (`openrouter.ai/~typesafe/jev-latest`) instead of TypeSafe directly, using `OPENROUTER_API_KEY`.
 
 _Avoid_: "mock Jev" or "mock decision maker" (reserve "mock" for the execution axis, see ExecutionAdapter); "JevDecisionSource" (old name, renamed to DecisionMaker since Jev is now reachable through more than one backend).
 

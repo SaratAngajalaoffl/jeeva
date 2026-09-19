@@ -32,7 +32,8 @@ fn require_env(name: &str) -> String {
 /// without restarting the engine. `typesafe` falls back to an
 /// `UnconfiguredDecisionMaker` when `TYPESAFE_API_KEY` isn't set, so the
 /// engine still starts — it only fails once a PERP is actually switched
-/// to `typesafe`. `openrouter` is always unimplemented for now.
+/// to `typesafe`. `openrouter` mirrors that wiring with
+/// `OPENROUTER_API_KEY`.
 fn decision_maker_registry() -> DecisionMakerRegistry {
     let fake: Arc<dyn DecisionMaker> = Arc::new(FakeDecisionMaker::cycling());
 
@@ -45,7 +46,14 @@ fn decision_maker_registry() -> DecisionMakerRegistry {
         Arc::new(UnconfiguredDecisionMaker { name: "typesafe" })
     };
 
-    let openrouter: Arc<dyn DecisionMaker> = Arc::new(OpenRouterJevDecisionMaker::unimplemented());
+    let openrouter: Arc<dyn DecisionMaker> = if std::env::var("OPENROUTER_API_KEY").is_ok() {
+        Arc::new(OpenRouterJevDecisionMaker::from_env())
+    } else {
+        tracing::warn!(
+            "OPENROUTER_API_KEY not set; the openrouter decision maker will reject every call until configured"
+        );
+        Arc::new(UnconfiguredDecisionMaker { name: "openrouter" })
+    };
 
     DecisionMakerRegistry::new(fake, typesafe, openrouter)
 }

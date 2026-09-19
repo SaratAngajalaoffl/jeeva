@@ -3,8 +3,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use super::decision_maker::{DecisionError, DecisionMaker};
-use super::model::{JevDecision, Probabilities, TargetDirection};
+use super::decision_maker::{parse_direction, DecisionError, DecisionMaker};
+use super::model::{JevDecision, Probabilities};
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -31,17 +31,6 @@ struct SystemOneResponse {
     choice: String,
     confidence: f64,
     probabilities: SystemOneProbabilities,
-}
-
-fn parse_direction(choice: &str) -> Result<TargetDirection, DecisionError> {
-    match choice {
-        "long" => Ok(TargetDirection::Long),
-        "short" => Ok(TargetDirection::Short),
-        "flat" => Ok(TargetDirection::Flat),
-        other => Err(DecisionError(format!(
-            "systemOne returned an unrecognized choice: {other}"
-        ))),
-    }
 }
 
 /// Calls TypeSafe's real `systemOne` API (docs.typesafe.ai) directly to
@@ -123,6 +112,7 @@ impl DecisionMaker for TypeSafeJevDecisionMaker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decision::model::TargetDirection;
     use serde_json::json;
     use wiremock::matchers::{body_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};

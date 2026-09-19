@@ -28,6 +28,21 @@ pub trait DecisionMaker: Send + Sync {
     async fn decide(&self, symbol: &str, state: &str) -> Result<JevDecision, DecisionError>;
 }
 
+/// Maps a Jev choice value onto a `TargetDirection`. Shared by every
+/// network-backed `DecisionMaker` (Jev spells the same three criteria
+/// on TypeSafe's `systemOne` API and via OpenRouter's chat completions),
+/// so an unknown value fails identically no matter which one produced it.
+pub(crate) fn parse_direction(choice: &str) -> Result<TargetDirection, DecisionError> {
+    match choice {
+        "long" => Ok(TargetDirection::Long),
+        "short" => Ok(TargetDirection::Short),
+        "flat" => Ok(TargetDirection::Flat),
+        other => Err(DecisionError(format!(
+            "Jev returned an unrecognized choice: {other}"
+        ))),
+    }
+}
+
 /// Which `DecisionMaker` implementation a PERP is configured to use.
 /// Mirrors the `perpConfigs.decisionMaker` field written by the
 /// Express API. Defaults to `Fake` so a fresh PERP never depends on
@@ -182,6 +197,15 @@ mod tests {
                 + decision.probabilities.flat;
             assert!((sum - 1.0).abs() < 1e-9);
         }
+    }
+
+    #[test]
+    fn parse_direction_maps_every_criterion_and_rejects_anything_else() {
+        assert_eq!(parse_direction("long").unwrap(), TargetDirection::Long);
+        assert_eq!(parse_direction("short").unwrap(), TargetDirection::Short);
+        assert_eq!(parse_direction("flat").unwrap(), TargetDirection::Flat);
+        let error = parse_direction("sideways").unwrap_err();
+        assert!(error.0.contains("unrecognized choice"));
     }
 
     #[tokio::test]
