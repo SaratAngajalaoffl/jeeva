@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { checkSession, logout } from "@/lib/api";
 
@@ -42,6 +43,9 @@ export default function DashboardPage() {
           Log out
         </button>
       </div>
+      <Link href="/dashboard/markets" className="underline">
+        Markets
+      </Link>
     </main>
   );
 }

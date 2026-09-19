@@ -56,6 +56,11 @@ jobs:
     needs: changes
     if: needs.changes.outputs.api == 'true'
     runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -66,6 +71,8 @@ jobs:
       - run: npm run lint --workspace=api
       - run: npm run build --workspace=api
       - run: npm run test --workspace=api
+        env:
+          TEST_MONGO_URL: mongodb://localhost:27017/jeeva_test
 
   frontend:
     needs: changes

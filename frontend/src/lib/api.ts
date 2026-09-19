@@ -30,3 +30,34 @@ export async function checkSession(): Promise<boolean> {
   });
   return res.ok;
 }
+
+export interface Perp {
+  symbol: string;
+  tradingEnabled: boolean;
+  samplingEnabled: boolean;
+}
+
+export async function fetchPerps(): Promise<Perp[]> {
+  const res = await fetch(`${API_URL}/perps`, { credentials: "include" });
+  if (!res.ok) {
+    throw new Error("Failed to load markets");
+  }
+  const body = (await res.json()) as { perps: Perp[] };
+  return body.perps;
+}
+
+export async function updatePerpToggles(
+  symbol: string,
+  patch: Partial<Pick<Perp, "tradingEnabled" | "samplingEnabled">>,
+): Promise<Perp> {
+  const res = await fetch(`${API_URL}/perps/${encodeURIComponent(symbol)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    throw new Error("Failed to update market");
+  }
+  return res.json();
+}
