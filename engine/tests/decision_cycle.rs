@@ -78,6 +78,20 @@ impl ExecutionAdapter for FakeExecution {
         *self.position.lock().unwrap() = None;
         Ok(())
     }
+
+    async fn list_open_positions(&self) -> Result<Vec<(String, OpenPosition)>, ExecutionError> {
+        Ok(self
+            .position
+            .lock()
+            .unwrap()
+            .map(|p| ("BTC".to_string(), p))
+            .into_iter()
+            .collect())
+    }
+
+    async fn apply_funding(&self, _symbol: &str, _amount_usd: f64) -> Result<(), ExecutionError> {
+        Ok(())
+    }
 }
 
 struct LoggedEntry {

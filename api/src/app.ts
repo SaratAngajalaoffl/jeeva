@@ -9,6 +9,7 @@ import {
   type HyperliquidClient,
 } from "./hyperliquid/client.js";
 import { createDecisionsRouter } from "./decisions/routes.js";
+import { createFundingRouter } from "./funding/routes.js";
 import { createMockWalletRouter } from "./mockWallet/routes.js";
 import { createPerpsRouter } from "./perps/routes.js";
 import { createPositionsRouter } from "./positions/routes.js";
@@ -52,6 +53,7 @@ export function createApp(deps: AppDeps = {}): Express {
     app.use("/mock-wallet", createMockWalletRouter(deps.pgPool));
     app.use("/positions", createPositionsRouter(deps.pgPool));
     app.use("/decisions", createDecisionsRouter(deps.pgPool));
+    app.use("/funding", createFundingRouter(deps.pgPool));
   }
 
   return app;

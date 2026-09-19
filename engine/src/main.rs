@@ -6,6 +6,7 @@ use engine::decision::{
     self, FakeJevAdapter, MockExecutionAdapter, PostgresDecisionLogWriter,
     PostgresMarketDataHistoryReader,
 };
+use engine::funding::{self, HyperliquidFundingRateSource, PostgresFundingPaymentWriter};
 use engine::market_data::{self, HyperliquidMarketDataClient, PostgresMarketDataWriter};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
@@ -14,6 +15,8 @@ const SAMPLING_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const DECISION_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const POSTGRES_CONNECT_RETRY_DELAY: Duration = Duration::from_secs(5);
 const DEFAULT_SLIPPAGE_BPS: f64 = 5.0;
+// Hyperliquid applies funding hourly.
+const FUNDING_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 fn require_env(name: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| panic!("Missing required environment variable: {name}"))
@@ -52,6 +55,9 @@ async fn migrate(pool: &PgPool) {
     PostgresDecisionLogWriter::migrate(pool)
         .await
         .expect("failed to migrate decisions table");
+    PostgresFundingPaymentWriter::migrate(pool)
+        .await
+        .expect("failed to migrate funding_payments table");
 }
 
 #[tokio::main]
@@ -82,9 +88,15 @@ async fn main() {
     let decision_log: Arc<dyn decision::DecisionLogWriter> =
         Arc::new(PostgresDecisionLogWriter::new(pool.clone()));
 
+    let funding_rate_source: Arc<dyn funding::FundingRateSource> =
+        Arc::new(HyperliquidFundingRateSource::default());
+    let funding_payment_writer: Arc<dyn funding::FundingPaymentWriter> =
+        Arc::new(PostgresFundingPaymentWriter::new(pool.clone()));
+
     tokio::select! {
         _ = run_with_reconnect(&mongo_url, store.clone()) => {},
         _ = market_data::run(store.clone(), market_data_client, market_data_writer, SAMPLING_POLL_INTERVAL) => {},
-        _ = decision::run(store, history, jev, execution, decision_log, DECISION_POLL_INTERVAL) => {},
+        _ = decision::run(store, history, jev, execution.clone(), decision_log, DECISION_POLL_INTERVAL) => {},
+        _ = funding::run(execution, funding_rate_source, funding_payment_writer, FUNDING_INTERVAL) => {},
     }
 }

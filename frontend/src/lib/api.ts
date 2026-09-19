@@ -167,3 +167,21 @@ export async function fetchDecisions(
   const body = (await res.json()) as { decisions: DecisionLogEntry[] };
   return body.decisions;
 }
+
+export interface FundingPayment {
+  time: string;
+  symbol: string;
+  direction: "long" | "short";
+  fundingRate: number;
+  notionalUsd: number;
+  amountUsd: number;
+}
+
+export async function fetchFundingPayments(): Promise<FundingPayment[]> {
+  const res = await fetch(`${API_URL}/funding`, { credentials: "include" });
+  if (!res.ok) {
+    throw new Error("Failed to load funding payments");
+  }
+  const body = (await res.json()) as { payments: FundingPayment[] };
+  return body.payments;
+}

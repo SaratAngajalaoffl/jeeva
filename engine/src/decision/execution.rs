@@ -45,6 +45,17 @@ pub trait ExecutionAdapter: Send + Sync {
 
     /// No-ops if there is no open position for the symbol.
     async fn close(&self, symbol: &str, mid_price: f64) -> Result<(), ExecutionError>;
+
+    /// Every currently open mock position, symbol-keyed. Used by the
+    /// funding sweep, which applies to all open positions regardless of
+    /// which PERP's decision loop opened them.
+    async fn list_open_positions(&self) -> Result<Vec<(String, OpenPosition)>, ExecutionError>;
+
+    /// Directly credits/debits the wallet by `amount_usd` (positive
+    /// credits, negative debits) without touching any position — used
+    /// for funding payments, which are distinct from decision-driven
+    /// realized P&L on close.
+    async fn apply_funding(&self, symbol: &str, amount_usd: f64) -> Result<(), ExecutionError>;
 }
 
 /// Simulates a fill at `mid_price` adjusted by `slippage_bps` (basis
@@ -216,6 +227,45 @@ impl ExecutionAdapter for MockExecutionAdapter {
             pnl_usd,
             "closed mock position"
         );
+
+        Ok(())
+    }
+
+    async fn list_open_positions(&self) -> Result<Vec<(String, OpenPosition)>, ExecutionError> {
+        let rows = sqlx::query_as::<_, (String, String, f64, f64)>(
+            "SELECT symbol, direction, entry_price, notional_usd FROM mock_positions",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| ExecutionError(format!("failed to list positions: {e}")))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(symbol, direction, entry_price, notional_usd)| {
+                let position = OpenPosition {
+                    direction: if direction == "long" {
+                        Direction::Long
+                    } else {
+                        Direction::Short
+                    },
+                    entry_price,
+                    notional_usd,
+                };
+                (symbol, position)
+            })
+            .collect())
+    }
+
+    async fn apply_funding(&self, symbol: &str, amount_usd: f64) -> Result<(), ExecutionError> {
+        sqlx::query(
+            "UPDATE mock_wallet SET current_balance_usd = current_balance_usd + $1 WHERE id = 1",
+        )
+        .bind(amount_usd)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| ExecutionError(format!("failed to apply funding payment: {e}")))?;
+
+        tracing::info!(symbol, amount_usd, "applied funding payment");
 
         Ok(())
     }
