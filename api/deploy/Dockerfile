@@ -11,6 +11,11 @@ WORKDIR /repo
 COPY --from=builder /repo/node_modules ./node_modules
 COPY --from=builder /repo/api/node_modules ./api/node_modules
 COPY --from=builder /repo/api/dist ./api/dist
+# Migrations aren't part of `dist` (they sit outside tsconfig's rootDir),
+# but the `node-pg-migrate` CLI in this image needs them on disk: an init
+# container or Helm hook runs `npm run migrate up` with `command:`
+# overridden, resolving `migrations/` relative to this WORKDIR.
+COPY --from=builder /repo/api/migrations ./api/migrations
 COPY --from=builder /repo/api/package.json ./api/package.json
 WORKDIR /repo/api
 EXPOSE 4000
