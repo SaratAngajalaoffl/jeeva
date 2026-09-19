@@ -27,6 +27,10 @@ services:
       PORT: 4000
       MONGO_URL: mongodb://mongo:27017/jeeva
       DATABASE_URL: postgres://jeeva:jeeva@timescaledb:5432/jeeva
+      CORS_ORIGIN: http://localhost:3000
+      AUTH_USERNAME: ${AUTH_USERNAME:-admin}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:-changeme}
+      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me}
     ports:
       - "4000:4000"
     volumes:
