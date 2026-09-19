@@ -37,6 +37,8 @@ export interface Perp {
   samplingEnabled: boolean;
   decisionFrequencySeconds: number;
   samplingFrequencySeconds: number;
+  leverage: number;
+  positionSizeUsd: number;
 }
 
 export async function fetchPerps(): Promise<Perp[]> {

@@ -8,6 +8,7 @@ import {
   getAllConfigs,
   updatePerpConfig,
 } from "./repository.js";
+import { isValidLeverage, isValidPositionSizeUsd } from "./sizing.js";
 
 export function createPerpsRouter(
   db: Db,
@@ -37,6 +38,9 @@ export function createPerpsRouter(
         samplingFrequencySeconds:
           config?.samplingFrequencySeconds ??
           DEFAULT_PERP_CONFIG.samplingFrequencySeconds,
+        leverage: config?.leverage ?? DEFAULT_PERP_CONFIG.leverage,
+        positionSizeUsd:
+          config?.positionSizeUsd ?? DEFAULT_PERP_CONFIG.positionSizeUsd,
       };
     });
 
@@ -50,6 +54,8 @@ export function createPerpsRouter(
       samplingEnabled,
       decisionFrequencySeconds,
       samplingFrequencySeconds,
+      leverage,
+      positionSizeUsd,
     } = req.body ?? {};
 
     const isValidToggle = (value: unknown) =>
@@ -61,7 +67,10 @@ export function createPerpsRouter(
       !isValidToggle(tradingEnabled) ||
       !isValidToggle(samplingEnabled) ||
       !isValidFrequency(decisionFrequencySeconds) ||
-      !isValidFrequency(samplingFrequencySeconds)
+      !isValidFrequency(samplingFrequencySeconds) ||
+      (leverage !== undefined && !isValidLeverage(leverage)) ||
+      (positionSizeUsd !== undefined &&
+        !isValidPositionSizeUsd(positionSizeUsd))
     ) {
       res.status(400).json({ error: "invalid request" });
       return;
@@ -72,6 +81,8 @@ export function createPerpsRouter(
       samplingEnabled,
       decisionFrequencySeconds,
       samplingFrequencySeconds,
+      leverage,
+      positionSizeUsd,
     });
     res.status(200).json(updated);
   });

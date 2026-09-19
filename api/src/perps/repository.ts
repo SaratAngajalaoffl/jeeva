@@ -6,17 +6,27 @@ export interface PerpFrequencies {
   samplingFrequencySeconds: number;
 }
 
-export interface PerpConfigDoc extends PerpToggles, PerpFrequencies {
+export interface PerpSizing {
+  leverage: number;
+  positionSizeUsd: number;
+}
+
+export interface PerpConfigDoc
+  extends PerpToggles, PerpFrequencies, PerpSizing {
   symbol: string;
 }
 
-export type PerpConfigPatch = Partial<PerpToggles & PerpFrequencies>;
+export type PerpConfigPatch = Partial<
+  PerpToggles & PerpFrequencies & PerpSizing
+>;
 
-export const DEFAULT_PERP_CONFIG: PerpToggles & PerpFrequencies = {
+export const DEFAULT_PERP_CONFIG: PerpToggles & PerpFrequencies & PerpSizing = {
   tradingEnabled: false,
   samplingEnabled: false,
   decisionFrequencySeconds: 300,
   samplingFrequencySeconds: 60,
+  leverage: 1,
+  positionSizeUsd: 100,
 };
 
 const COLLECTION_NAME = "perpConfigs";
@@ -61,6 +71,8 @@ export async function updatePerpConfig(
       patch.decisionFrequencySeconds ?? current.decisionFrequencySeconds,
     samplingFrequencySeconds:
       patch.samplingFrequencySeconds ?? current.samplingFrequencySeconds,
+    leverage: patch.leverage ?? current.leverage,
+    positionSizeUsd: patch.positionSizeUsd ?? current.positionSizeUsd,
   };
 
   await collection(db).updateOne({ symbol }, { $set: next }, { upsert: true });

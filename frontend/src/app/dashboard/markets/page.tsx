@@ -3,6 +3,12 @@
 import { useEffect, useState } from "react";
 import { fetchPerps, updatePerpConfig, type Perp } from "@/lib/api";
 
+type NumericField =
+  | "decisionFrequencySeconds"
+  | "samplingFrequencySeconds"
+  | "leverage"
+  | "positionSizeUsd";
+
 export default function MarketsPage() {
   const [perps, setPerps] = useState<Perp[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -18,7 +24,7 @@ export default function MarketsPage() {
     patch: Partial<Omit<Perp, "symbol">>,
   ) {
     // Optimistic UI update; corrected by the server response, which also
-    // enforces the trading/sampling dependency rule and frequency limits.
+    // enforces the trading/sampling dependency rule and value limits.
     setPerps(
       (prev) =>
         prev?.map((p) => (p.symbol === symbol ? { ...p, ...patch } : p)) ??
@@ -35,6 +41,17 @@ export default function MarketsPage() {
     }
   }
 
+  function handleNumericBlur(
+    symbol: string,
+    field: NumericField,
+    rawValue: string,
+  ) {
+    const value = Number(rawValue);
+    if (Number.isFinite(value) && value > 0) {
+      applyPatch(symbol, { [field]: value });
+    }
+  }
+
   if (error) {
     return <p className="p-8 text-red-600">{error}</p>;
   }
@@ -46,7 +63,7 @@ export default function MarketsPage() {
   return (
     <main className="flex flex-col gap-4 p-8">
       <h1 className="text-xl font-semibold">Markets</h1>
-      <table className="w-full max-w-4xl border-collapse text-left">
+      <table className="w-full max-w-6xl border-collapse text-left">
         <thead>
           <tr>
             <th className="border-b py-2">Symbol</th>
@@ -54,6 +71,8 @@ export default function MarketsPage() {
             <th className="border-b py-2">Sampling enabled</th>
             <th className="border-b py-2">Decision frequency (s)</th>
             <th className="border-b py-2">Sampling frequency (s)</th>
+            <th className="border-b py-2">Leverage</th>
+            <th className="border-b py-2">Position size (USD)</th>
           </tr>
         </thead>
         <tbody>
@@ -91,14 +110,13 @@ export default function MarketsPage() {
                   className="w-24 rounded border px-2 py-1"
                   aria-label={`${perp.symbol} decision frequency seconds`}
                   defaultValue={perp.decisionFrequencySeconds}
-                  onBlur={(e) => {
-                    const value = Number(e.target.value);
-                    if (Number.isFinite(value) && value > 0) {
-                      applyPatch(perp.symbol, {
-                        decisionFrequencySeconds: value,
-                      });
-                    }
-                  }}
+                  onBlur={(e) =>
+                    handleNumericBlur(
+                      perp.symbol,
+                      "decisionFrequencySeconds",
+                      e.target.value,
+                    )
+                  }
                 />
               </td>
               <td className="border-b py-2">
@@ -108,14 +126,41 @@ export default function MarketsPage() {
                   className="w-24 rounded border px-2 py-1"
                   aria-label={`${perp.symbol} sampling frequency seconds`}
                   defaultValue={perp.samplingFrequencySeconds}
-                  onBlur={(e) => {
-                    const value = Number(e.target.value);
-                    if (Number.isFinite(value) && value > 0) {
-                      applyPatch(perp.symbol, {
-                        samplingFrequencySeconds: value,
-                      });
-                    }
-                  }}
+                  onBlur={(e) =>
+                    handleNumericBlur(
+                      perp.symbol,
+                      "samplingFrequencySeconds",
+                      e.target.value,
+                    )
+                  }
+                />
+              </td>
+              <td className="border-b py-2">
+                <input
+                  type="number"
+                  min={1}
+                  className="w-20 rounded border px-2 py-1"
+                  aria-label={`${perp.symbol} leverage`}
+                  defaultValue={perp.leverage}
+                  onBlur={(e) =>
+                    handleNumericBlur(perp.symbol, "leverage", e.target.value)
+                  }
+                />
+              </td>
+              <td className="border-b py-2">
+                <input
+                  type="number"
+                  min={1}
+                  className="w-28 rounded border px-2 py-1"
+                  aria-label={`${perp.symbol} position size usd`}
+                  defaultValue={perp.positionSizeUsd}
+                  onBlur={(e) =>
+                    handleNumericBlur(
+                      perp.symbol,
+                      "positionSizeUsd",
+                      e.target.value,
+                    )
+                  }
                 />
               </td>
             </tr>

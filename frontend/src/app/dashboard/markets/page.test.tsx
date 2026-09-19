@@ -19,6 +19,8 @@ const btc: Perp = {
   samplingEnabled: false,
   decisionFrequencySeconds: 300,
   samplingFrequencySeconds: 60,
+  leverage: 1,
+  positionSizeUsd: 100,
 };
 
 describe("MarketsPage", () => {
@@ -55,6 +57,18 @@ describe("MarketsPage", () => {
     expect(screen.getByLabelText("BTC sampling frequency seconds")).toHaveValue(
       15,
     );
+  });
+
+  it("shows the current leverage and position size", async () => {
+    fetchPerpsMock.mockResolvedValue([
+      { ...btc, leverage: 10, positionSizeUsd: 500 },
+    ]);
+
+    render(<MarketsPage />);
+    await screen.findByText("BTC");
+
+    expect(screen.getByLabelText("BTC leverage")).toHaveValue(10);
+    expect(screen.getByLabelText("BTC position size usd")).toHaveValue(500);
   });
 
   it("enabling trading visibly also enables sampling once the server responds", async () => {
@@ -116,6 +130,42 @@ describe("MarketsPage", () => {
     await waitFor(() =>
       expect(updatePerpConfigMock).toHaveBeenCalledWith("BTC", {
         samplingFrequencySeconds: 5,
+      }),
+    );
+  });
+
+  it("saves an edited leverage on blur", async () => {
+    fetchPerpsMock.mockResolvedValue([btc]);
+    updatePerpConfigMock.mockResolvedValue({ ...btc, leverage: 20 });
+
+    render(<MarketsPage />);
+    await screen.findByText("BTC");
+
+    const input = screen.getByLabelText("BTC leverage");
+    fireEvent.change(input, { target: { value: "20" } });
+    fireEvent.blur(input);
+
+    await waitFor(() =>
+      expect(updatePerpConfigMock).toHaveBeenCalledWith("BTC", {
+        leverage: 20,
+      }),
+    );
+  });
+
+  it("saves an edited position size on blur", async () => {
+    fetchPerpsMock.mockResolvedValue([btc]);
+    updatePerpConfigMock.mockResolvedValue({ ...btc, positionSizeUsd: 750 });
+
+    render(<MarketsPage />);
+    await screen.findByText("BTC");
+
+    const input = screen.getByLabelText("BTC position size usd");
+    fireEvent.change(input, { target: { value: "750" } });
+    fireEvent.blur(input);
+
+    await waitFor(() =>
+      expect(updatePerpConfigMock).toHaveBeenCalledWith("BTC", {
+        positionSizeUsd: 750,
       }),
     );
   });

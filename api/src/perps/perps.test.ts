@@ -55,13 +55,15 @@ describe("GET /perps", () => {
     ]);
   });
 
-  it("merges in persisted config for a PERP, including frequencies", async () => {
+  it("merges in persisted config for a PERP, defaulting any fields it omits", async () => {
     await db.collection("perpConfigs").insertOne({
       symbol: "BTC",
       tradingEnabled: true,
       samplingEnabled: true,
       decisionFrequencySeconds: 30,
       samplingFrequencySeconds: 10,
+      leverage: 5,
+      positionSizeUsd: 250,
     });
 
     const res = await request(buildApp())
@@ -74,6 +76,8 @@ describe("GET /perps", () => {
       samplingEnabled: true,
       decisionFrequencySeconds: 30,
       samplingFrequencySeconds: 10,
+      leverage: 5,
+      positionSizeUsd: 250,
     });
     expect(res.body.perps).toContainEqual({
       symbol: "ETH",
@@ -163,9 +167,10 @@ describe("PATCH /perps/:symbol", () => {
       });
     });
 
-    it("updating one frequency leaves the other and the toggles untouched", async () => {
+    it("updating one frequency leaves the other fields untouched", async () => {
       await db.collection("perpConfigs").insertOne({
         symbol: "BTC",
+        ...DEFAULT_PERP_CONFIG,
         tradingEnabled: true,
         samplingEnabled: true,
         decisionFrequencySeconds: 60,
@@ -180,6 +185,7 @@ describe("PATCH /perps/:symbol", () => {
       expect(res.status).toBe(200);
       expect(res.body).toEqual({
         symbol: "BTC",
+        ...DEFAULT_PERP_CONFIG,
         tradingEnabled: true,
         samplingEnabled: true,
         decisionFrequencySeconds: 900,
@@ -237,6 +243,99 @@ describe("PATCH /perps/:symbol", () => {
       expect(stored?.samplingFrequencySeconds).toBe(
         DEFAULT_PERP_CONFIG.samplingFrequencySeconds,
       );
+    });
+  });
+
+  describe("leverage and position size fields", () => {
+    it("persists valid leverage and position size independently", async () => {
+      const res = await request(buildApp())
+        .patch("/perps/BTC")
+        .set("Cookie", authCookie())
+        .send({ leverage: 10, positionSizeUsd: 500 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.leverage).toBe(10);
+      expect(res.body.positionSizeUsd).toBe(500);
+
+      const stored = await db
+        .collection("perpConfigs")
+        .findOne({ symbol: "BTC" });
+      expect(stored).toMatchObject({ leverage: 10, positionSizeUsd: 500 });
+    });
+
+    it("updating leverage alone leaves position size untouched, and vice versa", async () => {
+      await db.collection("perpConfigs").insertOne({
+        symbol: "BTC",
+        ...DEFAULT_PERP_CONFIG,
+        leverage: 5,
+        positionSizeUsd: 250,
+      });
+
+      const res = await request(buildApp())
+        .patch("/perps/BTC")
+        .set("Cookie", authCookie())
+        .send({ leverage: 20 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.leverage).toBe(20);
+      expect(res.body.positionSizeUsd).toBe(250);
+    });
+
+    it.each([0, -1, NaN, Infinity, 51, "5", null])(
+      "rejects an invalid leverage value: %p",
+      async (value) => {
+        const res = await request(buildApp())
+          .patch("/perps/BTC")
+          .set("Cookie", authCookie())
+          .send({ leverage: value });
+        expect(res.status).toBe(400);
+      },
+    );
+
+    it.each([0, -1, NaN, Infinity, 1_000_001, "100", null])(
+      "rejects an invalid positionSizeUsd value: %p",
+      async (value) => {
+        const res = await request(buildApp())
+          .patch("/perps/BTC")
+          .set("Cookie", authCookie())
+          .send({ positionSizeUsd: value });
+        expect(res.status).toBe(400);
+      },
+    );
+
+    it("accepts boundary values 1x/$1 and 50x/$1,000,000", async () => {
+      const res = await request(buildApp())
+        .patch("/perps/BTC")
+        .set("Cookie", authCookie())
+        .send({ leverage: 1, positionSizeUsd: 1 });
+      expect(res.status).toBe(200);
+      expect(res.body.leverage).toBe(1);
+      expect(res.body.positionSizeUsd).toBe(1);
+
+      const res2 = await request(buildApp())
+        .patch("/perps/BTC")
+        .set("Cookie", authCookie())
+        .send({ leverage: 50, positionSizeUsd: 1_000_000 });
+      expect(res2.status).toBe(200);
+      expect(res2.body.leverage).toBe(50);
+      expect(res2.body.positionSizeUsd).toBe(1_000_000);
+    });
+
+    it("a rejected update does not persist any part of the invalid request", async () => {
+      await db.collection("perpConfigs").insertOne({
+        symbol: "BTC",
+        ...DEFAULT_PERP_CONFIG,
+      });
+
+      await request(buildApp())
+        .patch("/perps/BTC")
+        .set("Cookie", authCookie())
+        .send({ leverage: -1, positionSizeUsd: 999 });
+
+      const stored = await db
+        .collection("perpConfigs")
+        .findOne({ symbol: "BTC" });
+      expect(stored?.positionSizeUsd).toBe(DEFAULT_PERP_CONFIG.positionSizeUsd);
     });
   });
 });
