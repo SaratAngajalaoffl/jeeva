@@ -1,0 +1,10 @@
+FROM node:20-slim
+WORKDIR /repo
+COPY package.json package-lock.json* ./
+COPY frontend/package.json frontend/package.json
+RUN npm ci --workspace=frontend --include-workspace-root
+COPY frontend ./frontend
+WORKDIR /repo/frontend
+ENV WATCHPACK_POLLING=true
+EXPOSE 3000
+CMD ["npm", "run", "dev"]

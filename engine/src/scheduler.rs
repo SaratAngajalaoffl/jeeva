@@ -1,4 +1,28 @@
 use std::collections::HashMap;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+/// Seconds from `now_unix_seconds` until the next wall-clock boundary
+/// that's a multiple of `frequency_seconds` — e.g. for a 60s frequency,
+/// the next :00 minute mark, not 60s from whenever the task happened to
+/// start. Returns 0.0 if `now_unix_seconds` already sits exactly on a
+/// boundary. Pure so it's unit-testable without touching the clock;
+/// callers convert the result into a `tokio::time::Instant` to delay
+/// the first tick of an `interval_at`.
+pub fn seconds_until_next_boundary(now_unix_seconds: f64, frequency_seconds: f64) -> f64 {
+    let frequency = frequency_seconds.max(0.001);
+    let next_boundary = (now_unix_seconds / frequency).ceil() * frequency;
+    (next_boundary - now_unix_seconds).max(0.0)
+}
+
+/// `seconds_until_next_boundary` against the real clock, as a
+/// `Duration` ready to add to `tokio::time::Instant::now()`.
+pub fn delay_until_next_boundary(frequency_seconds: f64) -> Duration {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64();
+    Duration::from_secs_f64(seconds_until_next_boundary(now, frequency_seconds))
+}
 
 #[derive(Debug, Default, PartialEq)]
 pub struct ReconcileActions {
@@ -96,5 +120,24 @@ mod tests {
 
         assert_eq!(actions.to_start, vec![("SOL".to_string(), 15.0)]);
         assert_eq!(actions.to_stop, vec!["ETH".to_string()]);
+    }
+
+    #[test]
+    fn seconds_until_next_boundary_rounds_up_to_the_next_multiple() {
+        // 10:30:45 with a 60s frequency should land on 10:31:00, i.e. 15s away.
+        let now = 45.0; // seconds past a whole minute
+        assert_eq!(seconds_until_next_boundary(now, 60.0), 15.0);
+    }
+
+    #[test]
+    fn seconds_until_next_boundary_is_zero_exactly_on_a_boundary() {
+        assert_eq!(seconds_until_next_boundary(120.0, 60.0), 0.0);
+    }
+
+    #[test]
+    fn seconds_until_next_boundary_handles_sub_minute_frequencies() {
+        // 10:30:47 with a 10s frequency should land on 10:30:50, i.e. 3s away.
+        let now = 47.0;
+        assert!((seconds_until_next_boundary(now, 10.0) - 3.0).abs() < 1e-9);
     }
 }

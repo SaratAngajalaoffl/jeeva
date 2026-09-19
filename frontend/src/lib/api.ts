@@ -50,6 +50,23 @@ export async function fetchPerps(): Promise<Perp[]> {
   return body.perps;
 }
 
+export interface PerpStats {
+  symbol: string;
+  price: number;
+  changePct: number;
+  volumeUsd: number;
+  openInterestUsd: number;
+}
+
+export async function fetchPerpStats(): Promise<PerpStats[]> {
+  const res = await fetch(`${API_URL}/perps/stats`, { credentials: "include" });
+  if (!res.ok) {
+    throw new Error("Failed to load market stats");
+  }
+  const body = (await res.json()) as { stats: PerpStats[] };
+  return body.stats;
+}
+
 export async function updatePerpConfig(
   symbol: string,
   patch: Partial<Omit<Perp, "symbol">>,
@@ -87,6 +104,46 @@ export async function fetchMarketData(
   }
   const body = (await res.json()) as { samples: MarketDataPoint[] };
   return body.samples;
+}
+
+export interface OrderBookLevel {
+  price: number;
+  size: number;
+}
+
+export interface OrderBook {
+  bids: OrderBookLevel[];
+  asks: OrderBookLevel[];
+}
+
+export async function fetchOrderBook(symbol: string): Promise<OrderBook> {
+  const res = await fetch(
+    `${API_URL}/perps/${encodeURIComponent(symbol)}/orderbook`,
+    { credentials: "include" },
+  );
+  if (!res.ok) {
+    throw new Error("Failed to load order book");
+  }
+  return res.json();
+}
+
+export interface Trade {
+  time: number;
+  price: number;
+  size: number;
+  side: "buy" | "sell";
+}
+
+export async function fetchRecentTrades(symbol: string): Promise<Trade[]> {
+  const res = await fetch(
+    `${API_URL}/perps/${encodeURIComponent(symbol)}/trades`,
+    { credentials: "include" },
+  );
+  if (!res.ok) {
+    throw new Error("Failed to load recent trades");
+  }
+  const body = (await res.json()) as { trades: Trade[] };
+  return body.trades;
 }
 
 export interface MockWallet {

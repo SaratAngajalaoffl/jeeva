@@ -1,6 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useId } from "react";
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 interface Point {
   x: string;
@@ -13,48 +22,15 @@ interface LineChartProps {
   points: Point[];
 }
 
-const WIDTH = 640;
-const HEIGHT = 200;
-const PADDING = 32;
-
 // Single-series chart: one hue (categorical slot 1, ember) is enough —
 // a legend would be redundant since the title already names the series.
 const SERIES_COLOR = "#ff3b3b";
 const GRIDLINE_COLOR = "#33191d";
-const AXIS_COLOR = "#452127";
 const MUTED_TEXT = "#c29a9d";
 const PRIMARY_TEXT = "#f6e9ea";
 
 export default function LineChart({ title, unit, points }: LineChartProps) {
-  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
-
-  const { path, coords, minY, maxY } = useMemo(() => {
-    if (points.length === 0) {
-      return { path: "", coords: [] as [number, number][], minY: 0, maxY: 0 };
-    }
-    const values = points.map((p) => p.y);
-    const minY = Math.min(...values);
-    const maxY = Math.max(...values);
-    const range = maxY - minY || 1;
-    const innerWidth = WIDTH - PADDING * 2;
-    const innerHeight = HEIGHT - PADDING * 2;
-
-    const coords: [number, number][] = points.map((p, i) => {
-      const x =
-        PADDING +
-        (points.length === 1 ? 0 : (i / (points.length - 1)) * innerWidth);
-      const y = PADDING + innerHeight - ((p.y - minY) / range) * innerHeight;
-      return [x, y];
-    });
-
-    const path = coords
-      .map(
-        ([x, y], i) => `${i === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`,
-      )
-      .join(" ");
-
-    return { path, coords, minY, maxY };
-  }, [points]);
+  const gradientId = useId();
 
   if (points.length === 0) {
     return (
@@ -72,112 +48,65 @@ export default function LineChart({ title, unit, points }: LineChartProps) {
     );
   }
 
-  const hovered = hoverIndex !== null ? points[hoverIndex] : null;
-  const hoveredCoord = hoverIndex !== null ? coords[hoverIndex] : null;
-
   return (
     <div className="rounded-xl border border-surface-1 bg-surface-0/60 p-4">
       <h3 className="mb-2 text-sm font-medium" style={{ color: PRIMARY_TEXT }}>
         {title}
       </h3>
-      <svg
-        viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+      <div
         role="img"
         aria-label={`${title} over time`}
-        className="w-full"
-        onMouseLeave={() => setHoverIndex(null)}
-        onMouseMove={(e) => {
-          const svg = e.currentTarget;
-          const rect = svg.getBoundingClientRect();
-          const relativeX = ((e.clientX - rect.left) / rect.width) * WIDTH;
-          let closest = 0;
-          let closestDist = Infinity;
-          coords.forEach(([x], i) => {
-            const dist = Math.abs(x - relativeX);
-            if (dist < closestDist) {
-              closestDist = dist;
-              closest = i;
-            }
-          });
-          setHoverIndex(closest);
-        }}
+        className="h-[200px] w-full"
       >
-        {/* recessive gridlines */}
-        {[0, 0.5, 1].map((t) => {
-          const y = PADDING + t * (HEIGHT - PADDING * 2);
-          return (
-            <line
-              key={t}
-              x1={PADDING}
-              x2={WIDTH - PADDING}
-              y1={y}
-              y2={y}
-              stroke={GRIDLINE_COLOR}
-              strokeWidth={1}
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart
+            data={points}
+            margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
+          >
+            <defs>
+              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={SERIES_COLOR} stopOpacity={0.35} />
+                <stop offset="100%" stopColor={SERIES_COLOR} stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid stroke={GRIDLINE_COLOR} vertical={false} />
+            <XAxis dataKey="x" hide />
+            <YAxis
+              domain={["auto", "auto"]}
+              width={52}
+              tick={{ fill: MUTED_TEXT, fontSize: 10 }}
+              axisLine={false}
+              tickLine={false}
+              tickFormatter={(value: number) => value.toLocaleString()}
             />
-          );
-        })}
-        <line
-          x1={PADDING}
-          x2={WIDTH - PADDING}
-          y1={HEIGHT - PADDING}
-          y2={HEIGHT - PADDING}
-          stroke={AXIS_COLOR}
-          strokeWidth={1}
-        />
-
-        <path
-          d={path}
-          fill="none"
-          stroke={SERIES_COLOR}
-          strokeWidth={2}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-
-        {hoveredCoord && (
-          <>
-            <line
-              x1={hoveredCoord[0]}
-              x2={hoveredCoord[0]}
-              y1={PADDING}
-              y2={HEIGHT - PADDING}
-              stroke={AXIS_COLOR}
-              strokeWidth={1}
-              strokeDasharray="2,2"
+            <Tooltip
+              contentStyle={{
+                background: "#150d0f",
+                border: "1px solid #452127",
+                borderRadius: 8,
+                color: PRIMARY_TEXT,
+                fontSize: 12,
+              }}
+              labelStyle={{ color: MUTED_TEXT }}
+              labelFormatter={(value) => new Date(String(value)).toLocaleString()}
+              formatter={(value) => [
+                `${Number(value).toLocaleString()}${unit ? ` ${unit}` : ""}`,
+                title,
+              ]}
             />
-            <circle
-              cx={hoveredCoord[0]}
-              cy={hoveredCoord[1]}
-              r={4}
-              fill={SERIES_COLOR}
-              stroke="#150d0f"
+            <Area
+              type="monotone"
+              dataKey="y"
+              stroke={SERIES_COLOR}
               strokeWidth={2}
+              fill={`url(#${gradientId})`}
+              dot={false}
+              activeDot={{ r: 4, fill: SERIES_COLOR, stroke: "#150d0f", strokeWidth: 2 }}
+              isAnimationActive={false}
             />
-          </>
-        )}
-
-        <text x={PADDING} y={PADDING - 8} fontSize={10} fill={MUTED_TEXT}>
-          {maxY.toLocaleString()}
-        </text>
-        <text
-          x={PADDING}
-          y={HEIGHT - PADDING + 14}
-          fontSize={10}
-          fill={MUTED_TEXT}
-        >
-          {minY.toLocaleString()}
-        </text>
-      </svg>
-      {hovered && (
-        <p className="mt-1 text-xs" style={{ color: MUTED_TEXT }}>
-          {new Date(hovered.x).toLocaleString()}:{" "}
-          <span style={{ color: PRIMARY_TEXT }}>
-            {hovered.y.toLocaleString()}
-            {unit ? ` ${unit}` : ""}
-          </span>
-        </p>
-      )}
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 }

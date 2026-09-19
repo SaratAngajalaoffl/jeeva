@@ -51,9 +51,8 @@ export default function DecisionsPage() {
   }
 
   return (
-    <div className="min-h-screen">
-      <SiteHeader />
-      <main className="mx-auto flex max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
+    <SiteHeader>
+      <main className="flex flex-col gap-8 px-6 py-8 sm:px-8 lg:px-12">
         {error && <p className="text-sm text-destructive">{error}</p>}
 
         <section>
@@ -167,6 +166,6 @@ export default function DecisionsPage() {
           )}
         </section>
       </main>
-    </div>
+    </SiteHeader>
   );
 }

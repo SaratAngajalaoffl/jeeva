@@ -55,9 +55,8 @@ export default function WalletPage() {
   }
 
   return (
-    <div className="min-h-screen">
-      <SiteHeader />
-      <main className="mx-auto flex max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
+    <SiteHeader>
+      <main className="flex flex-col gap-8 px-6 py-8 sm:px-8 lg:px-12">
         <section>
           <h1 className="mb-3 text-xl font-semibold tracking-tight text-text">
             Mock wallet
@@ -143,6 +142,6 @@ export default function WalletPage() {
           </section>
         )}
       </main>
-    </div>
+    </SiteHeader>
   );
 }

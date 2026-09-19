@@ -3,11 +3,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::task::JoinHandle;
+use tokio::time::{interval_at, Instant, MissedTickBehavior};
 
 use super::client::MarketDataClient;
 use super::writer::MarketDataWriter;
 use crate::config::{ConfigStore, PerpConfig};
-use crate::scheduler::reconcile;
+use crate::scheduler::{delay_until_next_boundary, reconcile};
 
 /// The set of symbols that should currently be sampled, each mapped to
 /// its configured sampling frequency (in seconds).
@@ -26,7 +27,13 @@ fn spawn_task(
     writer: Arc<dyn MarketDataWriter>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
+        let period = Duration::from_secs_f64(frequency_seconds.max(0.001));
+        let start = Instant::now() + delay_until_next_boundary(frequency_seconds);
+        let mut ticker = interval_at(start, period);
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
         loop {
+            ticker.tick().await;
             match client.fetch_sample(&symbol).await {
                 Ok(sample) => {
                     if let Err(error) = writer.write(&sample).await {
@@ -37,7 +44,6 @@ fn spawn_task(
                     tracing::error!(symbol = %symbol, %error, "failed to fetch market data sample");
                 }
             }
-            tokio::time::sleep(Duration::from_secs_f64(frequency_seconds.max(0.001))).await;
         }
     })
 }

@@ -18,13 +18,13 @@ jobs:
         include:
           - service: engine
             context: ./engine
-            dockerfile: ./engine/Dockerfile
+            dockerfile: ./engine/deploy/Dockerfile
           - service: api
             context: .
-            dockerfile: ./api/Dockerfile
+            dockerfile: ./api/deploy/Dockerfile
           - service: frontend
             context: .
-            dockerfile: ./frontend/Dockerfile
+            dockerfile: ./frontend/deploy/Dockerfile
     steps:
       - uses: actions/checkout@v4
 

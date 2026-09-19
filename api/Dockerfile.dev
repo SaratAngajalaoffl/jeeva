@@ -1,0 +1,9 @@
+FROM node:20-slim
+WORKDIR /repo
+COPY package.json package-lock.json* ./
+COPY api/package.json api/package.json
+RUN npm ci --workspace=api --include-workspace-root
+COPY api ./api
+WORKDIR /repo/api
+EXPOSE 4000
+CMD ["npm", "run", "dev"]

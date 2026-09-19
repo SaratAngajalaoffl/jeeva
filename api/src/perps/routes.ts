@@ -51,6 +51,11 @@ export function createPerpsRouter(
     res.status(200).json({ perps: merged });
   });
 
+  router.get("/stats", async (_req, res) => {
+    const stats = await hyperliquidClient.listPerpStats();
+    res.status(200).json({ stats });
+  });
+
   router.patch("/:symbol", async (req, res) => {
     const { symbol } = req.params;
     const {
@@ -107,6 +112,18 @@ export function createPerpsRouter(
       range.to,
     );
     res.status(200).json({ samples });
+  });
+
+  router.get("/:symbol/orderbook", async (req, res) => {
+    const { symbol } = req.params;
+    const book = await hyperliquidClient.getOrderBook(symbol);
+    res.status(200).json(book);
+  });
+
+  router.get("/:symbol/trades", async (req, res) => {
+    const { symbol } = req.params;
+    const trades = await hyperliquidClient.getRecentTrades(symbol);
+    res.status(200).json({ trades });
   });
 
   return router;

@@ -10,17 +10,26 @@ const NAV_LINKS = [
   { href: "/dashboard/decisions", label: "Positions" },
 ];
 
-export function SiteHeader({ onLogout }: { onLogout?: () => void }) {
+export function SiteHeader({
+  onLogout,
+  children,
+}: {
+  onLogout?: () => void;
+  children?: React.ReactNode;
+}) {
   const pathname = usePathname();
 
   return (
-    <header className="sticky top-0 z-10 border-b border-surface-1 bg-mantle/80 backdrop-blur">
-      <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
-        <Link href="/dashboard" className="flex items-center gap-2 font-semibold tracking-tight text-text">
+    <div className="flex min-h-screen">
+      <aside className="sticky top-0 flex h-screen w-56 shrink-0 flex-col border-r border-surface-1 bg-mantle/80 px-4 py-6">
+        <Link
+          href="/dashboard"
+          className="flex items-center gap-2 px-2 font-semibold tracking-tight text-text"
+        >
           <span className="inline-block h-2 w-2 rounded-full bg-ember shadow-[0_0_8px_theme(colors.ember)]" />
           Jeeva
         </Link>
-        <nav className="flex items-center gap-1 text-sm">
+        <nav className="mt-8 flex flex-col gap-1 text-sm">
           {NAV_LINKS.map((link) => {
             const active = pathname === link.href;
             return (
@@ -37,16 +46,17 @@ export function SiteHeader({ onLogout }: { onLogout?: () => void }) {
               </Link>
             );
           })}
-          {onLogout && (
-            <button
-              onClick={onLogout}
-              className="ml-2 rounded-md border border-surface-1 px-3 py-1.5 text-subtext-1 transition-colors hover:border-ember/60 hover:text-ember"
-            >
-              Log out
-            </button>
-          )}
         </nav>
-      </div>
-    </header>
+        {onLogout && (
+          <button
+            onClick={onLogout}
+            className="mt-auto rounded-md border border-surface-1 px-3 py-1.5 text-sm text-subtext-1 transition-colors hover:border-ember/60 hover:text-ember"
+          >
+            Log out
+          </button>
+        )}
+      </aside>
+      <div className="min-w-0 flex-1">{children}</div>
+    </div>
   );
 }

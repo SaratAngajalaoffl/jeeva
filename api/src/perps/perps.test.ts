@@ -32,6 +32,30 @@ const fakeHyperliquidClient: HyperliquidClient = {
   async listPerps() {
     return [{ symbol: "BTC" }, { symbol: "ETH" }];
   },
+  async listPerpStats() {
+    return [
+      {
+        symbol: "BTC",
+        price: 65000,
+        changePct: 1.5,
+        volumeUsd: 1_000_000,
+        openInterestUsd: 5_000_000,
+      },
+      {
+        symbol: "ETH",
+        price: 3200,
+        changePct: -0.8,
+        volumeUsd: 500_000,
+        openInterestUsd: 2_000_000,
+      },
+    ];
+  },
+  async getOrderBook() {
+    return { bids: [], asks: [] };
+  },
+  async getRecentTrades() {
+    return [];
+  },
 };
 
 function authCookie(): string {

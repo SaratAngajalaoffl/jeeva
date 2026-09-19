@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::task::JoinHandle;
+use tokio::time::{interval_at, Instant, MissedTickBehavior};
 
 use super::execution::ExecutionAdapter;
 use super::history::{build_context_summary, MarketDataHistoryReader};
@@ -11,7 +12,7 @@ use super::log::{DecisionLogEntry, DecisionLogWriter};
 use super::model::decide_action;
 use crate::config::{ConfigStore, PerpConfig};
 use crate::funding::FundingHistoryReader;
-use crate::scheduler::reconcile;
+use crate::scheduler::{delay_until_next_boundary, reconcile};
 
 const HISTORY_WINDOW: u32 = 1000;
 
@@ -207,7 +208,13 @@ fn spawn_task(
     decision_log: Arc<dyn DecisionLogWriter>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
+        let period = Duration::from_secs_f64(frequency_seconds.max(0.001));
+        let start = Instant::now() + delay_until_next_boundary(frequency_seconds);
+        let mut ticker = interval_at(start, period);
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
         loop {
+            ticker.tick().await;
             if let Some(config) = store.get(&symbol) {
                 run_decision_cycle(
                     &symbol,
@@ -220,7 +227,6 @@ fn spawn_task(
                 )
                 .await;
             }
-            tokio::time::sleep(Duration::from_secs_f64(frequency_seconds.max(0.001))).await;
         }
     })
 }
