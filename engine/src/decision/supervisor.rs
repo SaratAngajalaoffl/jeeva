@@ -343,12 +343,19 @@ fn resolve_execution(
     mode: &ModeStore,
 ) -> Option<Arc<dyn ExecutionAdapter>> {
     let Some(wallet_id) = &config.wallet_id else {
-        tracing::error!(symbol, "trading enabled but no wallet configured; skipping cycle");
+        tracing::error!(
+            symbol,
+            "trading enabled but no wallet configured; skipping cycle"
+        );
         return None;
     };
 
     let Some((kind, adapter)) = wallets.resolve(wallet_id) else {
-        tracing::error!(symbol, wallet_id, "configured wallet not found or not ready; skipping cycle");
+        tracing::error!(
+            symbol,
+            wallet_id,
+            "configured wallet not found or not ready; skipping cycle"
+        );
         return None;
     };
 

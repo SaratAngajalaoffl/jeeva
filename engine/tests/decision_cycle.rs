@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use engine::config::PerpConfig;
 use engine::decision::{
     run_decision_cycle, DecisionLogEntry, DecisionLogWriter, Direction, ExecutionAdapter,
-    ExecutionError, FakeDecisionMaker, HistoryError, InMemoryFailureTracker, MarketDataHistoryReader,
-    OpenPosition, TargetDirection,
+    ExecutionError, FakeDecisionMaker, HistoryError, InMemoryFailureTracker,
+    MarketDataHistoryReader, OpenPosition, TargetDirection,
 };
 use engine::funding::{FundingHistoryError, FundingHistoryReader, FundingRecord};
 use engine::market_data::MarketDataSample;
@@ -228,7 +228,8 @@ async fn flipping_direction_closes_then_opens() {
     let history = FakeHistory {
         samples: vec![sample(100.0)],
     };
-    let decision_maker = FakeDecisionMaker::with_sequence(vec![TargetDirection::Long, TargetDirection::Short]);
+    let decision_maker =
+        FakeDecisionMaker::with_sequence(vec![TargetDirection::Long, TargetDirection::Short]);
     let execution = FakeExecution::default();
     let log = FakeDecisionLog::default();
 
@@ -266,7 +267,8 @@ async fn going_flat_closes_the_position() {
     let history = FakeHistory {
         samples: vec![sample(100.0)],
     };
-    let decision_maker = FakeDecisionMaker::with_sequence(vec![TargetDirection::Long, TargetDirection::Flat]);
+    let decision_maker =
+        FakeDecisionMaker::with_sequence(vec![TargetDirection::Long, TargetDirection::Flat]);
     let execution = FakeExecution::default();
     let log = FakeDecisionLog::default();
 

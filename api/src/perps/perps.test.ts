@@ -120,6 +120,8 @@ describe("GET /perps", () => {
       samplingFrequencySeconds: 10,
       leverage: 5,
       positionSizeUsd: 250,
+      decisionMaker: DEFAULT_PERP_CONFIG.decisionMaker,
+      walletId: DEFAULT_PERP_CONFIG.walletId,
     });
     expect(res.body.perps).toContainEqual({
       symbol: "ETH",
