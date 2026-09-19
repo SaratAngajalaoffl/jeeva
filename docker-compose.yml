@@ -1,0 +1,63 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: jeeva
+      POSTGRES_PASSWORD: jeeva
+      POSTGRES_DB: jeeva
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    environment:
+      PORT: 4000
+      MONGO_URL: mongodb://mongo:27017/jeeva
+      DATABASE_URL: postgres://jeeva:jeeva@timescaledb:5432/jeeva
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./api/src:/repo/api/src
+    depends_on:
+      - mongo
+      - timescaledb
+
+  engine:
+    build:
+      context: ./engine
+    environment:
+      MONGO_URL: mongodb://mongo:27017/jeeva
+      DATABASE_URL: postgres://jeeva:jeeva@timescaledb:5432/jeeva
+    depends_on:
+      - mongo
+      - timescaledb
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:4000
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/src:/repo/frontend/src
+    depends_on:
+      - api
+
+volumes:
+  mongo_data:
+  timescale_data:

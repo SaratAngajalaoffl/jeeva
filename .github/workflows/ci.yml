@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      engine: ${{ steps.filter.outputs.engine }}
+      api: ${{ steps.filter.outputs.api }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            engine:
+              - 'engine/**'
+            api:
+              - 'api/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'eslint.config.js'
+              - '.prettierrc.json'
+            frontend:
+              - 'frontend/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'eslint.config.js'
+              - '.prettierrc.json'
+
+  engine:
+    needs: changes
+    if: needs.changes.outputs.engine == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
+  api:
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run lint --workspace=api
+      - run: npm run build --workspace=api
+      - run: npm run test --workspace=api
+
+  frontend:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run lint --workspace=frontend
+      - run: npm run test --workspace=frontend
+      - run: npm run build --workspace=frontend

@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.next/
+target/
+*.log
+.env
+.env.local
