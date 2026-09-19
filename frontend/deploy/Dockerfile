@@ -4,6 +4,11 @@ COPY package.json package-lock.json* ./
 COPY frontend/package.json frontend/package.json
 RUN npm ci --workspace=frontend --include-workspace-root
 COPY frontend ./frontend
+# NEXT_PUBLIC_* vars are inlined into the client bundle at build time, so
+# the publicly reachable api URL must be supplied here, not at container
+# runtime.
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 RUN npm run build --workspace=frontend
 
 FROM node:20-slim
