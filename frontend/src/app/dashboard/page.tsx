@@ -49,6 +49,9 @@ export default function DashboardPage() {
       <Link href="/dashboard/wallet" className="underline">
         Mock wallet
       </Link>
+      <Link href="/dashboard/decisions" className="underline">
+        Positions &amp; decisions
+      </Link>
     </main>
   );
 }

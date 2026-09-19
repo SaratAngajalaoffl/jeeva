@@ -2,6 +2,8 @@ use async_trait::async_trait;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 
+use crate::pg::execute_idempotent;
+
 use super::client::MarketDataError;
 use super::model::MarketDataSample;
 
@@ -18,6 +20,8 @@ pub struct PostgresMarketDataWriter {
 }
 
 impl PostgresMarketDataWriter {
+    /// Connects its own pool and runs the migration. Used where nothing
+    /// else shares the database connection (engine tests).
     pub async fn connect(database_url: &str) -> Result<Self, sqlx::Error> {
         let pool = PgPoolOptions::new()
             .max_connections(5)
@@ -27,27 +31,15 @@ impl PostgresMarketDataWriter {
         Ok(Self { pool })
     }
 
-    /// Runs a migration statement, tolerating the duplicate-object errors
-    /// Postgres can raise when two connections run a `CREATE ... IF NOT
-    /// EXISTS` concurrently (its existence check and creation aren't
-    /// atomic together) — this lets every writer safely run its own
-    /// migration on `connect()` without a distributed lock.
-    async fn execute_idempotent(pool: &PgPool, sql: &'static str) -> Result<(), sqlx::Error> {
-        match sqlx::query(sql).execute(pool).await {
-            Ok(_) => Ok(()),
-            Err(sqlx::Error::Database(db_err))
-                if matches!(db_err.code().as_deref(), Some("23505") | Some("42P07")) =>
-            {
-                Ok(())
-            }
-            Err(e) => Err(e),
-        }
+    /// Builds on an already-connected, already-migrated shared pool.
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
     }
 
-    async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {
-        Self::execute_idempotent(pool, "CREATE EXTENSION IF NOT EXISTS timescaledb").await?;
+    pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {
+        execute_idempotent(pool, "CREATE EXTENSION IF NOT EXISTS timescaledb").await?;
 
-        Self::execute_idempotent(
+        execute_idempotent(
             pool,
             r#"
             CREATE TABLE IF NOT EXISTS market_data (
@@ -63,7 +55,7 @@ impl PostgresMarketDataWriter {
         )
         .await?;
 
-        Self::execute_idempotent(
+        execute_idempotent(
             pool,
             "SELECT create_hypertable('market_data', 'time', if_not_exists => TRUE)",
         )

@@ -124,3 +124,46 @@ export async function createMockWallet(
   }
   return { ok: true, wallet: await res.json() };
 }
+
+export interface Position {
+  symbol: string;
+  direction: "long" | "short";
+  entryPrice: number;
+  notionalUsd: number;
+  openedAt: string;
+}
+
+export async function fetchPositions(): Promise<Position[]> {
+  const res = await fetch(`${API_URL}/positions`, { credentials: "include" });
+  if (!res.ok) {
+    throw new Error("Failed to load positions");
+  }
+  const body = (await res.json()) as { positions: Position[] };
+  return body.positions;
+}
+
+export interface DecisionLogEntry {
+  time: string;
+  symbol: string;
+  contextSummary: string;
+  targetDirection: "long" | "short" | "flat" | null;
+  confidence: number | null;
+  probabilities: { long: number; short: number; flat: number } | null;
+  positionAction: "no_op" | "opened" | "closed" | "closed_and_opened" | null;
+  success: boolean;
+  error: string | null;
+}
+
+export async function fetchDecisions(
+  symbol?: string,
+): Promise<DecisionLogEntry[]> {
+  const query = symbol ? `?symbol=${encodeURIComponent(symbol)}` : "";
+  const res = await fetch(`${API_URL}/decisions${query}`, {
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error("Failed to load decision history");
+  }
+  const body = (await res.json()) as { decisions: DecisionLogEntry[] };
+  return body.decisions;
+}

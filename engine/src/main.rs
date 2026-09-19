@@ -2,25 +2,56 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use engine::config::{run_with_reconnect, ConfigStore};
+use engine::decision::{
+    self, FakeJevAdapter, MockExecutionAdapter, PostgresDecisionLogWriter,
+    PostgresMarketDataHistoryReader,
+};
 use engine::market_data::{self, HyperliquidMarketDataClient, PostgresMarketDataWriter};
+use sqlx::postgres::PgPoolOptions;
+use sqlx::PgPool;
 
 const SAMPLING_POLL_INTERVAL: Duration = Duration::from_secs(1);
+const DECISION_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const POSTGRES_CONNECT_RETRY_DELAY: Duration = Duration::from_secs(5);
+const DEFAULT_SLIPPAGE_BPS: f64 = 5.0;
 
 fn require_env(name: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| panic!("Missing required environment variable: {name}"))
 }
 
-async fn connect_postgres_with_retry(database_url: &str) -> PostgresMarketDataWriter {
+fn slippage_bps() -> f64 {
+    std::env::var("MOCK_SLIPPAGE_BPS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_SLIPPAGE_BPS)
+}
+
+async fn connect_postgres_with_retry(database_url: &str) -> PgPool {
     loop {
-        match PostgresMarketDataWriter::connect(database_url).await {
-            Ok(writer) => return writer,
+        match PgPoolOptions::new()
+            .max_connections(10)
+            .connect(database_url)
+            .await
+        {
+            Ok(pool) => return pool,
             Err(error) => {
                 tracing::error!(%error, "failed to connect to TimescaleDB; retrying");
                 tokio::time::sleep(POSTGRES_CONNECT_RETRY_DELAY).await;
             }
         }
     }
+}
+
+async fn migrate(pool: &PgPool) {
+    PostgresMarketDataWriter::migrate(pool)
+        .await
+        .expect("failed to migrate market_data table");
+    MockExecutionAdapter::migrate(pool)
+        .await
+        .expect("failed to migrate mock_positions table");
+    PostgresDecisionLogWriter::migrate(pool)
+        .await
+        .expect("failed to migrate decisions table");
 }
 
 #[tokio::main]
@@ -35,13 +66,25 @@ async fn main() {
     let database_url = require_env("DATABASE_URL");
     let store = ConfigStore::new();
 
+    let pool = connect_postgres_with_retry(&database_url).await;
+    migrate(&pool).await;
+
     let market_data_client: Arc<dyn market_data::MarketDataClient> =
         Arc::new(HyperliquidMarketDataClient::default());
     let market_data_writer: Arc<dyn market_data::MarketDataWriter> =
-        Arc::new(connect_postgres_with_retry(&database_url).await);
+        Arc::new(PostgresMarketDataWriter::new(pool.clone()));
+
+    let history: Arc<dyn decision::MarketDataHistoryReader> =
+        Arc::new(PostgresMarketDataHistoryReader::new(pool.clone()));
+    let jev: Arc<dyn decision::JevDecisionSource> = Arc::new(FakeJevAdapter::cycling());
+    let execution: Arc<dyn decision::ExecutionAdapter> =
+        Arc::new(MockExecutionAdapter::new(pool.clone(), slippage_bps()));
+    let decision_log: Arc<dyn decision::DecisionLogWriter> =
+        Arc::new(PostgresDecisionLogWriter::new(pool.clone()));
 
     tokio::select! {
         _ = run_with_reconnect(&mongo_url, store.clone()) => {},
-        _ = market_data::run(store, market_data_client, market_data_writer, SAMPLING_POLL_INTERVAL) => {},
+        _ = market_data::run(store.clone(), market_data_client, market_data_writer, SAMPLING_POLL_INTERVAL) => {},
+        _ = decision::run(store, history, jev, execution, decision_log, DECISION_POLL_INTERVAL) => {},
     }
 }
