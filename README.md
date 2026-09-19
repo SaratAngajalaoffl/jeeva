@@ -101,7 +101,7 @@ Every PERP picks its own decision maker independently of every other PERP, and i
 |---|---|
 | **Fake** | No network calls — cycles through synthetic decisions. The default, safe for a fresh deployment or local development with no external credentials. |
 | **TypeSafe Jev** | Calls TypeSafe's `systemOne` API directly, authenticated with `TYPESAFE_API_KEY`. |
-| **OpenRouter Jev** | Reaches the same Jev model via OpenRouter instead of TypeSafe directly. **Not implemented yet** — selectable in the dashboard, but every decision cycle will fail until this is built (tracked as a GitHub issue). |
+| **OpenRouter Jev** | Reaches the same Jev model via OpenRouter instead of TypeSafe directly, authenticated with `OPENROUTER_API_KEY`. |
 
 Because decision maker and execution mode are independent axes, you can, for example, run TypeSafe Jev's real decisions against the mock execution wallet — paper-trading with real intelligence, no funds at risk.
 
