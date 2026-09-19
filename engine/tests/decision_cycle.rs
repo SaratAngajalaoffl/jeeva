@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use engine::config::PerpConfig;
 use engine::decision::{
     run_decision_cycle, DecisionLogEntry, DecisionLogWriter, Direction, ExecutionAdapter,
-    ExecutionError, FakeJevAdapter, HistoryError, MarketDataHistoryReader, OpenPosition,
-    TargetDirection,
+    ExecutionError, FakeJevAdapter, HistoryError, InMemoryFailureTracker, MarketDataHistoryReader,
+    OpenPosition, TargetDirection,
 };
 use engine::funding::{FundingHistoryError, FundingHistoryReader, FundingRecord};
 use engine::market_data::MarketDataSample;
@@ -160,7 +160,17 @@ async fn opens_a_position_from_flat_when_jev_says_long() {
     let execution = FakeExecution::default();
     let log = FakeDecisionLog::default();
 
-    run_decision_cycle("BTC", &config(), &history, &jev, &execution, &EmptyFunding, &log).await;
+    run_decision_cycle(
+        "BTC",
+        &config(),
+        &history,
+        &jev,
+        &execution,
+        &EmptyFunding,
+        &log,
+        &InMemoryFailureTracker::new(),
+    )
+    .await;
 
     let opens = execution.open_calls.lock().unwrap();
     assert_eq!(opens.len(), 1);
@@ -182,8 +192,28 @@ async fn repeating_the_same_direction_is_a_no_op() {
     let execution = FakeExecution::default();
     let log = FakeDecisionLog::default();
 
-    run_decision_cycle("BTC", &config(), &history, &jev, &execution, &EmptyFunding, &log).await;
-    run_decision_cycle("BTC", &config(), &history, &jev, &execution, &EmptyFunding, &log).await;
+    run_decision_cycle(
+        "BTC",
+        &config(),
+        &history,
+        &jev,
+        &execution,
+        &EmptyFunding,
+        &log,
+        &InMemoryFailureTracker::new(),
+    )
+    .await;
+    run_decision_cycle(
+        "BTC",
+        &config(),
+        &history,
+        &jev,
+        &execution,
+        &EmptyFunding,
+        &log,
+        &InMemoryFailureTracker::new(),
+    )
+    .await;
 
     // Only the first cycle actually opened; the second was a no-op.
     assert_eq!(execution.open_calls.lock().unwrap().len(), 1);
@@ -200,8 +230,28 @@ async fn flipping_direction_closes_then_opens() {
     let execution = FakeExecution::default();
     let log = FakeDecisionLog::default();
 
-    run_decision_cycle("BTC", &config(), &history, &jev, &execution, &EmptyFunding, &log).await;
-    run_decision_cycle("BTC", &config(), &history, &jev, &execution, &EmptyFunding, &log).await;
+    run_decision_cycle(
+        "BTC",
+        &config(),
+        &history,
+        &jev,
+        &execution,
+        &EmptyFunding,
+        &log,
+        &InMemoryFailureTracker::new(),
+    )
+    .await;
+    run_decision_cycle(
+        "BTC",
+        &config(),
+        &history,
+        &jev,
+        &execution,
+        &EmptyFunding,
+        &log,
+        &InMemoryFailureTracker::new(),
+    )
+    .await;
 
     assert_eq!(execution.close_calls.lock().unwrap().len(), 1);
     let opens = execution.open_calls.lock().unwrap();
@@ -218,8 +268,28 @@ async fn going_flat_closes_the_position() {
     let execution = FakeExecution::default();
     let log = FakeDecisionLog::default();
 
-    run_decision_cycle("BTC", &config(), &history, &jev, &execution, &EmptyFunding, &log).await;
-    run_decision_cycle("BTC", &config(), &history, &jev, &execution, &EmptyFunding, &log).await;
+    run_decision_cycle(
+        "BTC",
+        &config(),
+        &history,
+        &jev,
+        &execution,
+        &EmptyFunding,
+        &log,
+        &InMemoryFailureTracker::new(),
+    )
+    .await;
+    run_decision_cycle(
+        "BTC",
+        &config(),
+        &history,
+        &jev,
+        &execution,
+        &EmptyFunding,
+        &log,
+        &InMemoryFailureTracker::new(),
+    )
+    .await;
 
     assert_eq!(execution.close_calls.lock().unwrap().len(), 1);
     assert_eq!(execution.open_calls.lock().unwrap().len(), 1);
@@ -234,7 +304,17 @@ async fn staying_flat_while_already_flat_is_a_no_op() {
     let execution = FakeExecution::default();
     let log = FakeDecisionLog::default();
 
-    run_decision_cycle("BTC", &config(), &history, &jev, &execution, &EmptyFunding, &log).await;
+    run_decision_cycle(
+        "BTC",
+        &config(),
+        &history,
+        &jev,
+        &execution,
+        &EmptyFunding,
+        &log,
+        &InMemoryFailureTracker::new(),
+    )
+    .await;
 
     assert!(execution.open_calls.lock().unwrap().is_empty());
     assert!(execution.close_calls.lock().unwrap().is_empty());
@@ -250,7 +330,17 @@ async fn writes_a_decision_log_entry_even_with_no_market_data() {
     let execution = FakeExecution::default();
     let log = FakeDecisionLog::default();
 
-    run_decision_cycle("BTC", &config(), &history, &jev, &execution, &EmptyFunding, &log).await;
+    run_decision_cycle(
+        "BTC",
+        &config(),
+        &history,
+        &jev,
+        &execution,
+        &EmptyFunding,
+        &log,
+        &InMemoryFailureTracker::new(),
+    )
+    .await;
 
     assert!(execution.open_calls.lock().unwrap().is_empty());
     let entries = log.entries.lock().unwrap();
@@ -280,7 +370,17 @@ async fn every_cycle_writes_exactly_one_log_entry_across_a_full_state_machine_wa
     let log = FakeDecisionLog::default();
 
     for _ in 0..5 {
-        run_decision_cycle("BTC", &config(), &history, &jev, &execution, &EmptyFunding, &log).await;
+        run_decision_cycle(
+            "BTC",
+            &config(),
+            &history,
+            &jev,
+            &execution,
+            &EmptyFunding,
+            &log,
+            &InMemoryFailureTracker::new(),
+        )
+        .await;
     }
 
     assert_eq!(log.entries.lock().unwrap().len(), 5);

@@ -8,6 +8,7 @@ import {
   type FundingPayment,
   type MockWallet,
 } from "@/lib/api";
+import { EngineModeSwitch } from "@/components/EngineModeSwitch";
 import { SiteHeader } from "@/components/SiteHeader";
 import { Button, Card, Input, Label } from "@/components/ui";
 
@@ -57,6 +58,13 @@ export default function WalletPage() {
   return (
     <SiteHeader>
       <main className="flex flex-col gap-8 px-6 py-8 sm:px-8 lg:px-12">
+        <section>
+          <h1 className="mb-3 text-xl font-semibold tracking-tight text-text">
+            Engine mode
+          </h1>
+          <EngineModeSwitch />
+        </section>
+
         <section>
           <h1 className="mb-3 text-xl font-semibold tracking-tight text-text">
             Mock wallet

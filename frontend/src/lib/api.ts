@@ -242,3 +242,55 @@ export async function fetchFundingPayments(): Promise<FundingPayment[]> {
   const body = (await res.json()) as { payments: FundingPayment[] };
   return body.payments;
 }
+
+export interface PerpHealth {
+  symbol: string;
+  consecutiveFailures: number;
+  lastFailureReason: string | null;
+  lastFailureAt: string | null;
+}
+
+export async function fetchPerpHealth(): Promise<PerpHealth[]> {
+  const res = await fetch(`${API_URL}/perp-health`, {
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error("Failed to load PERP health");
+  }
+  const body = (await res.json()) as { health: PerpHealth[] };
+  return body.health;
+}
+
+export type EngineMode = "mock" | "live";
+
+export interface EngineModeStatus {
+  mode: EngineMode;
+  liveWalletPublicAddress: string | null;
+}
+
+export async function fetchEngineMode(): Promise<EngineModeStatus> {
+  const res = await fetch(`${API_URL}/engine-mode`, {
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error("Failed to load engine mode");
+  }
+  return res.json();
+}
+
+export async function setEngineMode(
+  mode: EngineMode,
+): Promise<{ ok: true; mode: EngineMode } | { ok: false; error: string }> {
+  const res = await fetch(`${API_URL}/engine-mode`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ mode }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    return { ok: false, error: body?.error ?? "Failed to switch engine mode" };
+  }
+  const body = (await res.json()) as { mode: EngineMode };
+  return { ok: true, mode: body.mode };
+}

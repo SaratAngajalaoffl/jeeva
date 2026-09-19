@@ -7,13 +7,19 @@ edition = "2021"
 async-trait = "0.1.92"
 chrono = { version = "0.4.42", default-features = false, features = ["clock", "serde"] }
 futures-util = "0.3.34"
+hex = "0.4.3"
+k256 = { version = "0.13.4", features = ["ecdsa"] }
 mongodb = "3.9.1"
+rand_core = { version = "0.6.4", features = ["std"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls"] }
+rmp-serde = "1.3.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "chrono"] }
+tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "time"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 [dev-dependencies]
+wiremock = "0.6.5"

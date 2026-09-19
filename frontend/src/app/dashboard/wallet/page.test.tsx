@@ -1,6 +1,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { FundingPayment, MockWallet } from "@/lib/api";
+import type {
+  EngineMode,
+  EngineModeStatus,
+  FundingPayment,
+  MockWallet,
+} from "@/lib/api";
 
 const fetchMockWalletMock = vi.fn<[], Promise<MockWallet | null>>();
 const createMockWalletMock = vi.fn<
@@ -8,11 +13,19 @@ const createMockWalletMock = vi.fn<
   Promise<{ ok: true; wallet: MockWallet } | { ok: false; error: string }>
 >();
 const fetchFundingPaymentsMock = vi.fn<[], Promise<FundingPayment[]>>();
+const fetchEngineModeMock = vi.fn<[], Promise<EngineModeStatus>>();
+const setEngineModeMock =
+  vi.fn<
+    [EngineMode],
+    Promise<{ ok: true; mode: EngineMode } | { ok: false; error: string }>
+  >();
 
 vi.mock("@/lib/api", () => ({
   fetchMockWallet: (...args: []) => fetchMockWalletMock(...args),
   createMockWallet: (...args: [number]) => createMockWalletMock(...args),
   fetchFundingPayments: (...args: []) => fetchFundingPaymentsMock(...args),
+  fetchEngineMode: (...args: []) => fetchEngineModeMock(...args),
+  setEngineMode: (...args: [EngineMode]) => setEngineModeMock(...args),
 }));
 
 import WalletPage from "./page";
@@ -23,6 +36,12 @@ describe("WalletPage", () => {
     createMockWalletMock.mockReset();
     fetchFundingPaymentsMock.mockReset();
     fetchFundingPaymentsMock.mockResolvedValue([]);
+    fetchEngineModeMock.mockReset();
+    fetchEngineModeMock.mockResolvedValue({
+      mode: "mock",
+      liveWalletPublicAddress: null,
+    });
+    setEngineModeMock.mockReset();
   });
 
   it("shows a creation form when no wallet exists", async () => {

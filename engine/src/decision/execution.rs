@@ -246,19 +246,21 @@ impl ExecutionAdapter for MockExecutionAdapter {
 
         Ok(rows
             .into_iter()
-            .map(|(symbol, direction, entry_price, notional_usd, opened_at)| {
-                let position = OpenPosition {
-                    direction: if direction == "long" {
-                        Direction::Long
-                    } else {
-                        Direction::Short
-                    },
-                    entry_price,
-                    notional_usd,
-                    opened_at,
-                };
-                (symbol, position)
-            })
+            .map(
+                |(symbol, direction, entry_price, notional_usd, opened_at)| {
+                    let position = OpenPosition {
+                        direction: if direction == "long" {
+                            Direction::Long
+                        } else {
+                            Direction::Short
+                        },
+                        entry_price,
+                        notional_usd,
+                        opened_at,
+                    };
+                    (symbol, position)
+                },
+            )
             .collect())
     }
 

@@ -9,7 +9,9 @@ import {
   type HyperliquidClient,
 } from "./hyperliquid/client.js";
 import { createDecisionsRouter } from "./decisions/routes.js";
+import { createEngineModeRouter } from "./engineMode/routes.js";
 import { createFundingRouter } from "./funding/routes.js";
+import { createPerpHealthRouter } from "./health/routes.js";
 import { createMockWalletRouter } from "./mockWallet/routes.js";
 import { createPerpsRouter } from "./perps/routes.js";
 import { createPositionsRouter } from "./positions/routes.js";
@@ -47,6 +49,7 @@ export function createApp(deps: AppDeps = {}): Express {
         deps.pgPool,
       ),
     );
+    app.use("/engine-mode", createEngineModeRouter(deps.db, deps.pgPool));
   }
 
   if (deps.pgPool) {
@@ -54,6 +57,7 @@ export function createApp(deps: AppDeps = {}): Express {
     app.use("/positions", createPositionsRouter(deps.pgPool));
     app.use("/decisions", createDecisionsRouter(deps.pgPool));
     app.use("/funding", createFundingRouter(deps.pgPool));
+    app.use("/perp-health", createPerpHealthRouter(deps.pgPool));
   }
 
   return app;

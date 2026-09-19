@@ -1,11 +1,37 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { MarketDataPoint } from "@/lib/api";
+import type {
+  DecisionLogEntry,
+  FundingPayment,
+  MarketDataPoint,
+  OrderBook,
+  Perp,
+  PerpStats,
+  Position,
+  Trade,
+} from "@/lib/api";
 
 const fetchMarketDataMock = vi.fn<[string], Promise<MarketDataPoint[]>>();
+const fetchPerpsMock = vi.fn<[], Promise<Perp[]>>();
+const fetchPerpStatsMock = vi.fn<[], Promise<PerpStats[]>>();
+const fetchPositionsMock = vi.fn<[], Promise<Position[]>>();
+const fetchDecisionsMock = vi.fn<[string?], Promise<DecisionLogEntry[]>>();
+const fetchFundingPaymentsMock = vi.fn<[], Promise<FundingPayment[]>>();
+const fetchOrderBookMock = vi.fn<[string], Promise<OrderBook>>();
+const fetchRecentTradesMock = vi.fn<[string], Promise<Trade[]>>();
+const updatePerpConfigMock = vi.fn<[string, Partial<Perp>], Promise<Perp>>();
 
 vi.mock("@/lib/api", () => ({
   fetchMarketData: (...args: [string]) => fetchMarketDataMock(...args),
+  fetchPerps: (...args: []) => fetchPerpsMock(...args),
+  fetchPerpStats: (...args: []) => fetchPerpStatsMock(...args),
+  fetchPositions: (...args: []) => fetchPositionsMock(...args),
+  fetchDecisions: (...args: [string?]) => fetchDecisionsMock(...args),
+  fetchFundingPayments: (...args: []) => fetchFundingPaymentsMock(...args),
+  fetchOrderBook: (...args: [string]) => fetchOrderBookMock(...args),
+  fetchRecentTrades: (...args: [string]) => fetchRecentTradesMock(...args),
+  updatePerpConfig: (...args: [string, Partial<Perp>]) =>
+    updatePerpConfigMock(...args),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -18,9 +44,17 @@ import MarketDataPage from "./page";
 describe("MarketDataPage", () => {
   beforeEach(() => {
     fetchMarketDataMock.mockReset();
+    fetchPerpsMock.mockReset().mockResolvedValue([]);
+    fetchPerpStatsMock.mockReset().mockResolvedValue([]);
+    fetchPositionsMock.mockReset().mockResolvedValue([]);
+    fetchDecisionsMock.mockReset().mockResolvedValue([]);
+    fetchFundingPaymentsMock.mockReset().mockResolvedValue([]);
+    fetchOrderBookMock.mockReset().mockResolvedValue({ bids: [], asks: [] });
+    fetchRecentTradesMock.mockReset().mockResolvedValue([]);
+    updatePerpConfigMock.mockReset();
   });
 
-  it("renders a chart section per metric once data loads", async () => {
+  it("renders the market data chart once data loads", async () => {
     fetchMarketDataMock.mockResolvedValue([
       {
         time: "2026-01-01T00:00:00.000Z",
@@ -42,10 +76,7 @@ describe("MarketDataPage", () => {
 
     render(<MarketDataPage />);
 
-    await waitFor(() => screen.getByText("Price"));
-    expect(screen.getByText("Open interest")).toBeInTheDocument();
-    expect(screen.getByText("Volume")).toBeInTheDocument();
-    expect(screen.getByText("Spread")).toBeInTheDocument();
+    await waitFor(() => screen.getByText("Market data"));
     expect(fetchMarketDataMock).toHaveBeenCalledWith("BTC");
   });
 
@@ -58,6 +89,37 @@ describe("MarketDataPage", () => {
       expect(
         screen.getByText("Failed to load market data"),
       ).toBeInTheDocument(),
+    );
+  });
+
+  it("shows the sampling/trading status badges from the PERP config", async () => {
+    fetchMarketDataMock.mockResolvedValue([]);
+    fetchPerpsMock.mockResolvedValue([
+      {
+        symbol: "BTC",
+        tradingEnabled: true,
+        samplingEnabled: true,
+        decisionFrequencySeconds: 60,
+        samplingFrequencySeconds: 30,
+        leverage: 2,
+        positionSizeUsd: 500,
+      },
+    ]);
+
+    render(<MarketDataPage />);
+
+    await waitFor(() => expect(screen.getByText("Sampling: On")).toBeInTheDocument());
+    expect(screen.getByText("Trading: On")).toBeInTheDocument();
+  });
+
+  it("shows no open position when the PERP is flat", async () => {
+    fetchMarketDataMock.mockResolvedValue([]);
+    fetchPositionsMock.mockResolvedValue([]);
+
+    render(<MarketDataPage />);
+
+    await waitFor(() =>
+      expect(screen.getByText("No open position.")).toBeInTheDocument(),
     );
   });
 });

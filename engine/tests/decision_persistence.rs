@@ -198,6 +198,7 @@ mod decision_log {
                 decision: Some(&decision),
                 position_action: Some(PositionAction::Open(Direction::Long)),
                 error: None,
+                auto_flatten: false,
             })
             .await
             .unwrap();
@@ -242,6 +243,7 @@ mod decision_log {
                 decision: None,
                 position_action: None,
                 error: Some("no market data available yet"),
+                auto_flatten: false,
             })
             .await
             .unwrap();
@@ -282,6 +284,7 @@ mod decision_log {
                     decision: None,
                     position_action: None,
                     error: Some("no market data available yet"),
+                    auto_flatten: false,
                 })
                 .await
                 .unwrap();

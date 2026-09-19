@@ -4,11 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   fetchMarketData,
+  fetchPerpHealth,
   fetchPerps,
   fetchPerpStats,
   fetchPositions,
   updatePerpConfig,
   type Perp,
+  type PerpHealth,
   type PerpStats,
   type Position,
 } from "@/lib/api";
@@ -48,6 +50,9 @@ type ConfigDialog =
 
 const TD = "border-b border-surface-1 py-2 pr-4";
 const PAGE_SIZE = 10;
+// Mirrors the engine's AUTO_FLATTEN_THRESHOLD (#12) so the dashboard
+// warns the operator before the auto-flatten safety net kicks in.
+const AUTO_FLATTEN_THRESHOLD = 5;
 
 const SORT_COLUMNS: { key: SortKey; label: string }[] = [
   { key: "symbol", label: "Symbol" },
@@ -76,6 +81,7 @@ export default function MarketsPage() {
   const [perps, setPerps] = useState<Perp[] | null>(null);
   const [stats, setStats] = useState<PerpStats[] | null>(null);
   const [positions, setPositions] = useState<Position[]>([]);
+  const [health, setHealth] = useState<PerpHealth[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
@@ -95,6 +101,9 @@ export default function MarketsPage() {
     fetchPositions()
       .then(setPositions)
       .catch(() => setPositions([]));
+    fetchPerpHealth()
+      .then(setHealth)
+      .catch(() => setHealth([]));
   }, []);
 
   async function applyPatch(
@@ -204,6 +213,10 @@ export default function MarketsPage() {
     () => new Map(positions.map((p) => [p.symbol, p])),
     [positions],
   );
+  const healthBySymbol = useMemo(
+    () => new Map(health.map((h) => [h.symbol, h])),
+    [health],
+  );
 
   const pageCount = Math.max(1, Math.ceil(filteredSorted.length / PAGE_SIZE));
   const currentPage = Math.min(page, pageCount);
@@ -280,6 +293,7 @@ export default function MarketsPage() {
                     key={m.symbol}
                     market={m}
                     position={positionsBySymbol.get(m.symbol) ?? null}
+                    health={healthBySymbol.get(m.symbol) ?? null}
                   />
                 ))}
               </div>
@@ -571,12 +585,30 @@ function SamplingMarketCard({ market }: { market: MarketRow }) {
   );
 }
 
+function HealthBadge({ health }: { health: PerpHealth | null }) {
+  const count = health?.consecutiveFailures ?? 0;
+  if (count === 0) {
+    return <span className="text-sm font-medium text-emerald-400">Healthy</span>;
+  }
+  const critical = count >= AUTO_FLATTEN_THRESHOLD;
+  return (
+    <span
+      className={`text-sm font-medium ${critical ? "text-destructive" : "text-amber-400"}`}
+      title={health?.lastFailureReason ?? undefined}
+    >
+      {count} failure{count === 1 ? "" : "s"}
+    </span>
+  );
+}
+
 function TradingMarketCard({
   market,
   position,
+  health,
 }: {
   market: MarketRow;
   position: Position | null;
+  health: PerpHealth | null;
 }) {
   const prices = useSparklinePrices(market.symbol);
   const color = (market.changePct ?? 0) >= 0 ? "#4ade80" : "#ff6b6b";
@@ -607,6 +639,12 @@ function TradingMarketCard({
             value={`$${market.positionSizeUsd.toLocaleString()}`}
           />
           <CardStat label="Leverage" value={`${market.leverage}x`} />
+        </div>
+        <div className="flex items-center justify-between border-t border-surface-1 pt-2">
+          <span className="text-[11px] uppercase tracking-wide text-subtext-0">
+            Health
+          </span>
+          <HealthBadge health={health} />
         </div>
       </Card>
     </Link>

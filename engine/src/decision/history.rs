@@ -241,15 +241,13 @@ mod tests {
 
     #[test]
     fn computes_percent_change_across_the_window() {
-        let summary =
-            build_context_summary("BTC", &[sample(100.0), sample(110.0)], None, None);
+        let summary = build_context_summary("BTC", &[sample(100.0), sample(110.0)], None, None);
         assert!(summary.contains("+10.00%"));
     }
 
     #[test]
     fn computes_negative_percent_change() {
-        let summary =
-            build_context_summary("BTC", &[sample(100.0), sample(90.0)], None, None);
+        let summary = build_context_summary("BTC", &[sample(100.0), sample(90.0)], None, None);
         assert!(summary.contains("-10.00%"));
     }
 
@@ -275,8 +273,7 @@ mod tests {
     #[test]
     fn reports_position_status_and_unrealized_pnl() {
         let position = open_position(Direction::Long, 90.0, 42);
-        let summary =
-            build_context_summary("BTC", &[sample(100.0)], Some(&position), None);
+        let summary = build_context_summary("BTC", &[sample(100.0)], Some(&position), None);
         assert!(summary.contains("position=long"));
         assert!(summary.contains("held_for_minutes=42.0"));
         assert!(summary.contains("entry_price=90.00"));

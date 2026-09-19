@@ -1,0 +1,151 @@
+import { MongoClient, type Db } from "mongodb";
+import { Pool } from "pg";
+import request from "supertest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { createApp } from "../app.js";
+import { SESSION_COOKIE_NAME } from "../auth/config.js";
+import { signSessionToken } from "../auth/session.js";
+
+const MONGO_URL =
+  process.env.TEST_MONGO_URL ?? "mongodb://localhost:27017/jeeva_test";
+const DATABASE_URL =
+  process.env.TEST_DATABASE_URL ??
+  "postgres://jeeva:jeeva@localhost:5432/jeeva_test";
+
+interface EngineModeDoc {
+  _id: string;
+  mode: string;
+}
+
+const client = new MongoClient(MONGO_URL);
+await client.connect();
+const db: Db = client.db();
+const engineConfig = () => db.collection<EngineModeDoc>("engineConfig");
+const pgPool = new Pool({ connectionString: DATABASE_URL });
+
+beforeAll(async () => {
+  await pgPool.query(
+    `CREATE TABLE IF NOT EXISTS engine_wallet (
+       id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+       public_address TEXT NOT NULL
+     )`,
+  );
+});
+
+afterAll(async () => {
+  await client.close();
+  await pgPool.end();
+});
+
+beforeEach(async () => {
+  await engineConfig().deleteMany({});
+  await pgPool.query("DELETE FROM engine_wallet");
+});
+
+function authCookie(): string {
+  const token = signSessionToken(process.env.JWT_SECRET!);
+  return `${SESSION_COOKIE_NAME}=${token}`;
+}
+
+function buildApp() {
+  return createApp({ db, pgPool });
+}
+
+describe("GET /engine-mode", () => {
+  it("rejects unauthenticated requests", async () => {
+    const res = await request(buildApp()).get("/engine-mode");
+    expect(res.status).toBe(401);
+  });
+
+  it("defaults to mock mode with no wallet address when nothing has been configured", async () => {
+    const res = await request(buildApp())
+      .get("/engine-mode")
+      .set("Cookie", authCookie());
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ mode: "mock", liveWalletPublicAddress: null });
+  });
+
+  it("reflects a previously-set live mode and the engine's published wallet address", async () => {
+    await engineConfig().insertOne({ _id: "singleton", mode: "live" });
+    await pgPool.query(
+      "INSERT INTO engine_wallet (id, public_address) VALUES (1, $1)",
+      ["0xabc123"],
+    );
+
+    const res = await request(buildApp())
+      .get("/engine-mode")
+      .set("Cookie", authCookie());
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      mode: "live",
+      liveWalletPublicAddress: "0xabc123",
+    });
+  });
+
+  it("never returns anything resembling a private key", async () => {
+    await pgPool.query(
+      "INSERT INTO engine_wallet (id, public_address) VALUES (1, $1)",
+      ["0xabc123"],
+    );
+
+    const res = await request(buildApp())
+      .get("/engine-mode")
+      .set("Cookie", authCookie());
+
+    const body = JSON.stringify(res.body);
+    expect(Object.keys(res.body).sort()).toEqual([
+      "liveWalletPublicAddress",
+      "mode",
+    ]);
+    expect(body.toLowerCase()).not.toContain("key");
+    expect(body.toLowerCase()).not.toContain("secret");
+  });
+});
+
+describe("PUT /engine-mode", () => {
+  it("rejects unauthenticated requests", async () => {
+    const res = await request(buildApp())
+      .put("/engine-mode")
+      .send({ mode: "live" });
+    expect(res.status).toBe(401);
+  });
+
+  it("rejects an invalid mode value", async () => {
+    const res = await request(buildApp())
+      .put("/engine-mode")
+      .set("Cookie", authCookie())
+      .send({ mode: "turbo" });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("switches the mode and persists it", async () => {
+    const res = await request(buildApp())
+      .put("/engine-mode")
+      .set("Cookie", authCookie())
+      .send({ mode: "live" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ mode: "live" });
+
+    const stored = await engineConfig().findOne({ _id: "singleton" });
+    expect(stored?.mode).toBe("live");
+  });
+
+  it("switching back to mock overwrites a previous live setting", async () => {
+    await engineConfig().insertOne({ _id: "singleton", mode: "live" });
+
+    const res = await request(buildApp())
+      .put("/engine-mode")
+      .set("Cookie", authCookie())
+      .send({ mode: "mock" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ mode: "mock" });
+
+    const stored = await engineConfig().findOne({ _id: "singleton" });
+    expect(stored?.mode).toBe("mock");
+  });
+});

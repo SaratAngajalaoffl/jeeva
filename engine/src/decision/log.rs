@@ -35,6 +35,10 @@ pub struct DecisionLogEntry<'a> {
     pub decision: Option<&'a JevDecision>,
     pub position_action: Option<PositionAction>,
     pub error: Option<&'a str>,
+    /// True only for the forced-flatten row written when a PERP hits 5
+    /// consecutive failures — kept distinct from a normal Jev-driven
+    /// position change.
+    pub auto_flatten: bool,
 }
 
 /// Persists one row per decision cycle — including cycles that
@@ -70,9 +74,16 @@ impl PostgresDecisionLogWriter {
                 prob_flat DOUBLE PRECISION,
                 position_action TEXT,
                 success BOOLEAN NOT NULL,
-                error TEXT
+                error TEXT,
+                auto_flatten BOOLEAN NOT NULL DEFAULT false
             )
             "#,
+        )
+        .await?;
+
+        execute_idempotent(
+            pool,
+            "ALTER TABLE decisions ADD COLUMN IF NOT EXISTS auto_flatten BOOLEAN NOT NULL DEFAULT false",
         )
         .await?;
 
@@ -101,9 +112,9 @@ impl DecisionLogWriter for PostgresDecisionLogWriter {
             r#"
             INSERT INTO decisions (
                 time, symbol, context_summary, target_direction, confidence,
-                prob_long, prob_short, prob_flat, position_action, success, error
+                prob_long, prob_short, prob_flat, position_action, success, error, auto_flatten
             )
-            VALUES (now(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            VALUES (now(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             "#,
         )
         .bind(entry.symbol)
@@ -116,6 +127,7 @@ impl DecisionLogWriter for PostgresDecisionLogWriter {
         .bind(position_action)
         .bind(success)
         .bind(entry.error)
+        .bind(entry.auto_flatten)
         .execute(&self.pool)
         .await
         .map_err(|e| LogError(format!("failed to write decision log entry: {e}")))?;

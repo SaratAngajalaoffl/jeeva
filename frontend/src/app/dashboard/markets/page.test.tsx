@@ -1,12 +1,20 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Perp } from "@/lib/api";
+import type { Perp, PerpHealth, PerpStats, Position } from "@/lib/api";
 
 const fetchPerpsMock = vi.fn<[], Promise<Perp[]>>();
+const fetchPerpStatsMock = vi.fn<[], Promise<PerpStats[]>>();
+const fetchPositionsMock = vi.fn<[], Promise<Position[]>>();
+const fetchPerpHealthMock = vi.fn<[], Promise<PerpHealth[]>>();
+const fetchMarketDataMock = vi.fn<[string], Promise<never[]>>();
 const updatePerpConfigMock = vi.fn<[string, Partial<Perp>], Promise<Perp>>();
 
 vi.mock("@/lib/api", () => ({
   fetchPerps: (...args: []) => fetchPerpsMock(...args),
+  fetchPerpStats: (...args: []) => fetchPerpStatsMock(...args),
+  fetchPositions: (...args: []) => fetchPositionsMock(...args),
+  fetchPerpHealth: (...args: []) => fetchPerpHealthMock(...args),
+  fetchMarketData: (...args: [string]) => fetchMarketDataMock(...args),
   updatePerpConfig: (...args: [string, Partial<Perp>]) =>
     updatePerpConfigMock(...args),
 }));
@@ -26,10 +34,14 @@ const btc: Perp = {
 describe("MarketsPage", () => {
   beforeEach(() => {
     fetchPerpsMock.mockReset();
+    fetchPerpStatsMock.mockReset().mockResolvedValue([]);
+    fetchPositionsMock.mockReset().mockResolvedValue([]);
+    fetchPerpHealthMock.mockReset().mockResolvedValue([]);
+    fetchMarketDataMock.mockReset().mockResolvedValue([]);
     updatePerpConfigMock.mockReset();
   });
 
-  it("lists PERPs with their current toggle state", async () => {
+  it("lists PERPs in the market table", async () => {
     fetchPerpsMock.mockResolvedValue([
       btc,
       { ...btc, symbol: "ETH", tradingEnabled: true, samplingEnabled: true },
@@ -37,136 +49,117 @@ describe("MarketsPage", () => {
 
     render(<MarketsPage />);
 
-    await screen.findByText("BTC");
-    expect(screen.getByText("ETH")).toBeInTheDocument();
-    expect(screen.getByLabelText("BTC trading enabled")).not.toBeChecked();
-    expect(screen.getByLabelText("ETH trading enabled")).toBeChecked();
+    await screen.findAllByText("BTC");
+    expect(screen.getAllByText("ETH").length).toBeGreaterThan(0);
   });
 
-  it("shows the current decision and sampling frequencies", async () => {
+  it("shows the trading/sampling toggle state via icon buttons", async () => {
     fetchPerpsMock.mockResolvedValue([
-      { ...btc, decisionFrequencySeconds: 120, samplingFrequencySeconds: 15 },
+      btc,
+      { ...btc, symbol: "ETH", tradingEnabled: true, samplingEnabled: true },
     ]);
 
     render(<MarketsPage />);
-    await screen.findByText("BTC");
+    await screen.findAllByText("BTC");
 
-    expect(screen.getByLabelText("BTC decision frequency seconds")).toHaveValue(
-      120,
-    );
-    expect(screen.getByLabelText("BTC sampling frequency seconds")).toHaveValue(
-      15,
-    );
+    expect(
+      screen.getByLabelText("BTC enable sampling"),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("BTC enable trading")).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("ETH disable sampling"),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("ETH disable trading")).toBeInTheDocument();
   });
 
-  it("shows the current leverage and position size", async () => {
+  it("disabling trading directly patches the config with no dialog", async () => {
     fetchPerpsMock.mockResolvedValue([
-      { ...btc, leverage: 10, positionSizeUsd: 500 },
+      { ...btc, tradingEnabled: true, samplingEnabled: true },
     ]);
+    updatePerpConfigMock.mockResolvedValue({
+      ...btc,
+      tradingEnabled: false,
+      samplingEnabled: true,
+    });
 
     render(<MarketsPage />);
-    await screen.findByText("BTC");
+    await screen.findAllByText("BTC");
 
-    expect(screen.getByLabelText("BTC leverage")).toHaveValue(10);
-    expect(screen.getByLabelText("BTC position size usd")).toHaveValue(500);
+    fireEvent.click(screen.getByLabelText("BTC disable trading"));
+
+    await waitFor(() =>
+      expect(updatePerpConfigMock).toHaveBeenCalledWith("BTC", {
+        tradingEnabled: false,
+      }),
+    );
   });
 
-  it("enabling trading visibly also enables sampling once the server responds", async () => {
+  it("enabling trading opens a dialog and submits the configured values", async () => {
     fetchPerpsMock.mockResolvedValue([btc]);
     updatePerpConfigMock.mockResolvedValue({
       ...btc,
       tradingEnabled: true,
       samplingEnabled: true,
+      decisionFrequencySeconds: 30,
+      leverage: 5,
+      positionSizeUsd: 250,
     });
 
     render(<MarketsPage />);
-    await screen.findByText("BTC");
+    await screen.findAllByText("BTC");
 
-    fireEvent.click(screen.getByLabelText("BTC trading enabled"));
+    fireEvent.click(screen.getByLabelText("BTC enable trading"));
 
-    await waitFor(() =>
-      expect(screen.getByLabelText("BTC sampling enabled")).toBeChecked(),
-    );
-    expect(updatePerpConfigMock).toHaveBeenCalledWith("BTC", {
-      tradingEnabled: true,
+    await screen.findByText("Enable trading — BTC");
+    fireEvent.change(screen.getByLabelText("Decision frequency (seconds)"), {
+      target: { value: "30" },
     });
-  });
-
-  it("saves an edited decision frequency on blur", async () => {
-    fetchPerpsMock.mockResolvedValue([btc]);
-    updatePerpConfigMock.mockResolvedValue({
-      ...btc,
-      decisionFrequencySeconds: 900,
+    fireEvent.change(screen.getByLabelText("Leverage"), {
+      target: { value: "5" },
     });
-
-    render(<MarketsPage />);
-    await screen.findByText("BTC");
-
-    const input = screen.getByLabelText("BTC decision frequency seconds");
-    fireEvent.change(input, { target: { value: "900" } });
-    fireEvent.blur(input);
+    fireEvent.change(screen.getByLabelText("Position size (USD)"), {
+      target: { value: "250" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Enable trading" }));
 
     await waitFor(() =>
       expect(updatePerpConfigMock).toHaveBeenCalledWith("BTC", {
-        decisionFrequencySeconds: 900,
+        tradingEnabled: true,
+        decisionFrequencySeconds: 30,
+        leverage: 5,
+        positionSizeUsd: 250,
       }),
     );
   });
 
-  it("saves an edited sampling frequency on blur", async () => {
-    fetchPerpsMock.mockResolvedValue([btc]);
-    updatePerpConfigMock.mockResolvedValue({
-      ...btc,
-      samplingFrequencySeconds: 5,
-    });
+  it("shows the PERP health badge on a trading market card", async () => {
+    fetchPerpsMock.mockResolvedValue([
+      { ...btc, tradingEnabled: true, samplingEnabled: true },
+    ]);
+    fetchPerpHealthMock.mockResolvedValue([
+      {
+        symbol: "BTC",
+        consecutiveFailures: 3,
+        lastFailureReason: "jev unavailable",
+        lastFailureAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
 
     render(<MarketsPage />);
-    await screen.findByText("BTC");
-
-    const input = screen.getByLabelText("BTC sampling frequency seconds");
-    fireEvent.change(input, { target: { value: "5" } });
-    fireEvent.blur(input);
 
     await waitFor(() =>
-      expect(updatePerpConfigMock).toHaveBeenCalledWith("BTC", {
-        samplingFrequencySeconds: 5,
-      }),
+      expect(screen.getByText("3 failures")).toBeInTheDocument(),
     );
   });
 
-  it("saves an edited leverage on blur", async () => {
-    fetchPerpsMock.mockResolvedValue([btc]);
-    updatePerpConfigMock.mockResolvedValue({ ...btc, leverage: 20 });
+  it("shows a healthy badge when a trading market has no recorded failures", async () => {
+    fetchPerpsMock.mockResolvedValue([
+      { ...btc, tradingEnabled: true, samplingEnabled: true },
+    ]);
+    fetchPerpHealthMock.mockResolvedValue([]);
 
     render(<MarketsPage />);
-    await screen.findByText("BTC");
 
-    const input = screen.getByLabelText("BTC leverage");
-    fireEvent.change(input, { target: { value: "20" } });
-    fireEvent.blur(input);
-
-    await waitFor(() =>
-      expect(updatePerpConfigMock).toHaveBeenCalledWith("BTC", {
-        leverage: 20,
-      }),
-    );
-  });
-
-  it("saves an edited position size on blur", async () => {
-    fetchPerpsMock.mockResolvedValue([btc]);
-    updatePerpConfigMock.mockResolvedValue({ ...btc, positionSizeUsd: 750 });
-
-    render(<MarketsPage />);
-    await screen.findByText("BTC");
-
-    const input = screen.getByLabelText("BTC position size usd");
-    fireEvent.change(input, { target: { value: "750" } });
-    fireEvent.blur(input);
-
-    await waitFor(() =>
-      expect(updatePerpConfigMock).toHaveBeenCalledWith("BTC", {
-        positionSizeUsd: 750,
-      }),
-    );
+    await waitFor(() => expect(screen.getByText("Healthy")).toBeInTheDocument());
   });
 });
