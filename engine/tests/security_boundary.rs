@@ -99,13 +99,18 @@ fn the_jev_context_building_module_never_mentions_the_key_or_hyperliquid_credent
 
 #[test]
 fn the_jev_decision_source_module_never_mentions_the_key_or_hyperliquid_credentials() {
-    let contents = fs::read_to_string(Path::new(SRC_DIR).join("decision/jev.rs")).unwrap();
-    assert!(
-        !contents.contains("PrivateKey")
-            && !contents.contains("HYPERLIQUID_PRIVATE_KEY")
-            && !contents.contains("hyperliquid_signing"),
-        "decision/jev.rs (which sends the context to Jev) must never reference private-key material",
-    );
+    for relative_path in [
+        "decision/typesafe_jev_decision_maker.rs",
+        "decision/openrouter_jev_decision_maker.rs",
+    ] {
+        let contents = fs::read_to_string(Path::new(SRC_DIR).join(relative_path)).unwrap();
+        assert!(
+            !contents.contains("PrivateKey")
+                && !contents.contains("HYPERLIQUID_PRIVATE_KEY")
+                && !contents.contains("hyperliquid_signing"),
+            "{relative_path} (which sends the context to Jev) must never reference private-key material",
+        );
+    }
 }
 
 #[test]
