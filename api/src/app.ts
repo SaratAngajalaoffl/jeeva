@@ -12,9 +12,9 @@ import { createDecisionsRouter } from "./decisions/routes.js";
 import { createEngineModeRouter } from "./engineMode/routes.js";
 import { createFundingRouter } from "./funding/routes.js";
 import { createPerpHealthRouter } from "./health/routes.js";
-import { createMockWalletRouter } from "./mockWallet/routes.js";
 import { createPerpsRouter } from "./perps/routes.js";
 import { createPositionsRouter } from "./positions/routes.js";
+import { createWalletsRouter } from "./wallets/routes.js";
 
 export interface AppDeps {
   db?: Db;
@@ -41,19 +41,19 @@ export function createApp(deps: AppDeps = {}): Express {
   app.use("/auth", authRouter);
 
   if (deps.db && deps.pgPool) {
+    const hyperliquidClient = deps.hyperliquidClient ?? createHyperliquidClient();
     app.use(
       "/perps",
-      createPerpsRouter(
-        deps.db,
-        deps.hyperliquidClient ?? createHyperliquidClient(),
-        deps.pgPool,
-      ),
+      createPerpsRouter(deps.db, hyperliquidClient, deps.pgPool),
     );
     app.use("/engine-mode", createEngineModeRouter(deps.db, deps.pgPool));
+    app.use(
+      "/wallets",
+      createWalletsRouter(deps.db, deps.pgPool, hyperliquidClient),
+    );
   }
 
   if (deps.pgPool) {
-    app.use("/mock-wallet", createMockWalletRouter(deps.pgPool));
     app.use("/positions", createPositionsRouter(deps.pgPool));
     app.use("/decisions", createDecisionsRouter(deps.pgPool));
     app.use("/funding", createFundingRouter(deps.pgPool));

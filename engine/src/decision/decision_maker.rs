@@ -153,10 +153,8 @@ mod tests {
 
     #[tokio::test]
     async fn scripted_sequence_is_followed_exactly_and_then_wraps() {
-        let dm = FakeDecisionMaker::with_sequence(vec![
-            TargetDirection::Long,
-            TargetDirection::Long,
-        ]);
+        let dm =
+            FakeDecisionMaker::with_sequence(vec![TargetDirection::Long, TargetDirection::Long]);
         assert_eq!(
             dm.decide("BTC", "state").await.unwrap().direction,
             TargetDirection::Long

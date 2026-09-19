@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Perp, PerpHealth, PerpStats, Position } from "@/lib/api";
+import type { Perp, PerpHealth, PerpStats, Position, Wallet } from "@/lib/api";
 
 const fetchPerpsMock = vi.fn<[], Promise<Perp[]>>();
 const fetchPerpStatsMock = vi.fn<[], Promise<PerpStats[]>>();
@@ -8,6 +8,10 @@ const fetchPositionsMock = vi.fn<[], Promise<Position[]>>();
 const fetchPerpHealthMock = vi.fn<[], Promise<PerpHealth[]>>();
 const fetchMarketDataMock = vi.fn<[string], Promise<never[]>>();
 const updatePerpConfigMock = vi.fn<[string, Partial<Perp>], Promise<Perp>>();
+const fetchSelectableWalletsMock = vi.fn<
+  [string, number],
+  Promise<Wallet[]>
+>();
 
 vi.mock("@/lib/api", () => ({
   fetchPerps: (...args: []) => fetchPerpsMock(...args),
@@ -15,11 +19,23 @@ vi.mock("@/lib/api", () => ({
   fetchPositions: (...args: []) => fetchPositionsMock(...args),
   fetchPerpHealth: (...args: []) => fetchPerpHealthMock(...args),
   fetchMarketData: (...args: [string]) => fetchMarketDataMock(...args),
+  fetchSelectableWallets: (...args: [string, number]) =>
+    fetchSelectableWalletsMock(...args),
   updatePerpConfig: (...args: [string, Partial<Perp>]) =>
     updatePerpConfigMock(...args),
 }));
 
 import MarketsPage from "./page";
+
+const testWallet: Wallet = {
+  id: "wallet-1",
+  label: "Test wallet",
+  kind: "mock",
+  publicAddress: null,
+  initialBalanceUsd: 10000,
+  currentBalanceUsd: 10000,
+  createdAt: "2026-01-01T00:00:00.000Z",
+};
 
 const btc: Perp = {
   symbol: "BTC",
@@ -29,6 +45,8 @@ const btc: Perp = {
   samplingFrequencySeconds: 60,
   leverage: 1,
   positionSizeUsd: 100,
+  decisionMaker: "fake",
+  walletId: null,
 };
 
 describe("MarketsPage", () => {
@@ -38,6 +56,7 @@ describe("MarketsPage", () => {
     fetchPositionsMock.mockReset().mockResolvedValue([]);
     fetchPerpHealthMock.mockReset().mockResolvedValue([]);
     fetchMarketDataMock.mockReset().mockResolvedValue([]);
+    fetchSelectableWalletsMock.mockReset().mockResolvedValue([testWallet]);
     updatePerpConfigMock.mockReset();
   });
 
@@ -120,6 +139,9 @@ describe("MarketsPage", () => {
     fireEvent.change(screen.getByLabelText("Position size (USD)"), {
       target: { value: "250" },
     });
+    await waitFor(() =>
+      expect(screen.getByLabelText("Wallet")).toHaveValue("wallet-1"),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Enable trading" }));
 
     await waitFor(() =>
@@ -128,6 +150,8 @@ describe("MarketsPage", () => {
         decisionFrequencySeconds: 30,
         leverage: 5,
         positionSizeUsd: 250,
+        decisionMaker: "fake",
+        walletId: "wallet-1",
       }),
     );
   });

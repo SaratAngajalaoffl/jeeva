@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+aes-gcm = "0.10.3"
 async-trait = "0.1.92"
+base64 = "0.22.1"
 chrono = { version = "0.4.42", default-features = false, features = ["clock", "serde"] }
 futures-util = "0.3.34"
 hex = "0.4.3"

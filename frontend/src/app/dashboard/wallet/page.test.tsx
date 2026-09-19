@@ -1,16 +1,21 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
+  CreateWalletInput,
   EngineMode,
   EngineModeStatus,
   FundingPayment,
-  MockWallet,
+  Wallet,
 } from "@/lib/api";
 
-const fetchMockWalletMock = vi.fn<[], Promise<MockWallet | null>>();
-const createMockWalletMock = vi.fn<
-  [number],
-  Promise<{ ok: true; wallet: MockWallet } | { ok: false; error: string }>
+const fetchWalletsMock = vi.fn<[], Promise<Wallet[]>>();
+const createWalletMock = vi.fn<
+  [CreateWalletInput],
+  Promise<{ ok: true; wallet: Wallet } | { ok: false; error: string }>
+>();
+const deleteWalletMock = vi.fn<
+  [string],
+  Promise<{ ok: true } | { ok: false; error: string }>
 >();
 const fetchFundingPaymentsMock = vi.fn<[], Promise<FundingPayment[]>>();
 const fetchEngineModeMock = vi.fn<[], Promise<EngineModeStatus>>();
@@ -21,8 +26,9 @@ const setEngineModeMock =
   >();
 
 vi.mock("@/lib/api", () => ({
-  fetchMockWallet: (...args: []) => fetchMockWalletMock(...args),
-  createMockWallet: (...args: [number]) => createMockWalletMock(...args),
+  fetchWallets: (...args: []) => fetchWalletsMock(...args),
+  createWallet: (...args: [CreateWalletInput]) => createWalletMock(...args),
+  deleteWallet: (...args: [string]) => deleteWalletMock(...args),
   fetchFundingPayments: (...args: []) => fetchFundingPaymentsMock(...args),
   fetchEngineMode: (...args: []) => fetchEngineModeMock(...args),
   setEngineMode: (...args: [EngineMode]) => setEngineModeMock(...args),
@@ -32,93 +38,112 @@ import WalletPage from "./page";
 
 describe("WalletPage", () => {
   beforeEach(() => {
-    fetchMockWalletMock.mockReset();
-    createMockWalletMock.mockReset();
+    fetchWalletsMock.mockReset();
+    createWalletMock.mockReset();
+    deleteWalletMock.mockReset();
     fetchFundingPaymentsMock.mockReset();
     fetchFundingPaymentsMock.mockResolvedValue([]);
     fetchEngineModeMock.mockReset();
-    fetchEngineModeMock.mockResolvedValue({
-      mode: "mock",
-      liveWalletPublicAddress: null,
-    });
+    fetchEngineModeMock.mockResolvedValue({ mode: "mock" });
     setEngineModeMock.mockReset();
   });
 
-  it("shows a creation form when no wallet exists", async () => {
-    fetchMockWalletMock.mockResolvedValue(null);
+  it("shows an empty state and the creation form when no wallets exist", async () => {
+    fetchWalletsMock.mockResolvedValue([]);
 
     render(<WalletPage />);
 
-    await screen.findByText("Create wallet");
-    expect(screen.getByLabelText("Initial balance (USD)")).toBeInTheDocument();
+    await screen.findByText("No wallets yet — create one below.");
+    expect(screen.getByText("Create wallet")).toBeInTheDocument();
   });
 
-  it("shows balance and P&L once a wallet exists", async () => {
-    fetchMockWalletMock.mockResolvedValue({
-      initialBalanceUsd: 10000,
-      currentBalanceUsd: 10500,
-      allTimePnlUsd: 500,
-      createdAt: "2026-01-01T00:00:00.000Z",
-    });
+  it("lists existing wallets with balance and address", async () => {
+    fetchWalletsMock.mockResolvedValue([
+      {
+        id: "1",
+        label: "Mock main",
+        kind: "mock",
+        publicAddress: null,
+        initialBalanceUsd: 10000,
+        currentBalanceUsd: 10500,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        id: "2",
+        label: "Live main",
+        kind: "live",
+        publicAddress: "0xabc123",
+        initialBalanceUsd: null,
+        currentBalanceUsd: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
 
     render(<WalletPage />);
 
-    await screen.findByText("$10,000");
+    await screen.findByText("Mock main");
     expect(screen.getByText("$10,500")).toBeInTheDocument();
-    expect(screen.getByText("$500")).toBeInTheDocument();
-    expect(screen.queryByText("Create wallet")).not.toBeInTheDocument();
+    expect(screen.getByText("0xabc123")).toBeInTheDocument();
   });
 
-  it("creates a wallet and shows its balance on success", async () => {
-    fetchMockWalletMock.mockResolvedValue(null);
-    createMockWalletMock.mockResolvedValue({
+  it("creates a mock wallet and shows it in the list on success", async () => {
+    fetchWalletsMock.mockResolvedValue([]);
+    createWalletMock.mockResolvedValue({
       ok: true,
       wallet: {
+        id: "3",
+        label: "New mock",
+        kind: "mock",
+        publicAddress: null,
         initialBalanceUsd: 5000,
         currentBalanceUsd: 5000,
-        allTimePnlUsd: 0,
         createdAt: "2026-01-01T00:00:00.000Z",
       },
     });
 
     render(<WalletPage />);
-    await screen.findByText("Create wallet");
+    await screen.findByText("No wallets yet — create one below.");
 
+    fireEvent.change(screen.getByLabelText("Label"), {
+      target: { value: "New mock" },
+    });
     fireEvent.change(screen.getByLabelText("Initial balance (USD)"), {
       target: { value: "5000" },
     });
     fireEvent.click(screen.getByText("Create wallet"));
 
-    await waitFor(() => expect(screen.getAllByText("$5,000")).toHaveLength(2));
-    expect(createMockWalletMock).toHaveBeenCalledWith(5000);
+    await waitFor(() => expect(screen.getByText("New mock")).toBeInTheDocument());
+    expect(createWalletMock).toHaveBeenCalledWith({
+      kind: "mock",
+      label: "New mock",
+      initialBalanceUsd: 5000,
+    });
   });
 
-  it("shows the server's error on a rejected creation (e.g. wallet already exists)", async () => {
-    fetchMockWalletMock.mockResolvedValue(null);
-    createMockWalletMock.mockResolvedValue({
+  it("shows the server's error on a rejected creation (e.g. duplicate label)", async () => {
+    fetchWalletsMock.mockResolvedValue([]);
+    createWalletMock.mockResolvedValue({
       ok: false,
-      error: "A mock wallet already exists",
+      error: "A wallet with this label already exists",
     });
 
     render(<WalletPage />);
-    await screen.findByText("Create wallet");
+    await screen.findByText("No wallets yet — create one below.");
 
+    fireEvent.change(screen.getByLabelText("Label"), {
+      target: { value: "Dup" },
+    });
     fireEvent.click(screen.getByText("Create wallet"));
 
     await waitFor(() =>
       expect(
-        screen.getByText("A mock wallet already exists"),
+        screen.getByText("A wallet with this label already exists"),
       ).toBeInTheDocument(),
     );
   });
 
-  it("shows recent funding payments once a wallet exists", async () => {
-    fetchMockWalletMock.mockResolvedValue({
-      initialBalanceUsd: 10000,
-      currentBalanceUsd: 9999.9,
-      allTimePnlUsd: -0.1,
-      createdAt: "2026-01-01T00:00:00.000Z",
-    });
+  it("shows recent funding payments", async () => {
+    fetchWalletsMock.mockResolvedValue([]);
     fetchFundingPaymentsMock.mockResolvedValue([
       {
         time: "2026-01-01T01:00:00.000Z",
@@ -138,12 +163,7 @@ describe("WalletPage", () => {
   });
 
   it("shows an empty state when there are no funding payments yet", async () => {
-    fetchMockWalletMock.mockResolvedValue({
-      initialBalanceUsd: 10000,
-      currentBalanceUsd: 10000,
-      allTimePnlUsd: 0,
-      createdAt: "2026-01-01T00:00:00.000Z",
-    });
+    fetchWalletsMock.mockResolvedValue([]);
 
     render(<WalletPage />);
 

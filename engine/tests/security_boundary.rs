@@ -26,10 +26,11 @@ const ALLOWED_KEY_AWARE_FILES: &[&str] = &[
     "decision/live_execution.rs",
     // Only re-exports the `PrivateKey` type name; holds no key material.
     "decision/mod.rs",
-    // Only mentions the env var name in a doc comment, to explain why
-    // `UnconfiguredLiveExecutionAdapter` exists; never reads it.
-    "mode.rs",
-    "main.rs",
+    // Builds a `PrivateKey` from each live wallet's decrypted key when
+    // refreshing the wallet registry; holds no HYPERLIQUID_PRIVATE_KEY
+    // reference of its own (wallets are keyed by `WALLET_ENCRYPTION_KEY`
+    // instead).
+    "wallets.rs",
 ];
 
 fn all_source_files() -> Vec<(String, String)> {
@@ -98,13 +99,18 @@ fn the_jev_context_building_module_never_mentions_the_key_or_hyperliquid_credent
 
 #[test]
 fn the_jev_decision_source_module_never_mentions_the_key_or_hyperliquid_credentials() {
-    let contents = fs::read_to_string(Path::new(SRC_DIR).join("decision/jev.rs")).unwrap();
-    assert!(
-        !contents.contains("PrivateKey")
-            && !contents.contains("HYPERLIQUID_PRIVATE_KEY")
-            && !contents.contains("hyperliquid_signing"),
-        "decision/jev.rs (which sends the context to Jev) must never reference private-key material",
-    );
+    for relative_path in [
+        "decision/typesafe_jev_decision_maker.rs",
+        "decision/openrouter_jev_decision_maker.rs",
+    ] {
+        let contents = fs::read_to_string(Path::new(SRC_DIR).join(relative_path)).unwrap();
+        assert!(
+            !contents.contains("PrivateKey")
+                && !contents.contains("HYPERLIQUID_PRIVATE_KEY")
+                && !contents.contains("hyperliquid_signing"),
+            "{relative_path} (which sends the context to Jev) must never reference private-key material",
+        );
+    }
 }
 
 #[test]

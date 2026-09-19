@@ -36,6 +36,7 @@ fn sample(symbol: &str) -> PerpConfig {
         leverage: 1.0,
         position_size_usd: 100.0,
         decision_maker: Default::default(),
+        wallet_id: None,
     }
 }
 

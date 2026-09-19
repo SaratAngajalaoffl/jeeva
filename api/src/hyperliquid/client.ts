@@ -27,11 +27,17 @@ export interface Trade {
   side: "buy" | "sell";
 }
 
+export interface ClearinghouseState {
+  accountValueUsd: number;
+  withdrawableUsd: number;
+}
+
 export interface HyperliquidClient {
   listPerps(): Promise<PerpMeta[]>;
   listPerpStats(): Promise<PerpStats[]>;
   getOrderBook(symbol: string): Promise<OrderBook>;
   getRecentTrades(symbol: string): Promise<Trade[]>;
+  getClearinghouseState(address: string): Promise<ClearinghouseState>;
 }
 
 interface MetaResponse {
@@ -59,6 +65,11 @@ interface RecentTrade {
   px: string;
   sz: string;
   side: "A" | "B";
+}
+
+interface ClearinghouseStateResponse {
+  marginSummary: { accountValue: string };
+  withdrawable: string;
 }
 
 export function createHyperliquidClient(
@@ -156,6 +167,26 @@ export function createHyperliquidClient(
         size: Number(t.sz),
         side: t.side === "B" ? "buy" : "sell",
       }));
+    },
+
+    async getClearinghouseState(address: string): Promise<ClearinghouseState> {
+      const res = await fetch(`${baseUrl}/info`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "clearinghouseState", user: address }),
+      });
+
+      if (!res.ok) {
+        throw new Error(
+          `Hyperliquid clearinghouseState request failed: ${res.status}`,
+        );
+      }
+
+      const body = (await res.json()) as ClearinghouseStateResponse;
+      return {
+        accountValueUsd: Number(body.marginSummary?.accountValue ?? 0),
+        withdrawableUsd: Number(body.withdrawable ?? 0),
+      };
     },
   };
 }

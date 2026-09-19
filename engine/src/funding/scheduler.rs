@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::decision::ExecutionAdapter;
+use crate::wallets::WalletRegistry;
 
 use super::payment::calculate_funding_payment;
 use super::rate::FundingRateSource;
@@ -58,22 +59,26 @@ pub async fn run_funding_cycle(
 }
 
 /// Runs the funding sweep forever on `interval` (Hyperliquid's real
-/// funding interval is hourly). Applies immediately on startup so any
-/// already-open positions aren't left waiting a full interval for
-/// their first payment.
+/// funding interval is hourly), applying one cycle per wallet currently
+/// known to `wallets` — since positions now live against a specific
+/// wallet rather than one engine-wide mock/live pair. Applies
+/// immediately on startup so any already-open positions aren't left
+/// waiting a full interval for their first payment.
 pub async fn run(
-    execution: Arc<dyn ExecutionAdapter>,
+    wallets: Arc<WalletRegistry>,
     rate_source: Arc<dyn FundingRateSource>,
     payment_writer: Arc<dyn FundingPaymentWriter>,
     interval: Duration,
 ) -> ! {
     loop {
-        run_funding_cycle(
-            execution.as_ref(),
-            rate_source.as_ref(),
-            payment_writer.as_ref(),
-        )
-        .await;
+        for (_wallet_id, _kind, execution) in wallets.snapshot() {
+            run_funding_cycle(
+                execution.as_ref(),
+                rate_source.as_ref(),
+                payment_writer.as_ref(),
+            )
+            .await;
+        }
         tokio::time::sleep(interval).await;
     }
 }

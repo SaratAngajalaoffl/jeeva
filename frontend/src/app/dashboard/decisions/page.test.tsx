@@ -26,6 +26,8 @@ const btc: Perp = {
   samplingFrequencySeconds: 30,
   leverage: 2,
   positionSizeUsd: 100,
+  decisionMaker: "fake",
+  walletId: null,
 };
 
 describe("DecisionsPage", () => {
@@ -115,7 +117,7 @@ describe("DecisionsPage", () => {
     fetchPositionsMock.mockResolvedValue([]);
 
     render(<DecisionsPage />);
-    await screen.findByText("Filter by symbol");
+    await screen.findByRole("option", { name: "BTC" });
 
     fireEvent.change(screen.getByLabelText("Filter by symbol"), {
       target: { value: "BTC" },

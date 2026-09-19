@@ -25,6 +25,7 @@ pub fn diff_fields(old: &PerpConfig, new: &PerpConfig) -> Map<String, JsonValue>
     field!("samplingFrequencySeconds", sampling_frequency_seconds);
     field!("leverage", leverage);
     field!("positionSizeUsd", position_size_usd);
+    field!("walletId", wallet_id);
 
     changes
 }
@@ -74,6 +75,7 @@ mod tests {
             leverage: 1.0,
             position_size_usd: 100.0,
             decision_maker: Default::default(),
+            wallet_id: None,
         }
     }
 

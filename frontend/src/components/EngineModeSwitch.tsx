@@ -102,20 +102,6 @@ export function EngineModeSwitch() {
           </Button>
         </div>
 
-        {isLive && (
-          <div className="text-sm text-subtext-1">
-            Wallet address:{" "}
-            {status.liveWalletPublicAddress ? (
-              <span className="font-mono text-text">
-                {status.liveWalletPublicAddress}
-              </span>
-            ) : (
-              <span className="text-destructive">
-                not configured on the engine
-              </span>
-            )}
-          </div>
-        )}
       </div>
     </Card>
   );

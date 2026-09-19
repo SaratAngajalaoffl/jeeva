@@ -93,9 +93,7 @@ impl DecisionMaker for TypeSafeJevDecisionMaker {
             })
             .send()
             .await
-            .map_err(|e| {
-                DecisionError(format!("systemOne request failed for {symbol}: {e}"))
-            })?;
+            .map_err(|e| DecisionError(format!("systemOne request failed for {symbol}: {e}")))?;
 
         let response = response.error_for_status().map_err(|e| {
             DecisionError(format!(
@@ -103,9 +101,10 @@ impl DecisionMaker for TypeSafeJevDecisionMaker {
             ))
         })?;
 
-        let body: SystemOneResponse = response.json().await.map_err(|e| {
-            DecisionError(format!("systemOne response invalid for {symbol}: {e}"))
-        })?;
+        let body: SystemOneResponse = response
+            .json()
+            .await
+            .map_err(|e| DecisionError(format!("systemOne response invalid for {symbol}: {e}")))?;
 
         let direction = parse_direction(&body.choice)?;
 

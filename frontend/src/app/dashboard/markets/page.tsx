@@ -8,12 +8,14 @@ import {
   fetchPerps,
   fetchPerpStats,
   fetchPositions,
+  fetchSelectableWallets,
   updatePerpConfig,
   type DecisionMaker,
   type Perp,
   type PerpHealth,
   type PerpStats,
   type Position,
+  type Wallet,
 } from "@/lib/api";
 import { SiteHeader } from "@/components/SiteHeader";
 import {
@@ -720,6 +722,7 @@ function TradingForm({
     leverage: number;
     positionSizeUsd: number;
     decisionMaker: DecisionMaker;
+    walletId: string;
   }) => Promise<void>;
   onCancel: () => void;
 }) {
@@ -733,7 +736,34 @@ function TradingForm({
   const [decisionMaker, setDecisionMaker] = useState<DecisionMaker>(
     perp.decisionMaker ?? "fake",
   );
+  const [walletId, setWalletId] = useState(perp.walletId ?? "");
+  const [wallets, setWallets] = useState<Wallet[] | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    const size = Number(positionSizeUsd);
+    if (!Number.isFinite(size) || size <= 0) {
+      setWallets([]);
+      return;
+    }
+    let cancelled = false;
+    fetchSelectableWallets(perp.symbol, size)
+      .then((w) => {
+        if (!cancelled) setWallets(w);
+      })
+      .catch(() => {
+        if (!cancelled) setWallets([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [perp.symbol, positionSizeUsd]);
+
+  useEffect(() => {
+    if (wallets && !wallets.some((w) => w.id === walletId)) {
+      setWalletId(wallets[0]?.id ?? "");
+    }
+  }, [wallets, walletId]);
 
   return (
     <form
@@ -749,7 +779,8 @@ function TradingForm({
           !Number.isFinite(lev) ||
           lev <= 0 ||
           !Number.isFinite(size) ||
-          size <= 0
+          size <= 0 ||
+          !walletId
         ) {
           return;
         }
@@ -759,6 +790,7 @@ function TradingForm({
           leverage: lev,
           positionSizeUsd: size,
           decisionMaker,
+          walletId,
         });
         setSubmitting(false);
       }}
@@ -806,11 +838,35 @@ function TradingForm({
           onChange={(e) => setPositionSizeUsd(e.target.value)}
         />
       </label>
+      <label className="flex flex-col gap-1">
+        <Label>Wallet</Label>
+        <Select
+          value={walletId}
+          onChange={(e) => setWalletId(e.target.value)}
+        >
+          <option value="" disabled>
+            {wallets === null
+              ? "Loading..."
+              : wallets.length === 0
+                ? "No eligible wallets"
+                : "Select a wallet"}
+          </option>
+          {wallets?.map((w) => (
+            <option key={w.id} value={w.id}>
+              {w.label} ({w.kind}
+              {w.currentBalanceUsd !== null
+                ? `, $${w.currentBalanceUsd.toLocaleString()}`
+                : ""}
+              )
+            </option>
+          ))}
+        </Select>
+      </label>
       <div className="mt-1 flex justify-end gap-2">
         <Button type="button" variant="ghost" onClick={onCancel}>
           Cancel
         </Button>
-        <Button type="submit" disabled={submitting}>
+        <Button type="submit" disabled={submitting || !walletId}>
           {submitting ? "Enabling..." : "Enable trading"}
         </Button>
       </div>
