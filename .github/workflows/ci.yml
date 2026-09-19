@@ -48,9 +48,29 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: engine
+      - name: Start a single-node MongoDB replica set
+        # Change streams (used by the config watcher) require a replica
+        # set, which GitHub's declarative `services:` block can't
+        # initiate on its own, so this is started and initiated by hand.
+        run: |
+          docker run -d --name mongo -p 27017:27017 mongo:7 --replSet rs0 --bind_ip_all
+          for i in $(seq 1 30); do
+            docker exec mongo mongosh --quiet --eval "db.adminCommand('ping')" && break
+            sleep 1
+          done
+          docker exec mongo mongosh --quiet --eval 'rs.initiate({_id: "rs0", members: [{_id: 0, host: "localhost:27017"}]})'
+          for i in $(seq 1 30); do
+            [ "$(docker exec mongo mongosh --quiet --eval 'rs.status().myState')" = "1" ] && break
+            sleep 1
+          done
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+        env:
+          TEST_MONGO_URL: mongodb://localhost:27017
+      - name: Stop MongoDB
+        if: always()
+        run: docker rm -f mongo
 
   api:
     needs: changes

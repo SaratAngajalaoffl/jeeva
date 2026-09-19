@@ -2,10 +2,31 @@ services:
   mongo:
     image: mongo:7
     restart: unless-stopped
+    # A replica set (even single-node) is required for change streams,
+    # which the engine uses to react to config updates.
+    command: ["--replSet", "rs0", "--bind_ip_all"]
     ports:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mongo-init:
+    image: mongo:7
+    restart: "no"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    entrypoint: ["bash", "-c"]
+    command:
+      - >
+        mongosh --host mongo:27017 --quiet --eval '
+        try { rs.status(); } catch (e) { rs.initiate({_id: "rs0", members: [{_id: 0, host: "mongo:27017"}]}); }
+        '
 
   timescaledb:
     image: timescale/timescaledb:latest-pg16
@@ -36,8 +57,10 @@ services:
     volumes:
       - ./api/src:/repo/api/src
     depends_on:
-      - mongo
-      - timescaledb
+      mongo-init:
+        condition: service_completed_successfully
+      timescaledb:
+        condition: service_started
 
   engine:
     build:
@@ -46,8 +69,10 @@ services:
       MONGO_URL: mongodb://mongo:27017/jeeva
       DATABASE_URL: postgres://jeeva:jeeva@timescaledb:5432/jeeva
     depends_on:
-      - mongo
-      - timescaledb
+      mongo-init:
+        condition: service_completed_successfully
+      timescaledb:
+        condition: service_started
 
   frontend:
     build:

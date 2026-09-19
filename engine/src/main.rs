@@ -1,17 +1,19 @@
-fn startup_message() -> String {
-    "jeeva engine starting".to_string()
+use engine::config::{run_with_reconnect, ConfigStore};
+
+fn require_env(name: &str) -> String {
+    std::env::var(name).unwrap_or_else(|_| panic!("Missing required environment variable: {name}"))
 }
 
-fn main() {
-    println!("{}", startup_message());
-}
+#[tokio::main]
+async fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+    tracing::info!("jeeva engine starting");
 
-    #[test]
-    fn startup_message_is_non_empty() {
-        assert!(!startup_message().is_empty());
-    }
+    let mongo_url = require_env("MONGO_URL");
+    let store = ConfigStore::new();
+
+    run_with_reconnect(&mongo_url, store).await;
 }
