@@ -17,4 +17,9 @@ pub struct PerpConfig {
     pub position_size_usd: f64,
     #[serde(default)]
     pub decision_maker: DecisionMakerKind,
+    /// The wallet (see `crate::wallets`) this PERP trades against.
+    /// `None` until an operator selects one; trading cannot be enabled
+    /// without it (enforced by the Express API).
+    #[serde(default)]
+    pub wallet_id: Option<String>,
 }

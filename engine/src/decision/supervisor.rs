@@ -14,7 +14,9 @@ use super::log::{DecisionLogEntry, DecisionLogWriter};
 use super::model::decide_action;
 use crate::config::{ConfigStore, PerpConfig};
 use crate::funding::FundingHistoryReader;
+use crate::mode::ModeStore;
 use crate::scheduler::{delay_until_next_boundary, reconcile};
+use crate::wallets::WalletRegistry;
 
 const HISTORY_WINDOW: u32 = 1000;
 const AUTO_FLATTEN_THRESHOLD: u32 = 5;
@@ -293,7 +295,8 @@ fn spawn_task(
     store: ConfigStore,
     history: Arc<dyn MarketDataHistoryReader>,
     decision_makers: Arc<DecisionMakerRegistry>,
-    execution: Arc<dyn ExecutionAdapter>,
+    wallets: Arc<WalletRegistry>,
+    mode: ModeStore,
     funding: Arc<dyn FundingHistoryReader>,
     decision_log: Arc<dyn DecisionLogWriter>,
     health: Arc<dyn FailureTracker>,
@@ -307,6 +310,9 @@ fn spawn_task(
         loop {
             ticker.tick().await;
             if let Some(config) = store.get(&symbol) {
+                let Some(execution) = resolve_execution(&symbol, &config, &wallets, &mode) else {
+                    continue;
+                };
                 let decision_maker = decision_makers.get(config.decision_maker);
                 run_decision_cycle(
                     &symbol,
@@ -324,6 +330,42 @@ fn spawn_task(
     })
 }
 
+/// Resolves the `ExecutionAdapter` for a PERP's configured wallet and
+/// enforces the safety net: a market must never execute against a real
+/// wallet while live trading is globally disabled (or a mock wallet
+/// while the engine is switched to live) — this is checked on every
+/// cycle, not just at config-write time, in case the two ever
+/// disagree.
+fn resolve_execution(
+    symbol: &str,
+    config: &PerpConfig,
+    wallets: &WalletRegistry,
+    mode: &ModeStore,
+) -> Option<Arc<dyn ExecutionAdapter>> {
+    let Some(wallet_id) = &config.wallet_id else {
+        tracing::error!(symbol, "trading enabled but no wallet configured; skipping cycle");
+        return None;
+    };
+
+    let Some((kind, adapter)) = wallets.resolve(wallet_id) else {
+        tracing::error!(symbol, wallet_id, "configured wallet not found or not ready; skipping cycle");
+        return None;
+    };
+
+    if !kind.matches_mode(mode.get()) {
+        tracing::error!(
+            symbol,
+            wallet_id,
+            wallet_kind = ?kind,
+            mode = mode.get().as_str(),
+            "wallet kind does not match the current engine mode; refusing to trade"
+        );
+        return None;
+    }
+
+    Some(adapter)
+}
+
 /// Runs forever, polling the config store on `poll_interval` and
 /// starting/stopping/restarting one decision task per trading-enabled
 /// PERP so the running tasks always match `trading_enabled` +
@@ -334,7 +376,8 @@ pub async fn run(
     store: ConfigStore,
     history: Arc<dyn MarketDataHistoryReader>,
     decision_makers: Arc<DecisionMakerRegistry>,
-    execution: Arc<dyn ExecutionAdapter>,
+    wallets: Arc<WalletRegistry>,
+    mode: ModeStore,
     funding: Arc<dyn FundingHistoryReader>,
     decision_log: Arc<dyn DecisionLogWriter>,
     health: Arc<dyn FailureTracker>,
@@ -367,7 +410,8 @@ pub async fn run(
                 store.clone(),
                 history.clone(),
                 decision_makers.clone(),
-                execution.clone(),
+                wallets.clone(),
+                mode.clone(),
                 funding.clone(),
                 decision_log.clone(),
                 health.clone(),
@@ -406,6 +450,7 @@ mod tests {
             leverage: 1.0,
             position_size_usd: 100.0,
             decision_maker: crate::decision::DecisionMakerKind::Fake,
+            wallet_id: Some("test-wallet".to_string()),
         }
     }
 

@@ -39,6 +39,9 @@ const fakeHyperliquidClient: HyperliquidClient = {
   async getRecentTrades() {
     return [];
   },
+  async getClearinghouseState() {
+    return { accountValueUsd: 0, withdrawableUsd: 0 };
+  },
 };
 
 function authCookie(): string {

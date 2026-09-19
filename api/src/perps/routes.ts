@@ -5,10 +5,12 @@ import { requireAuth } from "../auth/requireAuth.js";
 import type { HyperliquidClient } from "../hyperliquid/client.js";
 import { getMarketDataHistory } from "../marketData/repository.js";
 import { parseTimeRange } from "../marketData/timeRange.js";
+import { isWalletEligible } from "../wallets/eligibility.js";
 import { isValidFrequencySeconds } from "./frequency.js";
 import {
   DEFAULT_PERP_CONFIG,
   getAllConfigs,
+  getConfig,
   updatePerpConfig,
   type DecisionMaker,
 } from "./repository.js";
@@ -54,6 +56,7 @@ export function createPerpsRouter(
           config?.positionSizeUsd ?? DEFAULT_PERP_CONFIG.positionSizeUsd,
         decisionMaker:
           config?.decisionMaker ?? DEFAULT_PERP_CONFIG.decisionMaker,
+        walletId: config?.walletId ?? DEFAULT_PERP_CONFIG.walletId,
       };
     });
 
@@ -75,6 +78,7 @@ export function createPerpsRouter(
       leverage,
       positionSizeUsd,
       decisionMaker,
+      walletId,
     } = req.body ?? {};
 
     const isValidToggle = (value: unknown) =>
@@ -84,6 +88,8 @@ export function createPerpsRouter(
     const isValidDecisionMaker = (value: unknown) =>
       value === undefined ||
       DECISION_MAKERS.includes(value as DecisionMaker);
+    const isValidWalletId = (value: unknown) =>
+      value === undefined || value === null || typeof value === "string";
 
     if (
       !isValidToggle(tradingEnabled) ||
@@ -93,10 +99,37 @@ export function createPerpsRouter(
       (leverage !== undefined && !isValidLeverage(leverage)) ||
       (positionSizeUsd !== undefined &&
         !isValidPositionSizeUsd(positionSizeUsd)) ||
-      !isValidDecisionMaker(decisionMaker)
+      !isValidDecisionMaker(decisionMaker) ||
+      !isValidWalletId(walletId)
     ) {
       res.status(400).json({ error: "invalid request" });
       return;
+    }
+
+    if (tradingEnabled) {
+      const existing = await getConfig(db, symbol);
+      const effectiveWalletId =
+        walletId !== undefined ? walletId : existing?.walletId ?? null;
+      const effectiveSizeUsd =
+        positionSizeUsd ?? existing?.positionSizeUsd ??
+        DEFAULT_PERP_CONFIG.positionSizeUsd;
+
+      if (
+        !effectiveWalletId ||
+        !(await isWalletEligible(
+          db,
+          pgPool,
+          hyperliquidClient,
+          effectiveWalletId,
+          effectiveSizeUsd,
+        ))
+      ) {
+        res.status(400).json({
+          error:
+            "a wallet matching the current engine mode with sufficient balance must be selected to enable trading",
+        });
+        return;
+      }
     }
 
     const updated = await updatePerpConfig(db, symbol, {
@@ -107,6 +140,7 @@ export function createPerpsRouter(
       leverage,
       positionSizeUsd,
       decisionMaker,
+      walletId,
     });
     res.status(200).json(updated);
   });

@@ -25,8 +25,7 @@ describe("EngineModeSwitch", () => {
 
   it("shows a Mock badge and disables the Mock button when already in mock mode", async () => {
     fetchEngineModeMock.mockResolvedValue({
-      mode: "mock",
-      liveWalletPublicAddress: null,
+      mode: "mock"
     });
 
     render(<EngineModeSwitch />);
@@ -37,35 +36,21 @@ describe("EngineModeSwitch", () => {
     expect(screen.getByRole("button", { name: "Live" })).not.toBeDisabled();
   });
 
-  it("shows a Live badge and the wallet address when already in live mode", async () => {
+  it("shows a Live badge when already in live mode", async () => {
     fetchEngineModeMock.mockResolvedValue({
       mode: "live",
-      liveWalletPublicAddress: "0xabc123",
     });
 
     render(<EngineModeSwitch />);
 
     const badge = await screen.findByTestId("engine-mode-badge");
     expect(badge).toHaveTextContent("Live");
-    expect(screen.getByText("0xabc123")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Live" })).toBeDisabled();
-  });
-
-  it("flags an unconfigured wallet in live mode instead of hiding the problem", async () => {
-    fetchEngineModeMock.mockResolvedValue({
-      mode: "live",
-      liveWalletPublicAddress: null,
-    });
-
-    render(<EngineModeSwitch />);
-
-    await screen.findByText("not configured on the engine");
   });
 
   it("asks for confirmation before switching to live", async () => {
     fetchEngineModeMock.mockResolvedValue({
-      mode: "mock",
-      liveWalletPublicAddress: null,
+      mode: "mock"
     });
     setEngineModeMock.mockResolvedValue({ ok: true, mode: "live" });
 
@@ -80,8 +65,7 @@ describe("EngineModeSwitch", () => {
 
   it("does not switch when the confirmation is declined", async () => {
     fetchEngineModeMock.mockResolvedValue({
-      mode: "mock",
-      liveWalletPublicAddress: null,
+      mode: "mock"
     });
     vi.spyOn(window, "confirm").mockReturnValue(false);
 
@@ -95,8 +79,7 @@ describe("EngineModeSwitch", () => {
 
   it("switching back to mock does not require confirmation", async () => {
     fetchEngineModeMock.mockResolvedValue({
-      mode: "live",
-      liveWalletPublicAddress: "0xabc123",
+      mode: "live"
     });
     setEngineModeMock.mockResolvedValue({ ok: true, mode: "mock" });
 
@@ -111,8 +94,7 @@ describe("EngineModeSwitch", () => {
 
   it("updates the badge after a successful switch", async () => {
     fetchEngineModeMock.mockResolvedValue({
-      mode: "mock",
-      liveWalletPublicAddress: null,
+      mode: "mock"
     });
     setEngineModeMock.mockResolvedValue({ ok: true, mode: "live" });
 
@@ -130,8 +112,7 @@ describe("EngineModeSwitch", () => {
 
   it("shows an error message when the switch fails", async () => {
     fetchEngineModeMock.mockResolvedValue({
-      mode: "mock",
-      liveWalletPublicAddress: null,
+      mode: "mock"
     });
     setEngineModeMock.mockResolvedValue({
       ok: false,

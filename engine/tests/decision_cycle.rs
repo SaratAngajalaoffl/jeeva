@@ -149,6 +149,7 @@ fn config() -> PerpConfig {
         leverage: 2.0,
         position_size_usd: 500.0,
         decision_maker: Default::default(),
+        wallet_id: None,
     }
 }
 

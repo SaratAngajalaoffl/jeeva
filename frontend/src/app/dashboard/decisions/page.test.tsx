@@ -26,6 +26,8 @@ const btc: Perp = {
   samplingFrequencySeconds: 30,
   leverage: 2,
   positionSizeUsd: 100,
+  decisionMaker: "fake",
+  walletId: null,
 };
 
 describe("DecisionsPage", () => {

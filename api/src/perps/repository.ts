@@ -21,19 +21,24 @@ export interface PerpDecisionMaker {
   decisionMaker: DecisionMaker;
 }
 
+export interface PerpWallet {
+  walletId: string | null;
+}
+
 export interface PerpConfigDoc
-  extends PerpToggles, PerpFrequencies, PerpSizing, PerpDecisionMaker {
+  extends PerpToggles, PerpFrequencies, PerpSizing, PerpDecisionMaker, PerpWallet {
   symbol: string;
 }
 
 export type PerpConfigPatch = Partial<
-  PerpToggles & PerpFrequencies & PerpSizing & PerpDecisionMaker
+  PerpToggles & PerpFrequencies & PerpSizing & PerpDecisionMaker & PerpWallet
 >;
 
 export const DEFAULT_PERP_CONFIG: PerpToggles &
   PerpFrequencies &
   PerpSizing &
-  PerpDecisionMaker = {
+  PerpDecisionMaker &
+  PerpWallet = {
   tradingEnabled: false,
   samplingEnabled: false,
   decisionFrequencySeconds: 300,
@@ -41,6 +46,7 @@ export const DEFAULT_PERP_CONFIG: PerpToggles &
   leverage: 1,
   positionSizeUsd: 100,
   decisionMaker: "fake",
+  walletId: null,
 };
 
 const COLLECTION_NAME = "perpConfigs";
@@ -88,6 +94,8 @@ export async function updatePerpConfig(
     leverage: patch.leverage ?? current.leverage,
     positionSizeUsd: patch.positionSizeUsd ?? current.positionSizeUsd,
     decisionMaker: patch.decisionMaker ?? current.decisionMaker,
+    walletId:
+      patch.walletId !== undefined ? patch.walletId : current.walletId,
   };
 
   await collection(db).updateOne({ symbol }, { $set: next }, { upsert: true });

@@ -94,11 +94,19 @@ pub fn realized_pnl_usd(
 pub struct MockExecutionAdapter {
     pool: PgPool,
     slippage_bps: f64,
+    wallet_id: String,
 }
 
 impl MockExecutionAdapter {
-    pub fn new(pool: PgPool, slippage_bps: f64) -> Self {
-        Self { pool, slippage_bps }
+    /// `wallet_id` identifies the row in the `wallets` table this
+    /// adapter's fills are settled against — every instance is scoped to
+    /// exactly one mock wallet.
+    pub fn new(pool: PgPool, slippage_bps: f64, wallet_id: String) -> Self {
+        Self {
+            pool,
+            slippage_bps,
+            wallet_id,
+        }
     }
 }
 
@@ -140,8 +148,8 @@ impl ExecutionAdapter for MockExecutionAdapter {
 
         let (opened_at,) = sqlx::query_as::<_, (DateTime<Utc>,)>(
             r#"
-            INSERT INTO mock_positions (symbol, direction, entry_price, notional_usd)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO mock_positions (symbol, direction, entry_price, notional_usd, wallet_id)
+            VALUES ($1, $2, $3, $4, $5::uuid)
             RETURNING opened_at
             "#,
         )
@@ -149,6 +157,7 @@ impl ExecutionAdapter for MockExecutionAdapter {
         .bind(direction.as_str())
         .bind(entry_price)
         .bind(notional_usd)
+        .bind(&self.wallet_id)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| ExecutionError(format!("failed to open position: {e}")))?;
@@ -189,9 +198,10 @@ impl ExecutionAdapter for MockExecutionAdapter {
             .map_err(|e| ExecutionError(format!("failed to start transaction: {e}")))?;
 
         sqlx::query(
-            "UPDATE mock_wallet SET current_balance_usd = current_balance_usd + $1 WHERE id = 1",
+            "UPDATE wallets SET current_balance_usd = current_balance_usd + $1 WHERE id = $2::uuid AND kind = 'mock'",
         )
         .bind(pnl_usd)
+        .bind(&self.wallet_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| ExecutionError(format!("failed to update wallet balance: {e}")))?;
@@ -248,9 +258,10 @@ impl ExecutionAdapter for MockExecutionAdapter {
 
     async fn apply_funding(&self, symbol: &str, amount_usd: f64) -> Result<(), ExecutionError> {
         sqlx::query(
-            "UPDATE mock_wallet SET current_balance_usd = current_balance_usd + $1 WHERE id = 1",
+            "UPDATE wallets SET current_balance_usd = current_balance_usd + $1 WHERE id = $2::uuid AND kind = 'mock'",
         )
         .bind(amount_usd)
+        .bind(&self.wallet_id)
         .execute(&self.pool)
         .await
         .map_err(|e| ExecutionError(format!("failed to apply funding payment: {e}")))?;

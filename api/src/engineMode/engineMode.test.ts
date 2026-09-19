@@ -21,6 +21,7 @@ const client = new MongoClient(MONGO_URL);
 await client.connect();
 const db: Db = client.db();
 const engineConfig = () => db.collection<EngineModeDoc>("engineConfig");
+const perpConfigs = () => db.collection("perpConfigs");
 const pgPool = new Pool({ connectionString: DATABASE_URL });
 
 afterAll(async () => {
@@ -30,7 +31,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await engineConfig().deleteMany({});
-  await pgPool.query("DELETE FROM engine_wallet");
+  await perpConfigs().deleteMany({});
+  await pgPool.query("DELETE FROM wallets");
 });
 
 function authCookie(): string {
@@ -48,50 +50,24 @@ describe("GET /engine-mode", () => {
     expect(res.status).toBe(401);
   });
 
-  it("defaults to mock mode with no wallet address when nothing has been configured", async () => {
+  it("defaults to mock mode when nothing has been configured", async () => {
     const res = await request(buildApp())
       .get("/engine-mode")
       .set("Cookie", authCookie());
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ mode: "mock", liveWalletPublicAddress: null });
+    expect(res.body).toEqual({ mode: "mock" });
   });
 
-  it("reflects a previously-set live mode and the engine's published wallet address", async () => {
+  it("reflects a previously-set live mode", async () => {
     await engineConfig().insertOne({ _id: "singleton", mode: "live" });
-    await pgPool.query(
-      "INSERT INTO engine_wallet (id, public_address) VALUES (1, $1)",
-      ["0xabc123"],
-    );
 
     const res = await request(buildApp())
       .get("/engine-mode")
       .set("Cookie", authCookie());
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({
-      mode: "live",
-      liveWalletPublicAddress: "0xabc123",
-    });
-  });
-
-  it("never returns anything resembling a private key", async () => {
-    await pgPool.query(
-      "INSERT INTO engine_wallet (id, public_address) VALUES (1, $1)",
-      ["0xabc123"],
-    );
-
-    const res = await request(buildApp())
-      .get("/engine-mode")
-      .set("Cookie", authCookie());
-
-    const body = JSON.stringify(res.body);
-    expect(Object.keys(res.body).sort()).toEqual([
-      "liveWalletPublicAddress",
-      "mode",
-    ]);
-    expect(body.toLowerCase()).not.toContain("key");
-    expect(body.toLowerCase()).not.toContain("secret");
+    expect(res.body).toEqual({ mode: "live" });
   });
 });
 
@@ -138,5 +114,33 @@ describe("PUT /engine-mode", () => {
 
     const stored = await engineConfig().findOne({ _id: "singleton" });
     expect(stored?.mode).toBe("mock");
+  });
+
+  it("disables trading on any perp using a live wallet when switching to mock", async () => {
+    const liveWallet = await pgPool.query(
+      "INSERT INTO wallets (label, kind, public_address) VALUES ('Live', 'live', '0xabc') RETURNING id",
+    );
+    const walletId = liveWallet.rows[0].id;
+    await perpConfigs().insertOne({
+      symbol: "BTC",
+      tradingEnabled: true,
+      samplingEnabled: true,
+      decisionFrequencySeconds: 300,
+      samplingFrequencySeconds: 60,
+      leverage: 1,
+      positionSizeUsd: 100,
+      decisionMaker: "fake",
+      walletId,
+    });
+    await engineConfig().insertOne({ _id: "singleton", mode: "live" });
+
+    const res = await request(buildApp())
+      .put("/engine-mode")
+      .set("Cookie", authCookie())
+      .send({ mode: "mock" });
+
+    expect(res.status).toBe(200);
+    const perp = await perpConfigs().findOne({ symbol: "BTC" });
+    expect(perp?.tradingEnabled).toBe(false);
   });
 });

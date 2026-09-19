@@ -6,15 +6,15 @@ import {
   checkSession,
   fetchDecisions,
   fetchFundingPayments,
-  fetchMockWallet,
   fetchPerps,
   fetchPositions,
+  fetchWallets,
   logout,
   type DecisionLogEntry,
   type FundingPayment,
-  type MockWallet,
   type Perp,
   type Position,
+  type Wallet,
 } from "@/lib/api";
 import { SiteHeader } from "@/components/SiteHeader";
 import { Card, StatTile } from "@/components/ui";
@@ -31,9 +31,7 @@ export default function DashboardPage() {
   const [perps, setPerps] = useState<Perp[] | null>(null);
   const [positions, setPositions] = useState<Position[] | null>(null);
   const [decisions, setDecisions] = useState<DecisionLogEntry[] | null>(null);
-  const [wallet, setWallet] = useState<MockWallet | null | undefined>(
-    undefined,
-  );
+  const [wallets, setWallets] = useState<Wallet[] | undefined>(undefined);
   const [fundingPayments, setFundingPayments] = useState<
     FundingPayment[] | null
   >(null);
@@ -60,7 +58,7 @@ export default function DashboardPage() {
     fetchPerps().then(setPerps).catch(() => setPerps([]));
     fetchPositions().then(setPositions).catch(() => setPositions([]));
     fetchDecisions().then(setDecisions).catch(() => setDecisions([]));
-    fetchMockWallet().then(setWallet).catch(() => setWallet(null));
+    fetchWallets().then(setWallets).catch(() => setWallets([]));
     fetchFundingPayments()
       .then(setFundingPayments)
       .catch(() => setFundingPayments([]));
@@ -75,7 +73,7 @@ export default function DashboardPage() {
     router.push("/login");
   }
 
-  const loading = !perps || !positions || !decisions || wallet === undefined;
+  const loading = !perps || !positions || !decisions || wallets === undefined;
 
   const orders = decisions?.filter(
     (d) => d.positionAction && ORDER_ACTIONS.has(d.positionAction),
@@ -120,7 +118,16 @@ export default function DashboardPage() {
     });
   })();
 
-  const pnl = wallet?.allTimePnlUsd ?? 0;
+  const mockWallets = (wallets ?? []).filter((w) => w.kind === "mock");
+  const totalBalanceUsd = mockWallets.reduce(
+    (sum, w) => sum + (w.currentBalanceUsd ?? 0),
+    0,
+  );
+  const pnl = mockWallets.reduce(
+    (sum, w) =>
+      sum + ((w.currentBalanceUsd ?? 0) - (w.initialBalanceUsd ?? 0)),
+    0,
+  );
   const pnlTone = pnl > 0 ? "positive" : pnl < 0 ? "negative" : "default";
 
   return (
@@ -138,15 +145,17 @@ export default function DashboardPage() {
               <StatTile
                 label="Wallet balance"
                 value={
-                  wallet
-                    ? `$${wallet.currentBalanceUsd.toLocaleString()}`
+                  mockWallets.length > 0
+                    ? `$${totalBalanceUsd.toLocaleString()}`
                     : "-"
                 }
               />
               <StatTile
                 label="All-time P&L"
                 value={
-                  wallet ? `${pnl >= 0 ? "+" : ""}$${pnl.toLocaleString()}` : "-"
+                  mockWallets.length > 0
+                    ? `${pnl >= 0 ? "+" : ""}$${pnl.toLocaleString()}`
+                    : "-"
                 }
                 tone={pnlTone}
               />

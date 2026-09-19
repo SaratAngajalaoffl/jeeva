@@ -15,6 +15,7 @@ import {
   fetchPerpStats,
   fetchPositions,
   fetchRecentTrades,
+  fetchSelectableWallets,
   updatePerpConfig,
   type DecisionLogEntry,
   type FundingPayment,
@@ -24,9 +25,10 @@ import {
   type PerpStats,
   type Position,
   type Trade,
+  type Wallet,
 } from "@/lib/api";
 import { SiteHeader } from "@/components/SiteHeader";
-import { Button, Card, IconButton, Input, Label } from "@/components/ui";
+import { Button, Card, IconButton, Input, Label, Select } from "@/components/ui";
 
 const TH =
   "border-b border-surface-1 py-2 pr-4 text-left text-xs font-medium uppercase tracking-wide text-subtext-0";
@@ -531,6 +533,7 @@ export default function MarketDataPage() {
         >
           <TradingForm
             perp={perp}
+            symbol={symbol}
             onCancel={() => setDialog(null)}
             onSubmit={async (values) => {
               await applyPatch({ tradingEnabled: true, ...values });
@@ -720,14 +723,17 @@ function SamplingForm({
 
 function TradingForm({
   perp,
+  symbol,
   onSubmit,
   onCancel,
 }: {
   perp: Perp;
+  symbol: string;
   onSubmit: (values: {
     decisionFrequencySeconds: number;
     leverage: number;
     positionSizeUsd: number;
+    walletId: string;
   }) => Promise<void>;
   onCancel: () => void;
 }) {
@@ -738,7 +744,34 @@ function TradingForm({
   const [positionSizeUsd, setPositionSizeUsd] = useState(
     String(perp.positionSizeUsd),
   );
+  const [walletId, setWalletId] = useState(perp.walletId ?? "");
+  const [wallets, setWallets] = useState<Wallet[] | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    const size = Number(positionSizeUsd);
+    if (!Number.isFinite(size) || size <= 0) {
+      setWallets([]);
+      return;
+    }
+    let cancelled = false;
+    fetchSelectableWallets(symbol, size)
+      .then((w) => {
+        if (!cancelled) setWallets(w);
+      })
+      .catch(() => {
+        if (!cancelled) setWallets([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [symbol, positionSizeUsd]);
+
+  useEffect(() => {
+    if (wallets && !wallets.some((w) => w.id === walletId)) {
+      setWalletId(wallets[0]?.id ?? "");
+    }
+  }, [wallets, walletId]);
 
   return (
     <form
@@ -754,7 +787,8 @@ function TradingForm({
           !Number.isFinite(lev) ||
           lev <= 0 ||
           !Number.isFinite(size) ||
-          size <= 0
+          size <= 0 ||
+          !walletId
         ) {
           return;
         }
@@ -763,6 +797,7 @@ function TradingForm({
           decisionFrequencySeconds: decision,
           leverage: lev,
           positionSizeUsd: size,
+          walletId,
         });
         setSubmitting(false);
       }}
@@ -797,11 +832,35 @@ function TradingForm({
           onChange={(e) => setPositionSizeUsd(e.target.value)}
         />
       </label>
+      <label className="flex flex-col gap-1">
+        <Label>Wallet</Label>
+        <Select
+          value={walletId}
+          onChange={(e) => setWalletId(e.target.value)}
+        >
+          <option value="" disabled>
+            {wallets === null
+              ? "Loading..."
+              : wallets.length === 0
+                ? "No eligible wallets"
+                : "Select a wallet"}
+          </option>
+          {wallets?.map((w) => (
+            <option key={w.id} value={w.id}>
+              {w.label} ({w.kind}
+              {w.currentBalanceUsd !== null
+                ? `, $${w.currentBalanceUsd.toLocaleString()}`
+                : ""}
+              )
+            </option>
+          ))}
+        </Select>
+      </label>
       <div className="mt-1 flex justify-end gap-2">
         <Button type="button" variant="ghost" onClick={onCancel}>
           Cancel
         </Button>
-        <Button type="submit" disabled={submitting}>
+        <Button type="submit" disabled={submitting || !walletId}>
           {submitting ? "Enabling..." : "Enable trading"}
         </Button>
       </div>

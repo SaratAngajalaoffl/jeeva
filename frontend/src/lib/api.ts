@@ -46,6 +46,7 @@ export interface Perp {
   leverage: number;
   positionSizeUsd: number;
   decisionMaker: DecisionMaker;
+  walletId: string | null;
 }
 
 export async function fetchPerps(): Promise<Perp[]> {
@@ -153,40 +154,76 @@ export async function fetchRecentTrades(symbol: string): Promise<Trade[]> {
   return body.trades;
 }
 
-export interface MockWallet {
-  initialBalanceUsd: number;
-  currentBalanceUsd: number;
-  allTimePnlUsd: number;
+export type WalletKind = "mock" | "live";
+
+export interface Wallet {
+  id: string;
+  label: string;
+  kind: WalletKind;
+  publicAddress: string | null;
+  initialBalanceUsd: number | null;
+  currentBalanceUsd: number | null;
   createdAt: string;
 }
 
-export async function fetchMockWallet(): Promise<MockWallet | null> {
-  const res = await fetch(`${API_URL}/mock-wallet`, {
-    credentials: "include",
-  });
-  if (res.status === 404) {
-    return null;
-  }
+export async function fetchWallets(): Promise<Wallet[]> {
+  const res = await fetch(`${API_URL}/wallets`, { credentials: "include" });
   if (!res.ok) {
-    throw new Error("Failed to load mock wallet");
+    throw new Error("Failed to load wallets");
   }
-  return res.json();
+  const body = (await res.json()) as { wallets: Wallet[] };
+  return body.wallets;
 }
 
-export async function createMockWallet(
-  initialBalanceUsd: number,
-): Promise<{ ok: true; wallet: MockWallet } | { ok: false; error: string }> {
-  const res = await fetch(`${API_URL}/mock-wallet`, {
+export async function fetchSelectableWallets(
+  symbol: string,
+  sizeUsd: number,
+): Promise<Wallet[]> {
+  const res = await fetch(
+    `${API_URL}/wallets/selectable?symbol=${encodeURIComponent(
+      symbol,
+    )}&sizeUsd=${encodeURIComponent(sizeUsd)}`,
+    { credentials: "include" },
+  );
+  if (!res.ok) {
+    throw new Error("Failed to load selectable wallets");
+  }
+  const body = (await res.json()) as { wallets: Wallet[] };
+  return body.wallets;
+}
+
+export type CreateWalletInput =
+  | { kind: "mock"; label: string; initialBalanceUsd: number }
+  | { kind: "live"; label: string; publicAddress: string; privateKey: string };
+
+export async function createWallet(
+  input: CreateWalletInput,
+): Promise<{ ok: true; wallet: Wallet } | { ok: false; error: string }> {
+  const res = await fetch(`${API_URL}/wallets`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
-    body: JSON.stringify({ initialBalanceUsd }),
+    body: JSON.stringify(input),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => null);
-    return { ok: false, error: body?.error ?? "Failed to create mock wallet" };
+    return { ok: false, error: body?.error ?? "Failed to create wallet" };
   }
   return { ok: true, wallet: await res.json() };
+}
+
+export async function deleteWallet(
+  id: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const res = await fetch(`${API_URL}/wallets/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    return { ok: false, error: body?.error ?? "Failed to delete wallet" };
+  }
+  return { ok: true };
 }
 
 export interface Position {
@@ -272,7 +309,6 @@ export type EngineMode = "mock" | "live";
 
 export interface EngineModeStatus {
   mode: EngineMode;
-  liveWalletPublicAddress: string | null;
 }
 
 export async function fetchEngineMode(): Promise<EngineModeStatus> {

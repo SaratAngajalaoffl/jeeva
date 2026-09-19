@@ -26,7 +26,16 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.collection("perpConfigs").deleteMany({});
+  await db.collection("engineConfig").deleteMany({});
+  await pgPool.query("DELETE FROM wallets");
 });
+
+async function createMockWalletId(): Promise<string> {
+  const result = await pgPool.query(
+    "INSERT INTO wallets (label, kind, initial_balance_usd, current_balance_usd) VALUES ('Test wallet', 'mock', 1000000, 1000000) RETURNING id",
+  );
+  return result.rows[0].id;
+}
 
 const fakeHyperliquidClient: HyperliquidClient = {
   async listPerps() {
@@ -55,6 +64,9 @@ const fakeHyperliquidClient: HyperliquidClient = {
   },
   async getRecentTrades() {
     return [];
+  },
+  async getClearinghouseState() {
+    return { accountValueUsd: 1_000_000, withdrawableUsd: 1_000_000 };
   },
 };
 
@@ -132,11 +144,22 @@ describe("PATCH /perps/:symbol", () => {
     expect(res.status).toBe(400);
   });
 
-  it("enabling trading also persists sampling enabled", async () => {
+  it("enabling trading requires a wallet", async () => {
     const res = await request(buildApp())
       .patch("/perps/BTC")
       .set("Cookie", authCookie())
       .send({ tradingEnabled: true });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("enabling trading also persists sampling enabled", async () => {
+    const walletId = await createMockWalletId();
+
+    const res = await request(buildApp())
+      .patch("/perps/BTC")
+      .set("Cookie", authCookie())
+      .send({ tradingEnabled: true, walletId });
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
@@ -144,15 +167,18 @@ describe("PATCH /perps/:symbol", () => {
       ...DEFAULT_PERP_CONFIG,
       tradingEnabled: true,
       samplingEnabled: true,
+      walletId,
     });
   });
 
   it("disabling sampling also persists trading disabled", async () => {
+    const walletId = await createMockWalletId();
     await db.collection("perpConfigs").insertOne({
       symbol: "ETH",
       ...DEFAULT_PERP_CONFIG,
       tradingEnabled: true,
       samplingEnabled: true,
+      walletId,
     });
 
     const res = await request(buildApp())
@@ -166,10 +192,11 @@ describe("PATCH /perps/:symbol", () => {
   });
 
   it("never persists the invalid combination trading=true, sampling=false even when requested directly", async () => {
+    const walletId = await createMockWalletId();
     const res = await request(buildApp())
       .patch("/perps/BTC")
       .set("Cookie", authCookie())
-      .send({ tradingEnabled: true, samplingEnabled: false });
+      .send({ tradingEnabled: true, samplingEnabled: false, walletId });
 
     expect(res.status).toBe(200);
     const invalidCombo =

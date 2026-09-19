@@ -18,26 +18,31 @@ async fn pool() -> PgPool {
         .expect("failed to connect to TimescaleDB")
 }
 
-// mock_wallet is a process-wide singleton row (id = 1), so tests that
-// mutate it must not run concurrently with each other.
+// This test wallet row is shared across every test in this file, so
+// tests that mutate it must not run concurrently with each other.
 static WALLET_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+const TEST_WALLET_ID: &str = "00000000-0000-0000-0000-0000000000d1";
 
-async fn reset_wallet(pool: &PgPool, balance: f64) {
-    sqlx::query("DELETE FROM mock_wallet")
+async fn reset_wallet(pool: &PgPool, balance: f64) -> String {
+    sqlx::query("DELETE FROM wallets WHERE id = $1::uuid")
+        .bind(TEST_WALLET_ID)
         .execute(pool)
         .await
         .unwrap();
     sqlx::query(
-        "INSERT INTO mock_wallet (id, initial_balance_usd, current_balance_usd) VALUES (1, $1, $1)",
+        "INSERT INTO wallets (id, label, kind, initial_balance_usd, current_balance_usd) VALUES ($1::uuid, 'decision-persistence-test-wallet', 'mock', $2, $2)",
     )
+    .bind(TEST_WALLET_ID)
     .bind(balance)
     .execute(pool)
     .await
     .unwrap();
+    TEST_WALLET_ID.to_string()
 }
 
 async fn wallet_balance(pool: &PgPool) -> f64 {
-    let row = sqlx::query("SELECT current_balance_usd FROM mock_wallet WHERE id = 1")
+    let row = sqlx::query("SELECT current_balance_usd FROM wallets WHERE id = $1::uuid")
+        .bind(TEST_WALLET_ID)
         .fetch_one(pool)
         .await
         .unwrap();
@@ -51,14 +56,14 @@ mod execution {
     async fn opening_a_position_persists_it_without_touching_the_wallet() {
         let pool = pool().await;
         let _guard = WALLET_LOCK.lock().await;
-        reset_wallet(&pool, 10_000.0).await;
+        let wallet_id = reset_wallet(&pool, 10_000.0).await;
         sqlx::query("DELETE FROM mock_positions WHERE symbol = $1")
             .bind("TESTOPEN")
             .execute(&pool)
             .await
             .unwrap();
 
-        let adapter = MockExecutionAdapter::new(pool.clone(), 0.0);
+        let adapter = MockExecutionAdapter::new(pool.clone(), 0.0, wallet_id);
         let position = adapter
             .open("TESTOPEN", Direction::Long, 100.0, 5.0, 200.0)
             .await
@@ -77,14 +82,14 @@ mod execution {
     async fn closing_a_winning_long_credits_the_wallet_and_clears_the_position() {
         let pool = pool().await;
         let _guard = WALLET_LOCK.lock().await;
-        reset_wallet(&pool, 10_000.0).await;
+        let wallet_id = reset_wallet(&pool, 10_000.0).await;
         sqlx::query("DELETE FROM mock_positions WHERE symbol = $1")
             .bind("TESTCLOSEWIN")
             .execute(&pool)
             .await
             .unwrap();
 
-        let adapter = MockExecutionAdapter::new(pool.clone(), 0.0);
+        let adapter = MockExecutionAdapter::new(pool.clone(), 0.0, wallet_id);
         adapter
             .open("TESTCLOSEWIN", Direction::Long, 1000.0, 1.0, 100.0)
             .await
@@ -105,14 +110,14 @@ mod execution {
     async fn closing_a_losing_short_debits_the_wallet() {
         let pool = pool().await;
         let _guard = WALLET_LOCK.lock().await;
-        reset_wallet(&pool, 10_000.0).await;
+        let wallet_id = reset_wallet(&pool, 10_000.0).await;
         sqlx::query("DELETE FROM mock_positions WHERE symbol = $1")
             .bind("TESTCLOSELOSE")
             .execute(&pool)
             .await
             .unwrap();
 
-        let adapter = MockExecutionAdapter::new(pool.clone(), 0.0);
+        let adapter = MockExecutionAdapter::new(pool.clone(), 0.0, wallet_id);
         adapter
             .open("TESTCLOSELOSE", Direction::Short, 1000.0, 1.0, 100.0)
             .await
@@ -128,14 +133,14 @@ mod execution {
     async fn closing_a_symbol_with_no_open_position_is_a_no_op() {
         let pool = pool().await;
         let _guard = WALLET_LOCK.lock().await;
-        reset_wallet(&pool, 5_000.0).await;
+        let wallet_id = reset_wallet(&pool, 5_000.0).await;
         sqlx::query("DELETE FROM mock_positions WHERE symbol = $1")
             .bind("TESTNOOP")
             .execute(&pool)
             .await
             .unwrap();
 
-        let adapter = MockExecutionAdapter::new(pool.clone(), 0.0);
+        let adapter = MockExecutionAdapter::new(pool.clone(), 0.0, wallet_id);
         adapter.close("TESTNOOP", 100.0).await.unwrap();
 
         assert_eq!(wallet_balance(&pool).await, 5_000.0);

@@ -26,10 +26,11 @@ const ALLOWED_KEY_AWARE_FILES: &[&str] = &[
     "decision/live_execution.rs",
     // Only re-exports the `PrivateKey` type name; holds no key material.
     "decision/mod.rs",
-    // Only mentions the env var name in a doc comment, to explain why
-    // `UnconfiguredLiveExecutionAdapter` exists; never reads it.
-    "mode.rs",
-    "main.rs",
+    // Builds a `PrivateKey` from each live wallet's decrypted key when
+    // refreshing the wallet registry; holds no HYPERLIQUID_PRIVATE_KEY
+    // reference of its own (wallets are keyed by `WALLET_ENCRYPTION_KEY`
+    // instead).
+    "wallets.rs",
 ];
 
 fn all_source_files() -> Vec<(String, String)> {

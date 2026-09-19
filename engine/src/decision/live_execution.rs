@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::Deserialize;
-use sqlx::PgPool;
 
 use super::execution::{ExecutionAdapter, ExecutionError, OpenPosition};
 use super::hyperliquid_signing::{
@@ -89,8 +88,8 @@ fn parse_position(raw: &RawPosition) -> Result<Option<OpenPosition>, ExecutionEr
 }
 
 /// Places and closes real market orders on Hyperliquid, signed with a
-/// private key supplied only via `HYPERLIQUID_PRIVATE_KEY` (see
-/// `LiveExecutionAdapter::from_env`). The key never leaves this module:
+/// private key decrypted from a `wallets` row by `WalletRegistry`. The
+/// key never leaves this module:
 /// it is held only inside the `PrivateKey` wrapper (which refuses to
 /// `Debug`/`Display` its contents), used solely to produce a
 /// `Signature` for each signed request, and is never placed in any
@@ -115,44 +114,10 @@ impl LiveExecutionAdapter {
         }
     }
 
-    /// Reads the signing key from `HYPERLIQUID_PRIVATE_KEY`. Panics on a
-    /// missing/invalid key at startup rather than silently falling back
-    /// to mock behavior while `mode: "live"` is configured.
-    pub fn from_env() -> Self {
-        let key_hex = std::env::var("HYPERLIQUID_PRIVATE_KEY").unwrap_or_else(|_| {
-            panic!("Missing required environment variable: HYPERLIQUID_PRIVATE_KEY")
-        });
-        let key = PrivateKey::from_hex(&key_hex)
-            .unwrap_or_else(|e| panic!("Invalid HYPERLIQUID_PRIVATE_KEY: {e}"));
-        let is_mainnet = std::env::var("HYPERLIQUID_TESTNET").as_deref() != Ok("true");
-        let base_url = if is_mainnet {
-            "https://api.hyperliquid.xyz".to_string()
-        } else {
-            "https://api.hyperliquid-testnet.xyz".to_string()
-        };
-        Self::new(base_url, key, is_mainnet)
-    }
-
     /// The wallet's public address, safe to expose read-only to
     /// Express for dashboard display.
     pub fn public_address(&self) -> String {
         self.key.public_address()
-    }
-
-    /// Persists the wallet's public address (never the key) so Express
-    /// can display it read-only in live mode. Idempotent: safe to call
-    /// on every startup.
-    pub async fn publish_public_address(&self, pool: &PgPool) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            r#"
-            INSERT INTO engine_wallet (id, public_address) VALUES (1, $1)
-            ON CONFLICT (id) DO UPDATE SET public_address = EXCLUDED.public_address
-            "#,
-        )
-        .bind(self.public_address())
-        .execute(pool)
-        .await?;
-        Ok(())
     }
 
     async fn asset_index(&self, symbol: &str) -> Result<u32, ExecutionError> {
