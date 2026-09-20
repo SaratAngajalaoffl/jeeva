@@ -140,13 +140,12 @@ impl LiveExecutionAdapter {
             .await
             .map_err(|e| ExecutionError(format!("clearinghouseState response invalid: {e}")))?;
 
-        state
-            .withdrawable
-            .parse()
-            .map_err(|_| ExecutionError(format!(
+        state.withdrawable.parse().map_err(|_| {
+            ExecutionError(format!(
                 "could not parse withdrawable balance: {}",
                 state.withdrawable
-            )))
+            ))
+        })
     }
 
     async fn asset_index(&self, symbol: &str) -> Result<u32, ExecutionError> {
@@ -275,14 +274,10 @@ impl ExecutionAdapter for LiveExecutionAdapter {
         // A fixed session size may exceed what the account can actually
         // trade after earlier losses; clamp to the withdrawable balance
         // instead of sending an order the exchange will reject.
-        let available_usd: f64 = self
-            .account_withdrawable_usd()
-            .await?;
-        let position_size_usd = super::execution::clamp_position_size_usd(
-            position_size_usd,
-            available_usd,
-        )
-        .map_err(ExecutionError)?;
+        let available_usd: f64 = self.account_withdrawable_usd().await?;
+        let position_size_usd =
+            super::execution::clamp_position_size_usd(position_size_usd, available_usd)
+                .map_err(ExecutionError)?;
         let notional_usd = position_size_usd * leverage;
         let size = notional_usd / mid_price;
         let is_buy = matches!(direction, Direction::Long);

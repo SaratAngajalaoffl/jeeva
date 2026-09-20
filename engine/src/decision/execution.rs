@@ -109,10 +109,7 @@ pub fn realized_pnl_usd(
 /// The notional we can actually trade given a requested position size
 /// and the wallet's available USD balance: capped at the balance, and
 /// rejected outright when there is nothing left to trade with.
-pub fn clamp_position_size_usd(
-    requested_size_usd: f64,
-    available_usd: f64,
-) -> Result<f64, String> {
+pub fn clamp_position_size_usd(requested_size_usd: f64, available_usd: f64) -> Result<f64, String> {
     if available_usd <= f64::EPSILON {
         return Err(format!(
             "insufficient balance: have ${available_usd:.2}, need at least ${requested_size_usd:.2}"
@@ -188,8 +185,8 @@ impl ExecutionAdapter for MockExecutionAdapter {
 
         // A fixed session size may exceed what the wallet has left after
         // earlier losses; trade whatever is affordable instead.
-        let position_size_usd = clamp_position_size_usd(position_size_usd, available_usd)
-            .map_err(ExecutionError)?;
+        let position_size_usd =
+            clamp_position_size_usd(position_size_usd, available_usd).map_err(ExecutionError)?;
         let notional_usd = position_size_usd * leverage;
         let entry_price = fill_price(mid_price, direction, true, self.slippage_bps);
 

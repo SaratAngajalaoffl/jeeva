@@ -32,6 +32,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await engineConfig().deleteMany({});
   await perpConfigs().deleteMany({});
+  await pgPool.query("DELETE FROM trading_sessions");
   await pgPool.query("DELETE FROM wallets");
 });
 
@@ -116,22 +117,16 @@ describe("PUT /engine-mode", () => {
     expect(stored?.mode).toBe("mock");
   });
 
-  it("disables trading on any perp using a live wallet when switching to mock", async () => {
+  it("hard-closes any trading session using a live wallet when switching to mock", async () => {
     const liveWallet = await pgPool.query(
       "INSERT INTO wallets (label, kind, public_address) VALUES ('Live', 'live', '0xabc') RETURNING id",
     );
     const walletId = liveWallet.rows[0].id;
-    await perpConfigs().insertOne({
-      symbol: "BTC",
-      tradingEnabled: true,
-      samplingEnabled: true,
-      decisionFrequencySeconds: 300,
-      samplingFrequencySeconds: 60,
-      leverage: 1,
-      positionSizeUsd: 100,
-      decisionMaker: "random",
-      walletId,
-    });
+    const session = await pgPool.query(
+      "INSERT INTO trading_sessions (symbol, wallet_id) VALUES ($1, $2) RETURNING id",
+      ["BTC", walletId],
+    );
+    const sessionId = session.rows[0].id;
     await engineConfig().insertOne({ _id: "singleton", mode: "live" });
 
     const res = await request(buildApp())
@@ -140,8 +135,11 @@ describe("PUT /engine-mode", () => {
       .send({ mode: "mock" });
 
     expect(res.status).toBe(200);
-    const perp = await perpConfigs().findOne({ symbol: "BTC" });
-    expect(perp?.tradingEnabled).toBe(false);
+    const { rows } = await pgPool.query(
+      "SELECT status FROM trading_sessions WHERE id = $1",
+      [sessionId],
+    );
+    expect(rows[0].status).toBe("closed");
   });
 });
 

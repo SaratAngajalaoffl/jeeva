@@ -11,6 +11,7 @@ import type {
   Trade,
   TradingSession,
 } from "@/lib/api";
+import type { ClosedTrade } from "@/lib/api";
 
 const fetchMarketDataMock = vi.fn<[string], Promise<MarketDataHistory>>();
 const fetchPerpsMock = vi.fn<[], Promise<Perp[]>>();
@@ -25,6 +26,10 @@ const fetchTradingSessionsMock = vi.fn<[string], Promise<TradingSession[]>>();
 const fetchOrderBookMock = vi.fn<[string], Promise<OrderBook>>();
 const fetchRecentTradesMock = vi.fn<[string], Promise<Trade[]>>();
 const updatePerpConfigMock = vi.fn<[string, Partial<Perp>], Promise<Perp>>();
+const fetchTradeHistoryMock = vi.fn<
+  [{ symbol?: string; sessionId?: string }?],
+  Promise<ClosedTrade[]>
+>();
 
 vi.mock("@/lib/api", () => ({
   fetchMarketData: (...args: [string]) => fetchMarketDataMock(...args),
@@ -37,6 +42,8 @@ vi.mock("@/lib/api", () => ({
   fetchTradingSessions: (...args: [string]) => fetchTradingSessionsMock(...args),
   fetchOrderBook: (...args: [string]) => fetchOrderBookMock(...args),
   fetchRecentTrades: (...args: [string]) => fetchRecentTradesMock(...args),
+  fetchTradeHistory: (...args: [{ symbol?: string; sessionId?: string }?]) =>
+    fetchTradeHistoryMock(...args),
   fetchSelectableWallets: () => Promise.resolve([]),
   updatePerpConfig: (...args: [string, Partial<Perp>]) =>
     updatePerpConfigMock(...args),
@@ -63,6 +70,7 @@ describe("MarketDataPage", () => {
     fetchTradingSessionsMock.mockReset().mockResolvedValue([]);
     fetchOrderBookMock.mockReset().mockResolvedValue({ bids: [], asks: [] });
     fetchRecentTradesMock.mockReset().mockResolvedValue([]);
+    fetchTradeHistoryMock.mockReset().mockResolvedValue([]);
     updatePerpConfigMock.mockReset();
   });
 

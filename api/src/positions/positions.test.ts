@@ -17,6 +17,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await pgPool.query("DELETE FROM mock_positions");
+  await pgPool.query("DELETE FROM trading_sessions");
 });
 
 function authCookie(): string {
@@ -43,13 +44,20 @@ describe("GET /positions", () => {
   });
 
   it("returns open positions with their direction, entry price, and notional", async () => {
+    const { rows: sessions } = await pgPool.query(
+      "INSERT INTO trading_sessions (symbol) VALUES ($1), ($2) RETURNING id, symbol",
+      ["BTC", "ETH"],
+    );
+    const btcSessionId = sessions.find((s) => s.symbol === "BTC")!.id;
+    const ethSessionId = sessions.find((s) => s.symbol === "ETH")!.id;
+
     await pgPool.query(
-      "INSERT INTO mock_positions (symbol, direction, entry_price, notional_usd) VALUES ($1, $2, $3, $4)",
-      ["BTC", "long", 65000, 1000],
+      "INSERT INTO mock_positions (session_id, symbol, direction, entry_price, notional_usd) VALUES ($1, $2, $3, $4, $5)",
+      [btcSessionId, "BTC", "long", 65000, 1000],
     );
     await pgPool.query(
-      "INSERT INTO mock_positions (symbol, direction, entry_price, notional_usd) VALUES ($1, $2, $3, $4)",
-      ["ETH", "short", 3000, 500],
+      "INSERT INTO mock_positions (session_id, symbol, direction, entry_price, notional_usd) VALUES ($1, $2, $3, $4, $5)",
+      [ethSessionId, "ETH", "short", 3000, 500],
     );
 
     const res = await request(buildApp())
