@@ -32,6 +32,12 @@ vi.mock("@/lib/api", () => ({
   fetchFundingPayments: (...args: []) => fetchFundingPaymentsMock(...args),
   fetchEngineMode: (...args: []) => fetchEngineModeMock(...args),
   setEngineMode: (...args: [EngineMode]) => setEngineModeMock(...args),
+  fetchDecisionMakerStatuses: () => new Promise(() => {}),
+}));
+
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/dashboard/wallet",
+  useRouter: () => ({ push: vi.fn() }),
 }));
 
 import WalletPage from "./page";
@@ -48,12 +54,13 @@ describe("WalletPage", () => {
     setEngineModeMock.mockReset();
   });
 
-  it("shows an empty state and the creation form when no wallets exist", async () => {
+  it("shows an empty state and can open the creation form when no wallets exist", async () => {
     fetchWalletsMock.mockResolvedValue([]);
 
     render(<WalletPage />);
 
-    await screen.findByText("No wallets yet — create one below.");
+    await screen.findByText(/No wallets yet\./);
+    fireEvent.click(screen.getAllByText("Add wallet")[0]);
     expect(screen.getByText("Create wallet")).toBeInTheDocument();
   });
 
@@ -82,7 +89,7 @@ describe("WalletPage", () => {
     render(<WalletPage />);
 
     await screen.findByText("Mock main");
-    expect(screen.getByText("$10,500")).toBeInTheDocument();
+    expect(screen.getAllByText("$10,500").length).toBeGreaterThan(0);
     expect(screen.getByText("0xabc123")).toBeInTheDocument();
   });
 
@@ -102,7 +109,8 @@ describe("WalletPage", () => {
     });
 
     render(<WalletPage />);
-    await screen.findByText("No wallets yet — create one below.");
+    await screen.findByText(/No wallets yet\./);
+    fireEvent.click(screen.getAllByText("Add wallet")[0]);
 
     fireEvent.change(screen.getByLabelText("Label"), {
       target: { value: "New mock" },
@@ -128,7 +136,8 @@ describe("WalletPage", () => {
     });
 
     render(<WalletPage />);
-    await screen.findByText("No wallets yet — create one below.");
+    await screen.findByText(/No wallets yet\./);
+    fireEvent.click(screen.getAllByText("Add wallet")[0]);
 
     fireEvent.change(screen.getByLabelText("Label"), {
       target: { value: "Dup" },

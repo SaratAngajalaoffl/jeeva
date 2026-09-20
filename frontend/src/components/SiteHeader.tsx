@@ -1,14 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { LayoutDashboard, LineChart, Wallet, ListOrdered, LogOut } from "lucide-react";
+import { logout } from "@/lib/api";
+import { EngineModeToggle } from "./EngineModeToggle";
 import Logo from "./Logo";
 
 const NAV_LINKS = [
-  { href: "/dashboard", label: "Overview" },
-  { href: "/dashboard/markets", label: "Markets" },
-  { href: "/dashboard/wallet", label: "Wallet" },
-  { href: "/dashboard/decisions", label: "Positions" },
+  { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
+  { href: "/dashboard/markets", label: "Markets", icon: LineChart },
+  { href: "/dashboard/wallet", label: "Wallet", icon: Wallet },
+  { href: "/dashboard/decisions", label: "Positions", icon: ListOrdered },
 ];
 
 export function SiteHeader({
@@ -19,6 +22,16 @@ export function SiteHeader({
   children?: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
+
+  async function handleLogout() {
+    if (onLogout) {
+      onLogout();
+      return;
+    }
+    await logout();
+    router.push("/login");
+  }
 
   return (
     <div className="flex min-h-screen">
@@ -29,29 +42,33 @@ export function SiteHeader({
         <nav className="mt-8 flex flex-col gap-1 text-sm">
           {NAV_LINKS.map((link) => {
             const active = pathname === link.href;
+            const Icon = link.icon;
             return (
               <Link
                 key={link.href}
                 href={link.href}
-                className={`rounded-md px-3 py-1.5 transition-colors ${
+                className={`flex items-center gap-2 rounded-md px-3 py-1.5 transition-colors ${
                   active
                     ? "bg-surface-0 text-ember"
                     : "text-subtext-1 hover:text-text"
                 }`}
               >
+                <Icon size={16} />
                 {link.label}
               </Link>
             );
           })}
         </nav>
-        {onLogout && (
-          <button
-            onClick={onLogout}
-            className="mt-auto rounded-md border border-surface-1 px-3 py-1.5 text-sm text-subtext-1 transition-colors hover:border-ember/60 hover:text-ember"
-          >
-            Log out
-          </button>
-        )}
+        <div className="mt-auto flex flex-col gap-3">
+          <EngineModeToggle />
+        </div>
+        <button
+          onClick={handleLogout}
+          className="mt-2 flex items-center justify-center gap-2 rounded-md border border-surface-1 px-3 py-1.5 text-sm text-subtext-1 transition-colors hover:border-ember/60 hover:text-ember"
+        >
+          <LogOut size={16} />
+          Log out
+        </button>
       </aside>
       <div className="min-w-0 flex-1">{children}</div>
     </div>

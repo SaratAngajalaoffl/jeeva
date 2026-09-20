@@ -8,6 +8,7 @@ import {
   createHyperliquidClient,
   type HyperliquidClient,
 } from "./hyperliquid/client.js";
+import { createDecisionMakersRouter } from "./decisionMakers/routes.js";
 import { createDecisionsRouter } from "./decisions/routes.js";
 import { createEngineModeRouter } from "./engineMode/routes.js";
 import { createFundingRouter } from "./funding/routes.js";
@@ -39,6 +40,7 @@ export function createApp(deps: AppDeps = {}): Express {
   });
 
   app.use("/auth", authRouter);
+  app.use("/decision-makers", createDecisionMakersRouter());
 
   if (deps.db && deps.pgPool) {
     const hyperliquidClient = deps.hyperliquidClient ?? createHyperliquidClient();

@@ -28,7 +28,7 @@ import {
   type Wallet,
 } from "@/lib/api";
 import { SiteHeader } from "@/components/SiteHeader";
-import { Button, Card, IconButton, Input, Label, Select } from "@/components/ui";
+import { Button, Card, IconButton, Input, Label, Select, Skeleton } from "@/components/ui";
 
 const TH =
   "border-b border-surface-1 py-2 pr-4 text-left text-xs font-medium uppercase tracking-wide text-subtext-0";
@@ -316,7 +316,11 @@ export default function MarketDataPage() {
 
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="flex flex-col gap-4 lg:col-span-2">
-            {loading && <p className="text-sm text-subtext-1">Loading...</p>}
+            {loading && (
+              <Card className="p-5">
+                <Skeleton className="h-80 w-full" />
+              </Card>
+            )}
             {samples && (
               <PriceVolumeChart
                 title="Market data"

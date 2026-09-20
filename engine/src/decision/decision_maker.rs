@@ -18,7 +18,7 @@ impl fmt::Display for DecisionError {
 impl std::error::Error for DecisionError {}
 
 /// Obtains a Target Direction for a PERP. Three implementations exist:
-/// `FakeDecisionMaker` (synthetic, no network — the engine's default),
+/// `RandomDecisionMaker` (synthetic, no network — the engine's default),
 /// `TypeSafeJevDecisionMaker` (calls TypeSafe's real `systemOne` API
 /// directly), and `OpenRouterJevDecisionMaker` (calls the same Jev
 /// model via OpenRouter). Chosen per PERP via `PerpConfig::decision_maker`,
@@ -45,13 +45,13 @@ pub(crate) fn parse_direction(choice: &str) -> Result<TargetDirection, DecisionE
 
 /// Which `DecisionMaker` implementation a PERP is configured to use.
 /// Mirrors the `perpConfigs.decisionMaker` field written by the
-/// Express API. Defaults to `Fake` so a fresh PERP never depends on
+/// Express API. Defaults to `Random` so a fresh PERP never depends on
 /// external credentials before someone explicitly picks one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DecisionMakerKind {
     #[default]
-    Fake,
+    Random,
     TypeSafe,
     OpenRouter,
 }
@@ -89,12 +89,12 @@ fn decision_for(direction: TargetDirection) -> JevDecision {
 /// which is enough to exercise the whole position state machine during
 /// ad hoc manual exploration; tests can instead script an exact
 /// sequence of directions via `with_sequence`.
-pub struct FakeDecisionMaker {
+pub struct RandomDecisionMaker {
     sequence: Vec<TargetDirection>,
     calls: AtomicUsize,
 }
 
-impl FakeDecisionMaker {
+impl RandomDecisionMaker {
     pub fn cycling() -> Self {
         Self::with_sequence(vec![
             TargetDirection::Flat,
@@ -106,7 +106,7 @@ impl FakeDecisionMaker {
     pub fn with_sequence(sequence: Vec<TargetDirection>) -> Self {
         assert!(
             !sequence.is_empty(),
-            "FakeDecisionMaker sequence must not be empty"
+            "RandomDecisionMaker sequence must not be empty"
         );
         Self {
             sequence,
@@ -116,7 +116,7 @@ impl FakeDecisionMaker {
 }
 
 #[async_trait]
-impl DecisionMaker for FakeDecisionMaker {
+impl DecisionMaker for RandomDecisionMaker {
     async fn decide(&self, _symbol: &str, _state: &str) -> Result<JevDecision, DecisionError> {
         let call = self.calls.fetch_add(1, Ordering::SeqCst);
         let direction = self.sequence[call % self.sequence.len()];
@@ -150,7 +150,7 @@ mod tests {
 
     #[tokio::test]
     async fn cycling_adapter_walks_flat_long_short_and_wraps() {
-        let dm = FakeDecisionMaker::cycling();
+        let dm = RandomDecisionMaker::cycling();
         let mut directions = Vec::new();
         for _ in 0..4 {
             directions.push(dm.decide("BTC", "state").await.unwrap().direction);
@@ -169,7 +169,7 @@ mod tests {
     #[tokio::test]
     async fn scripted_sequence_is_followed_exactly_and_then_wraps() {
         let dm =
-            FakeDecisionMaker::with_sequence(vec![TargetDirection::Long, TargetDirection::Long]);
+            RandomDecisionMaker::with_sequence(vec![TargetDirection::Long, TargetDirection::Long]);
         assert_eq!(
             dm.decide("BTC", "state").await.unwrap().direction,
             TargetDirection::Long

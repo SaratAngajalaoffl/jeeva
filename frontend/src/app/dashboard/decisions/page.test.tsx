@@ -14,6 +14,15 @@ vi.mock("@/lib/api", () => ({
   fetchPositions: (...args: []) => fetchPositionsMock(...args),
   fetchDecisions: (...args: [string | undefined]) =>
     fetchDecisionsMock(...args),
+  fetchPerpStats: () => Promise.resolve([]),
+  fetchPerpHealth: () => Promise.resolve([]),
+  fetchEngineMode: () => new Promise(() => {}),
+  fetchDecisionMakerStatuses: () => new Promise(() => {}),
+}));
+
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/dashboard/decisions",
+  useRouter: () => ({ push: vi.fn() }),
 }));
 
 import DecisionsPage from "./page";
@@ -26,7 +35,7 @@ const btc: Perp = {
   samplingFrequencySeconds: 30,
   leverage: 2,
   positionSizeUsd: 100,
-  decisionMaker: "fake",
+  decisionMaker: "random",
   walletId: null,
 };
 
@@ -63,7 +72,7 @@ describe("DecisionsPage", () => {
 
     await screen.findByText("long");
     expect(screen.getByText("65,000")).toBeInTheDocument();
-    expect(screen.getByText("200")).toBeInTheDocument();
+    expect(screen.getAllByText("$200").length).toBeGreaterThan(0);
   });
 
   it("renders decision history rows", async () => {

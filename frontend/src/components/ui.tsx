@@ -90,6 +90,25 @@ export function StatTile({
   );
 }
 
+export function Skeleton({ className = "" }: { className?: string }) {
+  return (
+    <div
+      className={`relative overflow-hidden rounded-md bg-surface-1 ${className}`}
+    >
+      <div className="absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-surface-2/60 to-transparent" />
+    </div>
+  );
+}
+
+export function StatTileSkeleton() {
+  return (
+    <Card className="flex flex-col gap-2 p-5">
+      <Skeleton className="h-3 w-20" />
+      <Skeleton className="h-7 w-16" />
+    </Card>
+  );
+}
+
 export function PageHeading({
   title,
   action,

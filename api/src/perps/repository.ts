@@ -11,11 +11,10 @@ export interface PerpSizing {
   positionSizeUsd: number;
 }
 
-// The engine's DecisionMaker implementation for this PERP: `fake`
+// The engine's DecisionMaker implementation for this PERP: `random`
 // (synthetic, no network), `typesafe` (calls TypeSafe's Jev API
-// directly), or `openrouter` (calls Jev via OpenRouter — not yet
-// implemented on the engine side, see GH issue).
-export type DecisionMaker = "fake" | "typesafe" | "openrouter";
+// directly), or `openrouter` (calls Jev via OpenRouter).
+export type DecisionMaker = "random" | "typesafe" | "openrouter";
 
 export interface PerpDecisionMaker {
   decisionMaker: DecisionMaker;
@@ -45,7 +44,7 @@ export const DEFAULT_PERP_CONFIG: PerpToggles &
   samplingFrequencySeconds: 60,
   leverage: 1,
   positionSizeUsd: 100,
-  decisionMaker: "fake",
+  decisionMaker: "random",
   walletId: null,
 };
 

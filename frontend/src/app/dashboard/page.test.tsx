@@ -33,7 +33,9 @@ describe("DashboardPage", () => {
 
     render(<DashboardPage />);
 
-    await waitFor(() => screen.getByText("Dashboard"));
+    await waitFor(() =>
+      screen.getByRole("heading", { name: "Overview" }),
+    );
     expect(replaceMock).not.toHaveBeenCalled();
   });
 });

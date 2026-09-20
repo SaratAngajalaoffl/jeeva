@@ -61,13 +61,21 @@ services:
       context: .
       dockerfile: api/Dockerfile.dev
     environment:
-      PORT: 4000
-      MONGO_URL: mongodb://mongo:27017/jeeva
-      DATABASE_URL: postgres://jeeva:jeeva@timescaledb:5432/jeeva
-      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
-      AUTH_USERNAME: ${AUTH_USERNAME:-admin}
-      AUTH_PASSWORD: ${AUTH_PASSWORD:-changeme}
-      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me}
+      - PORT=4000
+      - MONGO_URL=mongodb://mongo:27017/jeeva
+      - DATABASE_URL=postgres://jeeva:jeeva@timescaledb:5432/jeeva
+      - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:3000}
+      - AUTH_USERNAME=${AUTH_USERNAME:-admin}
+      - AUTH_PASSWORD=${AUTH_PASSWORD:-changeme}
+      - JWT_SECRET=${JWT_SECRET:-dev-only-secret-change-me}
+      # Bare names (no value) pass these through from .env only when set
+      # there, so the decision-maker status endpoint can see whether
+      # they're configured without the engine's own confusion between
+      # "unset" and "empty string".
+      - TYPESAFE_API_KEY
+      - TYPESAFE_BASE_URL
+      - OPENROUTER_API_KEY
+      - OPENROUTER_BASE_URL
     ports:
       - "4000:4000"
     volumes:

@@ -8,19 +8,19 @@ use super::decision_maker::{DecisionMaker, DecisionMakerKind};
 /// cycle, with no restart, the same way a leverage or position-size
 /// change does today.
 pub struct DecisionMakerRegistry {
-    fake: Arc<dyn DecisionMaker>,
+    random: Arc<dyn DecisionMaker>,
     typesafe: Arc<dyn DecisionMaker>,
     openrouter: Arc<dyn DecisionMaker>,
 }
 
 impl DecisionMakerRegistry {
     pub fn new(
-        fake: Arc<dyn DecisionMaker>,
+        random: Arc<dyn DecisionMaker>,
         typesafe: Arc<dyn DecisionMaker>,
         openrouter: Arc<dyn DecisionMaker>,
     ) -> Self {
         Self {
-            fake,
+            random,
             typesafe,
             openrouter,
         }
@@ -28,7 +28,7 @@ impl DecisionMakerRegistry {
 
     pub fn get(&self, kind: DecisionMakerKind) -> &Arc<dyn DecisionMaker> {
         match kind {
-            DecisionMakerKind::Fake => &self.fake,
+            DecisionMakerKind::Random => &self.random,
             DecisionMakerKind::TypeSafe => &self.typesafe,
             DecisionMakerKind::OpenRouter => &self.openrouter,
         }
@@ -62,7 +62,7 @@ mod tests {
 
     fn registry() -> DecisionMakerRegistry {
         DecisionMakerRegistry::new(
-            Arc::new(NamedDecisionMaker("fake")),
+            Arc::new(NamedDecisionMaker("random")),
             Arc::new(NamedDecisionMaker("typesafe")),
             Arc::new(NamedDecisionMaker("openrouter")),
         )
@@ -72,11 +72,11 @@ mod tests {
     fn get_returns_the_matching_kind() {
         let registry = registry();
         assert!(Arc::ptr_eq(
-            registry.get(DecisionMakerKind::Fake),
-            registry.get(DecisionMakerKind::Fake)
+            registry.get(DecisionMakerKind::Random),
+            registry.get(DecisionMakerKind::Random)
         ));
         assert!(!Arc::ptr_eq(
-            registry.get(DecisionMakerKind::Fake),
+            registry.get(DecisionMakerKind::Random),
             registry.get(DecisionMakerKind::TypeSafe)
         ));
     }

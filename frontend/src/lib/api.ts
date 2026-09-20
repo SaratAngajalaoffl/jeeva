@@ -31,11 +31,10 @@ export async function checkSession(): Promise<boolean> {
   return res.ok;
 }
 
-// The engine's DecisionMaker implementation for this PERP: `fake`
+// The engine's DecisionMaker implementation for this PERP: `random`
 // (synthetic, no network), `typesafe` (calls TypeSafe's Jev API
-// directly), or `openrouter` (calls Jev via OpenRouter — not yet
-// implemented on the engine side).
-export type DecisionMaker = "fake" | "typesafe" | "openrouter";
+// directly), or `openrouter` (calls Jev via OpenRouter).
+export type DecisionMaker = "random" | "typesafe" | "openrouter";
 
 export interface Perp {
   symbol: string;
@@ -336,4 +335,24 @@ export async function setEngineMode(
   }
   const body = (await res.json()) as { mode: EngineMode };
   return { ok: true, mode: body.mode };
+}
+
+export interface DecisionMakerStatus {
+  id: "random" | "typesafe" | "openrouter";
+  label: string;
+  configured: boolean;
+  reachable: boolean;
+}
+
+export async function fetchDecisionMakerStatuses(): Promise<
+  DecisionMakerStatus[]
+> {
+  const res = await fetch(`${API_URL}/decision-makers/status`, {
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error("Failed to load decision maker status");
+  }
+  const body = (await res.json()) as { statuses: DecisionMakerStatus[] };
+  return body.statuses;
 }

@@ -25,6 +25,7 @@ import {
   Input,
   Label,
   Select,
+  Skeleton,
   StatTile,
 } from "@/components/ui";
 import Modal from "@/components/Modal";
@@ -58,7 +59,7 @@ const PAGE_SIZE = 10;
 const AUTO_FLATTEN_THRESHOLD = 5;
 
 const DECISION_MAKER_LABELS: Record<DecisionMaker, string> = {
-  fake: "Fake",
+  random: "Random",
   typesafe: "TypeSafe Jev",
   openrouter: "OpenRouter Jev",
 };
@@ -311,7 +312,22 @@ export default function MarketsPage() {
         )}
 
         {!perps ? (
-          <p className="text-sm text-subtext-1">Loading markets...</p>
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <Skeleton className="h-6 w-32" />
+              <div className="flex flex-wrap items-center gap-3">
+                <Skeleton className="h-9 w-48" />
+                <Skeleton className="h-9 w-44" />
+              </div>
+            </div>
+            <Card className="overflow-hidden p-0">
+              <div className="flex flex-col gap-px">
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <Skeleton key={i} className="h-11 w-full rounded-none" />
+                ))}
+              </div>
+            </Card>
+          </>
         ) : (
           <>
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -734,7 +750,7 @@ function TradingForm({
     String(perp.positionSizeUsd),
   );
   const [decisionMaker, setDecisionMaker] = useState<DecisionMaker>(
-    perp.decisionMaker ?? "fake",
+    perp.decisionMaker ?? "random",
   );
   const [walletId, setWalletId] = useState(perp.walletId ?? "");
   const [wallets, setWallets] = useState<Wallet[] | null>(null);
@@ -804,11 +820,9 @@ function TradingForm({
           value={decisionMaker}
           onChange={(e) => setDecisionMaker(e.target.value as DecisionMaker)}
         >
-          <option value="fake">Fake (synthetic decisions)</option>
+          <option value="random">Random (synthetic decisions)</option>
           <option value="typesafe">TypeSafe Jev</option>
-          <option value="openrouter">
-            OpenRouter Jev (not yet implemented)
-          </option>
+          <option value="openrouter">OpenRouter Jev</option>
         </Select>
       </label>
       <label className="flex flex-col gap-1">

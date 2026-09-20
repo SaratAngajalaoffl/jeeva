@@ -23,6 +23,13 @@ vi.mock("@/lib/api", () => ({
     fetchSelectableWalletsMock(...args),
   updatePerpConfig: (...args: [string, Partial<Perp>]) =>
     updatePerpConfigMock(...args),
+  fetchEngineMode: () => new Promise(() => {}),
+  fetchDecisionMakerStatuses: () => new Promise(() => {}),
+}));
+
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/dashboard/markets",
+  useRouter: () => ({ push: vi.fn() }),
 }));
 
 import MarketsPage from "./page";
@@ -45,7 +52,7 @@ const btc: Perp = {
   samplingFrequencySeconds: 60,
   leverage: 1,
   positionSizeUsd: 100,
-  decisionMaker: "fake",
+  decisionMaker: "random",
   walletId: null,
 };
 
@@ -150,7 +157,7 @@ describe("MarketsPage", () => {
         decisionFrequencySeconds: 30,
         leverage: 5,
         positionSizeUsd: 250,
-        decisionMaker: "fake",
+        decisionMaker: "random",
         walletId: "wallet-1",
       }),
     );

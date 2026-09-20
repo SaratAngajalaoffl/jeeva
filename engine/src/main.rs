@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use engine::config::{run_with_reconnect, ConfigStore};
 use engine::decision::{
-    self, DecisionMaker, DecisionMakerRegistry, FakeDecisionMaker, OpenRouterJevDecisionMaker,
+    self, DecisionMaker, DecisionMakerRegistry, RandomDecisionMaker, OpenRouterJevDecisionMaker,
     PerpHealthTracker, PostgresDecisionLogWriter, PostgresMarketDataHistoryReader,
     TypeSafeJevDecisionMaker, UnconfiguredDecisionMaker,
 };
@@ -35,7 +35,7 @@ fn require_env(name: &str) -> String {
 /// to `typesafe`. `openrouter` mirrors that wiring with
 /// `OPENROUTER_API_KEY`.
 fn decision_maker_registry() -> DecisionMakerRegistry {
-    let fake: Arc<dyn DecisionMaker> = Arc::new(FakeDecisionMaker::cycling());
+    let random: Arc<dyn DecisionMaker> = Arc::new(RandomDecisionMaker::cycling());
 
     let typesafe: Arc<dyn DecisionMaker> = if std::env::var("TYPESAFE_API_KEY").is_ok() {
         Arc::new(TypeSafeJevDecisionMaker::from_env())
@@ -55,7 +55,7 @@ fn decision_maker_registry() -> DecisionMakerRegistry {
         Arc::new(UnconfiguredDecisionMaker { name: "openrouter" })
     };
 
-    DecisionMakerRegistry::new(fake, typesafe, openrouter)
+    DecisionMakerRegistry::new(random, typesafe, openrouter)
 }
 
 async fn connect_postgres_with_retry(database_url: &str) -> PgPool {

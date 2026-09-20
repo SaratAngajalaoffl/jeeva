@@ -2,10 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { AlertTriangle, CheckCircle2 } from "lucide-react";
 import {
   checkSession,
   fetchDecisions,
   fetchFundingPayments,
+  fetchPerpHealth,
   fetchPerps,
   fetchPositions,
   fetchWallets,
@@ -13,11 +16,13 @@ import {
   type DecisionLogEntry,
   type FundingPayment,
   type Perp,
+  type PerpHealth,
   type Position,
   type Wallet,
 } from "@/lib/api";
 import { SiteHeader } from "@/components/SiteHeader";
-import { Card, StatTile } from "@/components/ui";
+import { DecisionMakerStatusList } from "@/components/DecisionMakerStatusList";
+import { Card, StatTile, StatTileSkeleton, Skeleton } from "@/components/ui";
 import BarChart from "@/components/BarChart";
 import DonutChart from "@/components/DonutChart";
 import LineChart from "@/components/LineChart";
@@ -35,6 +40,7 @@ export default function DashboardPage() {
   const [fundingPayments, setFundingPayments] = useState<
     FundingPayment[] | null
   >(null);
+  const [perpHealth, setPerpHealth] = useState<PerpHealth[] | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -62,6 +68,9 @@ export default function DashboardPage() {
     fetchFundingPayments()
       .then(setFundingPayments)
       .catch(() => setFundingPayments([]));
+    fetchPerpHealth()
+      .then(setPerpHealth)
+      .catch(() => setPerpHealth([]));
   }, [checking]);
 
   if (checking) {
@@ -73,7 +82,12 @@ export default function DashboardPage() {
     router.push("/login");
   }
 
-  const loading = !perps || !positions || !decisions || wallets === undefined;
+  const loading =
+    !perps ||
+    !positions ||
+    !decisions ||
+    wallets === undefined ||
+    !perpHealth;
 
   const orders = decisions?.filter(
     (d) => d.positionAction && ORDER_ACTIONS.has(d.positionAction),
@@ -130,15 +144,47 @@ export default function DashboardPage() {
   );
   const pnlTone = pnl > 0 ? "positive" : pnl < 0 ? "negative" : "default";
 
+  const unhealthyMarkets = (perpHealth ?? []).filter(
+    (h) => h.consecutiveFailures > 0,
+  );
+
   return (
     <SiteHeader onLogout={handleLogout}>
       <main className="flex flex-col gap-6 px-6 py-8 sm:px-8 lg:px-12">
         <h1 className="text-xl font-semibold tracking-tight text-text">
-          Dashboard
+          Overview
         </h1>
 
         {loading ? (
-          <p className="text-sm text-subtext-1">Loading overview...</p>
+          <>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <StatTileSkeleton key={i} />
+              ))}
+            </div>
+            <div className="grid gap-4 lg:grid-cols-3">
+              <Card className="lg:col-span-2">
+                <Skeleton className="h-64 w-full" />
+              </Card>
+              <Card>
+                <Skeleton className="h-64 w-full" />
+              </Card>
+            </div>
+            <Card>
+              <Skeleton className="h-48 w-full" />
+            </Card>
+            <div className="grid gap-4 lg:grid-cols-3">
+              <Card>
+                <Skeleton className="h-48 w-full" />
+              </Card>
+              <Card>
+                <Skeleton className="h-48 w-full" />
+              </Card>
+              <Card>
+                <Skeleton className="h-48 w-full" />
+              </Card>
+            </div>
+          </>
         ) : (
           <>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
@@ -189,12 +235,21 @@ export default function DashboardPage() {
               />
             </div>
 
-            <div className="grid gap-4 lg:grid-cols-2">
-              <BarChart title="Orders by market" bars={orderBars} />
+            <BarChart title="Orders by market" bars={orderBars} />
+
+            <div className="grid gap-4 lg:grid-cols-3">
               <Card className="flex flex-col gap-3 p-5">
-                <h3 className="text-sm font-medium text-text">
-                  Open positions
-                </h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-medium text-text">
+                    Open positions
+                  </h3>
+                  <Link
+                    href="/dashboard/decisions"
+                    className="text-xs text-ember hover:underline"
+                  >
+                    View all
+                  </Link>
+                </div>
                 {(positions ?? []).length === 0 ? (
                   <p className="text-sm text-subtext-1">No open positions.</p>
                 ) : (
@@ -208,11 +263,11 @@ export default function DashboardPage() {
                           {p.symbol}
                         </span>
                         <span
-                          className={
+                          className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide ${
                             p.direction === "long"
-                              ? "text-emerald-400"
-                              : "text-destructive"
-                          }
+                              ? "bg-emerald-400/15 text-emerald-400"
+                              : "bg-destructive/15 text-destructive"
+                          }`}
                         >
                           {p.direction}
                         </span>
@@ -224,6 +279,56 @@ export default function DashboardPage() {
                   </ul>
                 )}
               </Card>
+
+              <Card className="flex flex-col gap-3 p-5">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-medium text-text">
+                    Engine health
+                  </h3>
+                  <Link
+                    href="/dashboard/markets"
+                    className="text-xs text-ember hover:underline"
+                  >
+                    View markets
+                  </Link>
+                </div>
+                {unhealthyMarkets.length === 0 ? (
+                  <p className="flex items-center gap-2 text-sm text-emerald-400">
+                    <CheckCircle2 size={16} />
+                    All markets healthy
+                  </p>
+                ) : (
+                  <ul className="flex flex-col gap-2 text-sm">
+                    {unhealthyMarkets.map((h) => (
+                      <li
+                        key={h.symbol}
+                        className="flex items-start gap-2 border-b border-surface-1 pb-2 last:border-0 last:pb-0"
+                      >
+                        <AlertTriangle
+                          size={16}
+                          className="mt-0.5 shrink-0 text-destructive"
+                        />
+                        <span className="flex flex-col">
+                          <span className="font-medium text-text">
+                            {h.symbol}
+                            <span className="ml-2 text-xs text-subtext-0">
+                              {h.consecutiveFailures} consecutive failure
+                              {h.consecutiveFailures === 1 ? "" : "s"}
+                            </span>
+                          </span>
+                          {h.lastFailureReason && (
+                            <span className="text-xs text-subtext-1">
+                              {h.lastFailureReason}
+                            </span>
+                          )}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Card>
+
+              <DecisionMakerStatusList />
             </div>
           </>
         )}

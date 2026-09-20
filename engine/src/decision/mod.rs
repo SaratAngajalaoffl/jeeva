@@ -12,7 +12,7 @@ mod supervisor;
 mod typesafe_jev_decision_maker;
 
 pub use decision_maker::{
-    DecisionError, DecisionMaker, DecisionMakerKind, FakeDecisionMaker, UnconfiguredDecisionMaker,
+    DecisionError, DecisionMaker, DecisionMakerKind, RandomDecisionMaker, UnconfiguredDecisionMaker,
 };
 pub use decision_maker_registry::DecisionMakerRegistry;
 pub use execution::{

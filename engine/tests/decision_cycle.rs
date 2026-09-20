@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use engine::config::PerpConfig;
 use engine::decision::{
     run_decision_cycle, DecisionLogEntry, DecisionLogWriter, Direction, ExecutionAdapter,
-    ExecutionError, FakeDecisionMaker, HistoryError, InMemoryFailureTracker,
+    ExecutionError, RandomDecisionMaker, HistoryError, InMemoryFailureTracker,
     MarketDataHistoryReader, OpenPosition, TargetDirection,
 };
 use engine::funding::{FundingHistoryError, FundingHistoryReader, FundingRecord};
@@ -158,7 +158,7 @@ async fn opens_a_position_from_flat_when_jev_says_long() {
     let history = FakeHistory {
         samples: vec![sample(100.0)],
     };
-    let decision_maker = FakeDecisionMaker::with_sequence(vec![TargetDirection::Long]);
+    let decision_maker = RandomDecisionMaker::with_sequence(vec![TargetDirection::Long]);
     let execution = FakeExecution::default();
     let log = FakeDecisionLog::default();
 
@@ -190,7 +190,7 @@ async fn repeating_the_same_direction_is_a_no_op() {
     let history = FakeHistory {
         samples: vec![sample(100.0)],
     };
-    let decision_maker = FakeDecisionMaker::with_sequence(vec![TargetDirection::Long]);
+    let decision_maker = RandomDecisionMaker::with_sequence(vec![TargetDirection::Long]);
     let execution = FakeExecution::default();
     let log = FakeDecisionLog::default();
 
@@ -229,7 +229,7 @@ async fn flipping_direction_closes_then_opens() {
         samples: vec![sample(100.0)],
     };
     let decision_maker =
-        FakeDecisionMaker::with_sequence(vec![TargetDirection::Long, TargetDirection::Short]);
+        RandomDecisionMaker::with_sequence(vec![TargetDirection::Long, TargetDirection::Short]);
     let execution = FakeExecution::default();
     let log = FakeDecisionLog::default();
 
@@ -268,7 +268,7 @@ async fn going_flat_closes_the_position() {
         samples: vec![sample(100.0)],
     };
     let decision_maker =
-        FakeDecisionMaker::with_sequence(vec![TargetDirection::Long, TargetDirection::Flat]);
+        RandomDecisionMaker::with_sequence(vec![TargetDirection::Long, TargetDirection::Flat]);
     let execution = FakeExecution::default();
     let log = FakeDecisionLog::default();
 
@@ -304,7 +304,7 @@ async fn staying_flat_while_already_flat_is_a_no_op() {
     let history = FakeHistory {
         samples: vec![sample(100.0)],
     };
-    let decision_maker = FakeDecisionMaker::with_sequence(vec![TargetDirection::Flat]);
+    let decision_maker = RandomDecisionMaker::with_sequence(vec![TargetDirection::Flat]);
     let execution = FakeExecution::default();
     let log = FakeDecisionLog::default();
 
@@ -330,7 +330,7 @@ async fn staying_flat_while_already_flat_is_a_no_op() {
 #[tokio::test]
 async fn writes_a_decision_log_entry_even_with_no_market_data() {
     let history = EmptyHistory;
-    let decision_maker = FakeDecisionMaker::with_sequence(vec![TargetDirection::Long]);
+    let decision_maker = RandomDecisionMaker::with_sequence(vec![TargetDirection::Long]);
     let execution = FakeExecution::default();
     let log = FakeDecisionLog::default();
 
@@ -363,7 +363,7 @@ async fn every_cycle_writes_exactly_one_log_entry_across_a_full_state_machine_wa
         samples: vec![sample(100.0)],
     };
     // flat -> long -> short -> flat -> flat (repeat, no-op)
-    let decision_maker = FakeDecisionMaker::with_sequence(vec![
+    let decision_maker = RandomDecisionMaker::with_sequence(vec![
         TargetDirection::Flat,
         TargetDirection::Long,
         TargetDirection::Short,

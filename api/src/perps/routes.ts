@@ -16,7 +16,7 @@ import {
 } from "./repository.js";
 
 const DECISION_MAKERS: readonly DecisionMaker[] = [
-  "fake",
+  "random",
   "typesafe",
   "openrouter",
 ];

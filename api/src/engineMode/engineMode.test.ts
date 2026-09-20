@@ -129,7 +129,7 @@ describe("PUT /engine-mode", () => {
       samplingFrequencySeconds: 60,
       leverage: 1,
       positionSizeUsd: 100,
-      decisionMaker: "fake",
+      decisionMaker: "random",
       walletId,
     });
     await engineConfig().insertOne({ _id: "singleton", mode: "live" });

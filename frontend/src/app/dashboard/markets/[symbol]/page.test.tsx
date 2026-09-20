@@ -32,11 +32,14 @@ vi.mock("@/lib/api", () => ({
   fetchRecentTrades: (...args: [string]) => fetchRecentTradesMock(...args),
   updatePerpConfig: (...args: [string, Partial<Perp>]) =>
     updatePerpConfigMock(...args),
+  fetchEngineMode: () => new Promise(() => {}),
+  fetchDecisionMakerStatuses: () => new Promise(() => {}),
 }));
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ symbol: "BTC" }),
   usePathname: () => "/dashboard/markets/BTC",
+  useRouter: () => ({ push: vi.fn() }),
 }));
 
 import MarketDataPage from "./page";

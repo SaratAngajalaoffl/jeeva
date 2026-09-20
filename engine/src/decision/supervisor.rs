@@ -456,7 +456,7 @@ mod tests {
             sampling_frequency_seconds: 60.0,
             leverage: 1.0,
             position_size_usd: 100.0,
-            decision_maker: crate::decision::DecisionMakerKind::Fake,
+            decision_maker: crate::decision::DecisionMakerKind::Random,
             wallet_id: Some("test-wallet".to_string()),
         }
     }
