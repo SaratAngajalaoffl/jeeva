@@ -106,6 +106,21 @@ pub fn realized_pnl_usd(
     }
 }
 
+/// The notional we can actually trade given a requested position size
+/// and the wallet's available USD balance: capped at the balance, and
+/// rejected outright when there is nothing left to trade with.
+pub fn clamp_position_size_usd(
+    requested_size_usd: f64,
+    available_usd: f64,
+) -> Result<f64, String> {
+    if available_usd <= f64::EPSILON {
+        return Err(format!(
+            "insufficient balance: have ${available_usd:.2}, need at least ${requested_size_usd:.2}"
+        ));
+    }
+    Ok(requested_size_usd.min(available_usd))
+}
+
 pub struct MockExecutionAdapter {
     pool: PgPool,
     slippage_bps: f64,
@@ -163,6 +178,18 @@ impl ExecutionAdapter for MockExecutionAdapter {
         leverage: f64,
         mid_price: f64,
     ) -> Result<OpenPosition, ExecutionError> {
+        let (available_usd,) = sqlx::query_as::<_, (f64,)>(
+            "SELECT current_balance_usd FROM wallets WHERE id = $1::uuid AND kind = 'mock'",
+        )
+        .bind(&self.wallet_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| ExecutionError(format!("failed to read wallet balance: {e}")))?;
+
+        // A fixed session size may exceed what the wallet has left after
+        // earlier losses; trade whatever is affordable instead.
+        let position_size_usd = clamp_position_size_usd(position_size_usd, available_usd)
+            .map_err(ExecutionError)?;
         let notional_usd = position_size_usd * leverage;
         let entry_price = fill_price(mid_price, direction, true, self.slippage_bps);
 
@@ -238,6 +265,25 @@ impl ExecutionAdapter for MockExecutionAdapter {
             .execute(&mut *tx)
             .await
             .map_err(|e| ExecutionError(format!("failed to delete position: {e}")))?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO trade_history
+                (session_id, symbol, direction, entry_price, notional_usd, opened_at, exit_price, pnl_usd)
+            VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8)
+            "#,
+        )
+        .bind(session_id)
+        .bind(symbol)
+        .bind(position.direction.as_str())
+        .bind(position.entry_price)
+        .bind(position.notional_usd)
+        .bind(position.opened_at)
+        .bind(exit_price)
+        .bind(pnl_usd)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| ExecutionError(format!("failed to record trade history: {e}")))?;
 
         tx.commit()
             .await
@@ -359,5 +405,21 @@ mod tests {
         // price rose from 100 to 110: a short loses
         let pnl = realized_pnl_usd(Direction::Short, 100.0, 110.0, 1000.0);
         assert!((pnl + 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn position_size_is_unchanged_when_balance_covers_it() {
+        assert_eq!(clamp_position_size_usd(100.0, 500.0).unwrap(), 100.0);
+    }
+
+    #[test]
+    fn position_size_is_capped_at_the_wallet_balance() {
+        assert_eq!(clamp_position_size_usd(100.0, 37.5).unwrap(), 37.5);
+    }
+
+    #[test]
+    fn opening_fails_when_the_wallet_has_nothing_left() {
+        assert!(clamp_position_size_usd(100.0, 0.0).is_err());
+        assert!(clamp_position_size_usd(100.0, -5.0).is_err());
     }
 }

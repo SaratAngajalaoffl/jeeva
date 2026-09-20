@@ -15,6 +15,7 @@ import { createFundingRouter } from "./funding/routes.js";
 import { createPerpHealthRouter } from "./health/routes.js";
 import { createPerpsRouter } from "./perps/routes.js";
 import { createPositionsRouter } from "./positions/routes.js";
+import { createTradesRouter } from "./trades/routes.js";
 import { createTradingSessionsRouter } from "./trading-sessions/routes.js";
 import { createWalletsRouter } from "./wallets/routes.js";
 
@@ -64,6 +65,7 @@ export function createApp(deps: AppDeps = {}): Express {
     app.use("/decisions", createDecisionsRouter(deps.pgPool));
     app.use("/funding", createFundingRouter(deps.pgPool));
     app.use("/perp-health", createPerpHealthRouter(deps.pgPool));
+    app.use("/trades", createTradesRouter(deps.pgPool));
   }
 
   return app;

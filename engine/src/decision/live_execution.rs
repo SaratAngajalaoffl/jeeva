@@ -44,6 +44,8 @@ struct RawPosition {
 struct ClearinghouseState {
     #[serde(rename = "assetPositions")]
     asset_positions: Vec<AssetPositionEntry>,
+    #[serde(rename = "withdrawable", default)]
+    withdrawable: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -118,6 +120,33 @@ impl LiveExecutionAdapter {
     /// Express for dashboard display.
     pub fn public_address(&self) -> String {
         self.key.public_address()
+    }
+
+    /// The account's on-chain withdrawable USD balance, as reported by
+    /// Hyperliquid's `clearinghouseState`. Used to cap position sizes so
+    /// an order is never submitted for more than the account can cover.
+    async fn account_withdrawable_usd(&self) -> Result<f64, ExecutionError> {
+        let state: ClearinghouseState = self
+            .http
+            .post(format!("{}/info", self.base_url))
+            .json(&serde_json::json!({
+                "type": "clearinghouseState",
+                "user": self.public_address(),
+            }))
+            .send()
+            .await
+            .map_err(|e| ExecutionError(format!("clearinghouseState request failed: {e}")))?
+            .json()
+            .await
+            .map_err(|e| ExecutionError(format!("clearinghouseState response invalid: {e}")))?;
+
+        state
+            .withdrawable
+            .parse()
+            .map_err(|_| ExecutionError(format!(
+                "could not parse withdrawable balance: {}",
+                state.withdrawable
+            )))
     }
 
     async fn asset_index(&self, symbol: &str) -> Result<u32, ExecutionError> {
@@ -243,6 +272,17 @@ impl ExecutionAdapter for LiveExecutionAdapter {
         leverage: f64,
         mid_price: f64,
     ) -> Result<OpenPosition, ExecutionError> {
+        // A fixed session size may exceed what the account can actually
+        // trade after earlier losses; clamp to the withdrawable balance
+        // instead of sending an order the exchange will reject.
+        let available_usd: f64 = self
+            .account_withdrawable_usd()
+            .await?;
+        let position_size_usd = super::execution::clamp_position_size_usd(
+            position_size_usd,
+            available_usd,
+        )
+        .map_err(ExecutionError)?;
         let notional_usd = position_size_usd * leverage;
         let size = notional_usd / mid_price;
         let is_buy = matches!(direction, Direction::Long);
@@ -387,10 +427,22 @@ mod tests {
     #[tokio::test]
     async fn open_submits_a_signed_order_and_returns_the_resulting_position() {
         let server = MockServer::start().await;
+        // First /info call: balance read (withdrawable) before the order.
         Mock::given(method("POST"))
             .and(path("/info"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "universe": [{ "name": "BTC" }]
+                "withdrawable": "1000.0",
+                "assetPositions": []
+            })))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        // Second /info call: asset index lookup for the order.
+        Mock::given(method("POST"))
+            .and(path("/info"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "universe": [{ "name": "BTC" }],
+                "assetPositions": []
             })))
             .up_to_n_times(1)
             .mount(&server)
@@ -402,9 +454,12 @@ mod tests {
             )
             .mount(&server)
             .await;
+        // Remaining /info calls: balance read (withdrawable) and the
+        // post-open position fetch.
         Mock::given(method("POST"))
             .and(path("/info"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "withdrawable": "1000.0",
                 "assetPositions": [
                     { "position": { "coin": "BTC", "szi": "0.02", "entryPx": "50000" } }
                 ]
@@ -426,6 +481,8 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/info"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "withdrawable": "1000.0",
+                "assetPositions": [],
                 "universe": [{ "name": "BTC" }]
             })))
             .mount(&server)

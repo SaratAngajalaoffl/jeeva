@@ -72,6 +72,7 @@ services:
       # there, so the decision-maker status endpoint can see whether
       # they're configured without the engine's own confusion between
       # "unset" and "empty string".
+      - PAPER_TRADING_ONLY
       - TYPESAFE_API_KEY
       - TYPESAFE_BASE_URL
       - OPENROUTER_API_KEY

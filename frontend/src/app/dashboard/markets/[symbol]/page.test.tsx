@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   DecisionLogEntry,
   FundingPayment,
-  MarketDataPoint,
+  MarketDataHistory,
   OrderBook,
   Perp,
   PerpStats,
@@ -12,7 +12,7 @@ import type {
   TradingSession,
 } from "@/lib/api";
 
-const fetchMarketDataMock = vi.fn<[string], Promise<MarketDataPoint[]>>();
+const fetchMarketDataMock = vi.fn<[string], Promise<MarketDataHistory>>();
 const fetchPerpsMock = vi.fn<[], Promise<Perp[]>>();
 const fetchPerpStatsMock = vi.fn<[], Promise<PerpStats[]>>();
 const fetchPositionsMock = vi.fn<[], Promise<Position[]>>();
@@ -67,29 +67,35 @@ describe("MarketDataPage", () => {
   });
 
   it("renders the market data chart once data loads", async () => {
-    fetchMarketDataMock.mockResolvedValue([
-      {
-        time: "2026-01-01T00:00:00.000Z",
-        price: 100,
-        openInterest: 10,
-        volume: 1000,
-        spread: 0.5,
-        midPrice: 100.25,
-      },
-      {
-        time: "2026-01-01T00:01:00.000Z",
-        price: 110,
-        openInterest: 12,
-        volume: 1200,
-        spread: 0.6,
-        midPrice: 110.3,
-      },
-    ]);
+    fetchMarketDataMock.mockResolvedValue({
+      samples: [
+        {
+          time: "2026-01-01T00:00:00.000Z",
+          price: 100,
+          openInterest: 10,
+          volume: 1000,
+          spread: 0.5,
+          midPrice: 100.25,
+        },
+        {
+          time: "2026-01-01T00:01:00.000Z",
+          price: 110,
+          openInterest: 12,
+          volume: 1200,
+          spread: 0.6,
+          midPrice: 110.3,
+        },
+      ],
+      oldestSampleTime: "2026-01-01T00:00:00.000Z",
+    });
 
     render(<MarketDataPage />);
 
     await waitFor(() => screen.getByText("Market data"));
-    expect(fetchMarketDataMock).toHaveBeenCalledWith("BTC");
+    expect(fetchMarketDataMock).toHaveBeenCalledWith(
+      "BTC",
+      expect.objectContaining({ from: expect.any(Date) }),
+    );
   });
 
   it("shows an error message when loading fails", async () => {
@@ -105,7 +111,10 @@ describe("MarketDataPage", () => {
   });
 
   it("shows the sampling status badge and active session count from config", async () => {
-    fetchMarketDataMock.mockResolvedValue([]);
+    fetchMarketDataMock.mockResolvedValue({
+      samples: [],
+      oldestSampleTime: null,
+    });
     fetchPerpsMock.mockResolvedValue([
       { symbol: "BTC", samplingEnabled: true, samplingFrequencySeconds: 30 },
     ]);
@@ -131,7 +140,10 @@ describe("MarketDataPage", () => {
   });
 
   it("shows no open position on the Position tab when the market is flat", async () => {
-    fetchMarketDataMock.mockResolvedValue([]);
+    fetchMarketDataMock.mockResolvedValue({
+      samples: [],
+      oldestSampleTime: null,
+    });
     fetchPositionsMock.mockResolvedValue([]);
 
     render(<MarketDataPage />);

@@ -15,6 +15,7 @@ import {
   deleteWallet,
   fetchFundingPayments,
   fetchWallets,
+  fetchEngineMode,
   type CreateWalletInput,
   type FundingPayment,
   type Wallet,
@@ -147,6 +148,7 @@ export default function WalletPage() {
   const [publicAddress, setPublicAddress] = useState("");
   const [privateKey, setPrivateKey] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [paperTradingOnly, setPaperTradingOnly] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -157,6 +159,9 @@ export default function WalletPage() {
     fetchFundingPayments()
       .then(setFundingPayments)
       .catch(() => setLoadError("Failed to load funding payments"));
+    fetchEngineMode()
+      .then((s) => setPaperTradingOnly(Boolean(s.paperTradingOnly)))
+      .catch(() => setPaperTradingOnly(false));
   }, []);
 
   const totalBalanceUsd = useMemo(
@@ -287,8 +292,9 @@ export default function WalletPage() {
               <WalletIcon size={28} className="text-subtext-0" />
               <p className="text-sm text-subtext-1">
                 No wallets yet. Add a mock wallet to start trading in
-                simulation, or a live wallet once you&apos;re ready to trade
-                for real.
+                simulation{paperTradingOnly
+                  ? " — this deployment is paper-trading only"
+                  : ", or a live wallet once you're ready to trade for real"}
               </p>
               <Button
                 variant="ghost"
@@ -399,7 +405,9 @@ export default function WalletPage() {
                 onChange={(e) => setKind(e.target.value as WalletKind)}
               >
                 <option value="mock">Mock</option>
-                <option value="live">Live</option>
+                <option value="live" disabled>
+                  Live (disabled — paper trading only)
+                </option>
               </Select>
             </label>
             <label className="flex flex-col gap-1">

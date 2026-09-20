@@ -529,8 +529,8 @@ function useSparklinePrices(symbol: string): number[] {
   useEffect(() => {
     let cancelled = false;
     fetchMarketData(symbol)
-      .then((samples) => {
-        if (!cancelled) setPrices(samples.map((s) => s.price));
+      .then((history) => {
+        if (!cancelled) setPrices(history.samples.map((s) => s.price));
       })
       .catch(() => {
         if (!cancelled) setPrices([]);

@@ -3,7 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import PriceVolumeChart from "@/components/PriceVolumeChart";
+import PriceVolumeChart, {
+  chartRangeMs,
+  type ChartRange,
+} from "@/components/PriceVolumeChart";
 import { SiteHeader } from "@/components/SiteHeader";
 import { Button, Card, Skeleton } from "@/components/ui";
 import {
@@ -66,6 +69,10 @@ export default function SessionDetailPage() {
     undefined,
   );
   const [samples, setSamples] = useState<MarketDataPoint[] | null>(null);
+  const [range, setRange] = useState<ChartRange>("1d");
+  const [oldestSampleTime, setOldestSampleTime] = useState<
+    string | null | undefined
+  >(undefined);
   const [stats, setStats] = useState<PerpStats | null>(null);
   const [position, setPosition] = useState<Position | null>(null);
   const [decisions, setDecisions] = useState<DecisionLogEntry[] | null>(null);
@@ -86,8 +93,11 @@ export default function SessionDetailPage() {
   useEffect(() => {
     function poll() {
       refresh();
-      fetchMarketData(symbol)
-        .then(setSamples)
+      fetchMarketData(symbol, { from: new Date(Date.now() - chartRangeMs(range)) })
+        .then((s) => {
+          setSamples(s.samples);
+          setOldestSampleTime(s.oldestSampleTime);
+        })
         .catch(() => {});
       fetchPerpStats()
         .then((stats) => setStats(stats.find((s) => s.symbol === symbol) ?? null))
@@ -110,7 +120,7 @@ export default function SessionDetailPage() {
     poll();
     const id = setInterval(poll, POLL_MS);
     return () => clearInterval(id);
-  }, [symbol, sessionId]);
+  }, [symbol, sessionId, range]);
 
   const pnl = useMemo(() => {
     if (!position || !stats) return null;
@@ -247,6 +257,9 @@ export default function SessionDetailPage() {
         {samples && (
           <PriceVolumeChart
             title="Market data"
+            range={range}
+            onRangeChange={setRange}
+            oldestSampleTime={oldestSampleTime}
             pricePoints={samples.map((s) => ({ x: s.time, y: s.price }))}
             volumePoints={samples.map((s) => ({ x: s.time, y: s.volume }))}
           />

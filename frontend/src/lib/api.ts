@@ -111,10 +111,16 @@ function historyParams(query: HistoryQuery): string {
   return params.toString();
 }
 
+export interface MarketDataHistory {
+  samples: MarketDataPoint[];
+  /** Earliest recorded sample for the symbol, null when none exist. */
+  oldestSampleTime: string | null;
+}
+
 export async function fetchMarketData(
   symbol: string,
   query: HistoryQuery = {},
-): Promise<MarketDataPoint[]> {
+): Promise<MarketDataHistory> {
   const params = historyParams(query);
   const res = await fetch(
     `${API_URL}/perps/${encodeURIComponent(symbol)}/market-data${
@@ -125,8 +131,7 @@ export async function fetchMarketData(
   if (!res.ok) {
     throw new Error("Failed to load market data");
   }
-  const body = (await res.json()) as { samples: MarketDataPoint[] };
-  return body.samples;
+  return res.json();
 }
 
 export interface OrderBookLevel {
@@ -427,6 +432,35 @@ export async function fetchFundingPayments(
   return body.payments;
 }
 
+export interface ClosedTrade {
+  sessionId: string;
+  symbol: string;
+  direction: "long" | "short";
+  entryPrice: number;
+  notionalUsd: number;
+  openedAt: string;
+  exitPrice: number;
+  pnlUsd: number;
+  closedAt: string;
+}
+
+export async function fetchTradeHistory(
+  filter: { symbol?: string; sessionId?: string } & HistoryQuery = {},
+): Promise<ClosedTrade[]> {
+  const params = new URLSearchParams(historyParams(filter));
+  if (filter.symbol) params.set("symbol", filter.symbol);
+  if (filter.sessionId) params.set("sessionId", filter.sessionId);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  const res = await fetch(`${API_URL}/trades/history${query}`, {
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error("Failed to load trade history");
+  }
+  const body = (await res.json()) as { trades: ClosedTrade[] };
+  return body.trades;
+}
+
 export interface PerpHealth {
   symbol: string;
   consecutiveFailures: number;
@@ -449,6 +483,8 @@ export type EngineMode = "mock" | "live";
 
 export interface EngineModeStatus {
   mode: EngineMode;
+  /** True when the deployment runs with PAPER_TRADING_ONLY=true. */
+  paperTradingOnly?: boolean;
 }
 
 export async function fetchEngineMode(): Promise<EngineModeStatus> {

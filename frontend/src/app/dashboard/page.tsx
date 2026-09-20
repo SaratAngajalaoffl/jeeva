@@ -263,7 +263,7 @@ export default function DashboardPage() {
     Promise.all(
       chartedKey.split(",").map((symbol) =>
         fetchMarketData(symbol, { from, to })
-          .then((samples) => [symbol, samples] as const)
+          .then((history) => [symbol, history.samples] as const)
           .catch(() => [symbol, [] as MarketDataPoint[]] as const),
       ),
     ).then((entries) => {

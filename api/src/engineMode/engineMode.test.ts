@@ -1,7 +1,7 @@
 import { MongoClient, type Db } from "mongodb";
 import { Pool } from "pg";
 import request from "supertest";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../app.js";
 import { SESSION_COOKIE_NAME } from "../auth/config.js";
 import { signSessionToken } from "../auth/session.js";
@@ -56,7 +56,7 @@ describe("GET /engine-mode", () => {
       .set("Cookie", authCookie());
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ mode: "mock" });
+    expect(res.body).toEqual({ mode: "mock", paperTradingOnly: false });
   });
 
   it("reflects a previously-set live mode", async () => {
@@ -67,7 +67,7 @@ describe("GET /engine-mode", () => {
       .set("Cookie", authCookie());
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ mode: "live" });
+    expect(res.body).toEqual({ mode: "live", paperTradingOnly: false });
   });
 });
 
@@ -142,5 +142,53 @@ describe("PUT /engine-mode", () => {
     expect(res.status).toBe(200);
     const perp = await perpConfigs().findOne({ symbol: "BTC" });
     expect(perp?.tradingEnabled).toBe(false);
+  });
+});
+
+describe("GET /engine-mode with PAPER_TRADING_ONLY=true", () => {
+  afterEach(() => {
+    delete process.env.PAPER_TRADING_ONLY;
+  });
+
+  it("reports paperTradingOnly and flags it", async () => {
+    process.env.PAPER_TRADING_ONLY = "true";
+
+    const res = await request(buildApp())
+      .get("/engine-mode")
+      .set("Cookie", authCookie());
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ mode: "mock", paperTradingOnly: true });
+  });
+});
+
+describe("PUT /engine-mode with PAPER_TRADING_ONLY=true", () => {
+  afterEach(() => {
+    delete process.env.PAPER_TRADING_ONLY;
+  });
+
+  it("rejects switching to live with 403", async () => {
+    process.env.PAPER_TRADING_ONLY = "true";
+
+    const res = await request(buildApp())
+      .put("/engine-mode")
+      .set("Cookie", authCookie())
+      .send({ mode: "live" });
+
+    expect(res.status).toBe(403);
+    const stored = await engineConfig().findOne({ _id: "singleton" });
+    expect(stored).toBeNull();
+  });
+
+  it("still allows switching to mock", async () => {
+    process.env.PAPER_TRADING_ONLY = "true";
+
+    const res = await request(buildApp())
+      .put("/engine-mode")
+      .set("Cookie", authCookie())
+      .send({ mode: "mock" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ mode: "mock" });
   });
 });

@@ -7,6 +7,7 @@ import {
   type EngineMode,
   type EngineModeStatus,
 } from "@/lib/api";
+import { TriangleAlert } from "lucide-react";
 import { Skeleton } from "@/components/ui";
 
 /**
@@ -49,6 +50,19 @@ export function EngineModeToggle() {
   }
   if (!status) {
     return null;
+  }
+
+  if (status.paperTradingOnly) {
+    return (
+      <div
+        role="note"
+        title="This deployment runs in paper-trading mode; live trading and real wallets are disabled"
+        className="flex items-center gap-2 rounded-md border border-peach/50 bg-peach/10 px-3 py-1.5 text-sm text-peach"
+      >
+        <TriangleAlert size={14} className="shrink-0" />
+        <span>Paper trading only</span>
+      </div>
+    );
   }
 
   const isLive = status.mode === "live";

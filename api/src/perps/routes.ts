@@ -3,7 +3,10 @@ import type { Db } from "mongodb";
 import type { Pool } from "pg";
 import { requireAuth } from "../auth/requireAuth.js";
 import type { HyperliquidClient } from "../hyperliquid/client.js";
-import { getMarketDataHistory } from "../marketData/repository.js";
+import {
+  getMarketDataHistory,
+  getOldestSampleTime,
+} from "../marketData/repository.js";
 import { parseTimeRange } from "../marketData/timeRange.js";
 import { isValidFrequencySeconds } from "./frequency.js";
 import {
@@ -80,13 +83,16 @@ export function createPerpsRouter(
       return;
     }
 
-    const samples = await getMarketDataHistory(
-      pgPool,
-      symbol,
-      range.from,
-      range.to,
-    );
-    res.status(200).json({ samples });
+    const [samples, oldestSampleTime] = await Promise.all([
+      getMarketDataHistory(pgPool, symbol, range.from, range.to),
+      getOldestSampleTime(pgPool, symbol),
+    ]);
+    res.status(200).json({
+      samples,
+      // Lets the frontend disable periods that reach back before any
+      // recorded data for this symbol.
+      oldestSampleTime: oldestSampleTime?.toISOString() ?? null,
+    });
   });
 
   router.get("/:symbol/orderbook", async (req, res) => {

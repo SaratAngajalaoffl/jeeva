@@ -3,7 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import PriceVolumeChart from "@/components/PriceVolumeChart";
+import PriceVolumeChart, {
+  chartRangeMs,
+  type ChartRange,
+  type TradeMarker,
+} from "@/components/PriceVolumeChart";
 import Modal from "@/components/Modal";
 import { SamplingIcon } from "@/components/icons";
 import {
@@ -18,10 +22,12 @@ import {
   fetchPositions,
   fetchRecentTrades,
   fetchSelectableWallets,
+  fetchTradeHistory,
   fetchTradingSessions,
   hardCloseTradingSession,
   softCloseTradingSession,
   updatePerpConfig,
+  type ClosedTrade,
   type DecisionLogEntry,
   type DecisionMaker,
   type FundingPayment,
@@ -120,9 +126,14 @@ export default function MarketDataPage() {
   const symbol = params.symbol;
 
   const [samples, setSamples] = useState<MarketDataPoint[] | null>(null);
+  const [range, setRange] = useState<ChartRange>("1d");
+  const [oldestSampleTime, setOldestSampleTime] = useState<
+    string | null | undefined
+  >(undefined);
   const [perp, setPerp] = useState<Perp | null>(null);
   const [stats, setStats] = useState<PerpStats | null>(null);
   const [positions, setPositions] = useState<Position[] | null>(null);
+  const [closedTrades, setClosedTrades] = useState<ClosedTrade[] | null>(null);
   const [decisions, setDecisions] = useState<DecisionLogEntry[] | null>(null);
   const [fundingPayments, setFundingPayments] = useState<
     FundingPayment[] | null
@@ -147,9 +158,13 @@ export default function MarketDataPage() {
     setOrderBook(null);
 
     function poll() {
-      fetchMarketData(symbol)
+      const rangeMs = chartRangeMs(range);
+      fetchMarketData(symbol, { from: new Date(Date.now() - rangeMs) })
         .then((s) => {
-          if (!cancelled) setSamples(s);
+          if (!cancelled) {
+            setSamples(s.samples);
+            setOldestSampleTime(s.oldestSampleTime);
+          }
         })
         .catch(() => {
           if (!cancelled) setError("Failed to load market data");
@@ -177,6 +192,13 @@ export default function MarketDataPage() {
         })
         .catch(() => {
           if (!cancelled) setDecisions([]);
+        });
+      fetchTradeHistory({ symbol, from: new Date(Date.now() - rangeMs) })
+        .then((t) => {
+          if (!cancelled) setClosedTrades(t);
+        })
+        .catch(() => {
+          if (!cancelled) setClosedTrades([]);
         });
       fetchFundingPayments()
         .then((payments) => {
@@ -224,7 +246,7 @@ export default function MarketDataPage() {
       cancelled = true;
       clearInterval(id);
     };
-  }, [symbol]);
+  }, [symbol, range]);
 
   async function applyPatch(patch: Partial<Omit<Perp, "symbol">>) {
     if (!perp) return;
@@ -256,6 +278,32 @@ export default function MarketDataPage() {
       return sum + pnl;
     }, 0);
   }, [positions, stats]);
+
+  const tradeMarkers: TradeMarker[] = useMemo(() => {
+    const openMarkers: TradeMarker[] = (positions ?? []).map((position) => ({
+      time: position.openedAt,
+      direction: position.direction,
+      action: "open",
+      price: position.entryPrice,
+    }));
+    const closedMarkers: TradeMarker[] = (closedTrades ?? []).flatMap(
+      (trade) => [
+        {
+          time: trade.openedAt,
+          direction: trade.direction,
+          action: "open" as const,
+          price: trade.entryPrice,
+        },
+        {
+          time: trade.closedAt,
+          direction: trade.direction,
+          action: "close" as const,
+          price: trade.exitPrice,
+        },
+      ],
+    );
+    return [...openMarkers, ...closedMarkers];
+  }, [positions, closedTrades]);
 
   const activeSessionCount = sessions
     ? sessions.filter((s) => s.status !== "closed").length
@@ -364,8 +412,12 @@ export default function MarketDataPage() {
             {samples && (
               <PriceVolumeChart
                 title="Market data"
+                range={range}
+                onRangeChange={setRange}
+                oldestSampleTime={oldestSampleTime}
                 pricePoints={samples.map((s) => ({ x: s.time, y: s.price }))}
                 volumePoints={samples.map((s) => ({ x: s.time, y: s.volume }))}
+                markers={tradeMarkers}
               />
             )}
           </div>
