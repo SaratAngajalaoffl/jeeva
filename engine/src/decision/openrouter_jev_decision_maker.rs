@@ -160,7 +160,11 @@ mod tests {
 
     /// A Decisions API response wrapping Jev's answer to the `direction`
     /// question, as OpenRouter returns it.
-    fn decision_response(choice: &str, confidence: f64, probs: serde_json::Value) -> ResponseTemplate {
+    fn decision_response(
+        choice: &str,
+        confidence: f64,
+        probs: serde_json::Value,
+    ) -> ResponseTemplate {
         ResponseTemplate::new(200).set_body_json(json!({
             "model": "typesafe/jev-1.13-20260917",
             "answers": {
