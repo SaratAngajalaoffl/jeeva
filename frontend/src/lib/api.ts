@@ -93,11 +93,33 @@ export interface MarketDataPoint {
   midPrice: number;
 }
 
+/**
+ * A history window. Omitted entirely, the API defaults to the last 24h;
+ * `limit` is capped server-side at 1000 rows.
+ */
+export interface HistoryQuery {
+  from?: Date;
+  to?: Date;
+  limit?: number;
+}
+
+function historyParams(query: HistoryQuery): string {
+  const params = new URLSearchParams();
+  if (query.from) params.set("from", query.from.toISOString());
+  if (query.to) params.set("to", query.to.toISOString());
+  if (query.limit !== undefined) params.set("limit", String(query.limit));
+  return params.toString();
+}
+
 export async function fetchMarketData(
   symbol: string,
+  query: HistoryQuery = {},
 ): Promise<MarketDataPoint[]> {
+  const params = historyParams(query);
   const res = await fetch(
-    `${API_URL}/perps/${encodeURIComponent(symbol)}/market-data`,
+    `${API_URL}/perps/${encodeURIComponent(symbol)}/market-data${
+      params ? `?${params}` : ""
+    }`,
     { credentials: "include" },
   );
   if (!res.ok) {
@@ -365,9 +387,9 @@ export interface DecisionLogEntry {
 }
 
 export async function fetchDecisions(
-  filter: { symbol?: string; sessionId?: string } = {},
+  filter: { symbol?: string; sessionId?: string } & HistoryQuery = {},
 ): Promise<DecisionLogEntry[]> {
-  const params = new URLSearchParams();
+  const params = new URLSearchParams(historyParams(filter));
   if (filter.symbol) params.set("symbol", filter.symbol);
   if (filter.sessionId) params.set("sessionId", filter.sessionId);
   const query = params.toString() ? `?${params.toString()}` : "";
@@ -391,8 +413,13 @@ export interface FundingPayment {
   amountUsd: number;
 }
 
-export async function fetchFundingPayments(): Promise<FundingPayment[]> {
-  const res = await fetch(`${API_URL}/funding`, { credentials: "include" });
+export async function fetchFundingPayments(
+  query: HistoryQuery = {},
+): Promise<FundingPayment[]> {
+  const params = historyParams(query);
+  const res = await fetch(`${API_URL}/funding${params ? `?${params}` : ""}`, {
+    credentials: "include",
+  });
   if (!res.ok) {
     throw new Error("Failed to load funding payments");
   }
