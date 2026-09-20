@@ -117,7 +117,7 @@ describe("PUT /engine-mode", () => {
     expect(stored?.mode).toBe("mock");
   });
 
-  it("hard-closes any trading session using a live wallet when switching to mock", async () => {
+  it("starts hard-closing any trading session using a live wallet when switching to mock", async () => {
     const liveWallet = await pgPool.query(
       "INSERT INTO wallets (label, kind, public_address) VALUES ('Live', 'live', '0xabc') RETURNING id",
     );
@@ -139,7 +139,7 @@ describe("PUT /engine-mode", () => {
       "SELECT status FROM trading_sessions WHERE id = $1",
       [sessionId],
     );
-    expect(rows[0].status).toBe("closed");
+    expect(rows[0].status).toBe("hard_closing");
   });
 });
 
