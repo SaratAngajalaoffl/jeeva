@@ -33,8 +33,8 @@ export default function DonutChart({
   }
 
   return (
-    <div className="flex items-center gap-5">
-      <div role="img" aria-label={totalLabel} className="relative h-36 w-36 shrink-0">
+    <div className="flex flex-1 items-center gap-5">
+      <div role="img" aria-label={totalLabel} className="relative h-56 w-56 shrink-0">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie

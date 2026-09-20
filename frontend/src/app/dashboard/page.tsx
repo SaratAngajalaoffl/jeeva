@@ -779,15 +779,17 @@ function OverviewContent({
           title="Direction split"
           subtitle="Where the engine wanted to be"
         >
-          <DonutChart
-            totalLabel="decisions"
-            slices={DIRECTION_ORDER.map((direction) => ({
-              label: DIRECTION_LABEL[direction],
-              value: decisionStats.directionCounts[direction],
-              color: DIRECTION_FILL[direction],
-            }))}
-            emptyLabel="No decisions in this window."
-          />
+          <div className="flex flex-1 flex-col justify-center">
+            <DonutChart
+              totalLabel="decisions"
+              slices={DIRECTION_ORDER.map((direction) => ({
+                label: DIRECTION_LABEL[direction],
+                value: decisionStats.directionCounts[direction],
+                color: DIRECTION_FILL[direction],
+              }))}
+              emptyLabel="No decisions in this window."
+            />
+          </div>
         </ChartCard>
       </section>
 
