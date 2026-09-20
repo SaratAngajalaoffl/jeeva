@@ -27,15 +27,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await db.collection("perpConfigs").deleteMany({});
   await db.collection("engineConfig").deleteMany({});
-  await pgPool.query("DELETE FROM wallets");
 });
-
-async function createMockWalletId(): Promise<string> {
-  const result = await pgPool.query(
-    "INSERT INTO wallets (label, kind, initial_balance_usd, current_balance_usd) VALUES ('Test wallet', 'mock', 1000000, 1000000) RETURNING id",
-  );
-  return result.rows[0].id;
-}
 
 const fakeHyperliquidClient: HyperliquidClient = {
   async listPerps() {
@@ -85,7 +77,7 @@ describe("GET /perps", () => {
     expect(res.status).toBe(401);
   });
 
-  it("returns all Hyperliquid PERPs with default config when none exists", async () => {
+  it("returns all Hyperliquid PERPs with default sampling settings when none exists", async () => {
     const res = await request(buildApp())
       .get("/perps")
       .set("Cookie", authCookie());
@@ -97,15 +89,11 @@ describe("GET /perps", () => {
     ]);
   });
 
-  it("merges in persisted config for a PERP, defaulting any fields it omits", async () => {
+  it("merges in persisted sampling settings for a PERP, defaulting any fields it omits", async () => {
     await db.collection("perpConfigs").insertOne({
       symbol: "BTC",
-      tradingEnabled: true,
       samplingEnabled: true,
-      decisionFrequencySeconds: 30,
       samplingFrequencySeconds: 10,
-      leverage: 5,
-      positionSizeUsd: 250,
     });
 
     const res = await request(buildApp())
@@ -114,14 +102,8 @@ describe("GET /perps", () => {
 
     expect(res.body.perps).toContainEqual({
       symbol: "BTC",
-      tradingEnabled: true,
       samplingEnabled: true,
-      decisionFrequencySeconds: 30,
       samplingFrequencySeconds: 10,
-      leverage: 5,
-      positionSizeUsd: 250,
-      decisionMaker: DEFAULT_PERP_CONFIG.decisionMaker,
-      walletId: DEFAULT_PERP_CONFIG.walletId,
     });
     expect(res.body.perps).toContainEqual({
       symbol: "ETH",
@@ -134,7 +116,7 @@ describe("PATCH /perps/:symbol", () => {
   it("rejects unauthenticated requests", async () => {
     const res = await request(buildApp())
       .patch("/perps/BTC")
-      .send({ tradingEnabled: true });
+      .send({ samplingEnabled: true });
     expect(res.status).toBe(401);
   });
 
@@ -142,126 +124,39 @@ describe("PATCH /perps/:symbol", () => {
     const res = await request(buildApp())
       .patch("/perps/BTC")
       .set("Cookie", authCookie())
-      .send({ tradingEnabled: "yes" });
+      .send({ samplingEnabled: "yes" });
     expect(res.status).toBe(400);
   });
 
-  it("enabling trading requires a wallet", async () => {
+  it("persists a sampling toggle", async () => {
     const res = await request(buildApp())
       .patch("/perps/BTC")
       .set("Cookie", authCookie())
-      .send({ tradingEnabled: true });
-
-    expect(res.status).toBe(400);
-  });
-
-  it("enabling trading also persists sampling enabled", async () => {
-    const walletId = await createMockWalletId();
-
-    const res = await request(buildApp())
-      .patch("/perps/BTC")
-      .set("Cookie", authCookie())
-      .send({ tradingEnabled: true, walletId });
+      .send({ samplingEnabled: true });
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       symbol: "BTC",
       ...DEFAULT_PERP_CONFIG,
-      tradingEnabled: true,
       samplingEnabled: true,
-      walletId,
     });
   });
 
-  it("disabling sampling also persists trading disabled", async () => {
-    const walletId = await createMockWalletId();
-    await db.collection("perpConfigs").insertOne({
-      symbol: "ETH",
-      ...DEFAULT_PERP_CONFIG,
-      tradingEnabled: true,
-      samplingEnabled: true,
-      walletId,
-    });
-
-    const res = await request(buildApp())
-      .patch("/perps/ETH")
-      .set("Cookie", authCookie())
-      .send({ samplingEnabled: false });
-
-    expect(res.status).toBe(200);
-    expect(res.body.tradingEnabled).toBe(false);
-    expect(res.body.samplingEnabled).toBe(false);
-  });
-
-  it("never persists the invalid combination trading=true, sampling=false even when requested directly", async () => {
-    const walletId = await createMockWalletId();
-    const res = await request(buildApp())
-      .patch("/perps/BTC")
-      .set("Cookie", authCookie())
-      .send({ tradingEnabled: true, samplingEnabled: false, walletId });
-
-    expect(res.status).toBe(200);
-    const invalidCombo =
-      res.body.tradingEnabled === true && res.body.samplingEnabled === false;
-    expect(invalidCombo).toBe(false);
-  });
-
-  describe("frequency fields", () => {
-    it("persists valid decision and sampling frequencies independently", async () => {
+  describe("samplingFrequencySeconds", () => {
+    it("persists a valid sampling frequency", async () => {
       const res = await request(buildApp())
         .patch("/perps/BTC")
         .set("Cookie", authCookie())
-        .send({ decisionFrequencySeconds: 120, samplingFrequencySeconds: 5 });
+        .send({ samplingFrequencySeconds: 5 });
 
       expect(res.status).toBe(200);
-      expect(res.body.decisionFrequencySeconds).toBe(120);
       expect(res.body.samplingFrequencySeconds).toBe(5);
 
       const stored = await db
         .collection("perpConfigs")
         .findOne({ symbol: "BTC" });
-      expect(stored).toMatchObject({
-        decisionFrequencySeconds: 120,
-        samplingFrequencySeconds: 5,
-      });
+      expect(stored).toMatchObject({ samplingFrequencySeconds: 5 });
     });
-
-    it("updating one frequency leaves the other fields untouched", async () => {
-      await db.collection("perpConfigs").insertOne({
-        symbol: "BTC",
-        ...DEFAULT_PERP_CONFIG,
-        tradingEnabled: true,
-        samplingEnabled: true,
-        decisionFrequencySeconds: 60,
-        samplingFrequencySeconds: 30,
-      });
-
-      const res = await request(buildApp())
-        .patch("/perps/BTC")
-        .set("Cookie", authCookie())
-        .send({ decisionFrequencySeconds: 900 });
-
-      expect(res.status).toBe(200);
-      expect(res.body).toEqual({
-        symbol: "BTC",
-        ...DEFAULT_PERP_CONFIG,
-        tradingEnabled: true,
-        samplingEnabled: true,
-        decisionFrequencySeconds: 900,
-        samplingFrequencySeconds: 30,
-      });
-    });
-
-    it.each([0, -5, NaN, Infinity, 86401, "60", null])(
-      "rejects an invalid decisionFrequencySeconds value: %p",
-      async (value) => {
-        const res = await request(buildApp())
-          .patch("/perps/BTC")
-          .set("Cookie", authCookie())
-          .send({ decisionFrequencySeconds: value });
-        expect(res.status).toBe(400);
-      },
-    );
 
     it.each([0, -1, NaN, Infinity, 86401, "60", null])(
       "rejects an invalid samplingFrequencySeconds value: %p",
@@ -278,11 +173,16 @@ describe("PATCH /perps/:symbol", () => {
       const res = await request(buildApp())
         .patch("/perps/BTC")
         .set("Cookie", authCookie())
-        .send({ decisionFrequencySeconds: 1, samplingFrequencySeconds: 86400 });
-
+        .send({ samplingFrequencySeconds: 1 });
       expect(res.status).toBe(200);
-      expect(res.body.decisionFrequencySeconds).toBe(1);
-      expect(res.body.samplingFrequencySeconds).toBe(86400);
+      expect(res.body.samplingFrequencySeconds).toBe(1);
+
+      const res2 = await request(buildApp())
+        .patch("/perps/BTC")
+        .set("Cookie", authCookie())
+        .send({ samplingFrequencySeconds: 86400 });
+      expect(res2.status).toBe(200);
+      expect(res2.body.samplingFrequencySeconds).toBe(86400);
     });
 
     it("a rejected update does not persist any part of the invalid request", async () => {
@@ -294,7 +194,7 @@ describe("PATCH /perps/:symbol", () => {
       await request(buildApp())
         .patch("/perps/BTC")
         .set("Cookie", authCookie())
-        .send({ decisionFrequencySeconds: -1, samplingFrequencySeconds: 42 });
+        .send({ samplingFrequencySeconds: -1 });
 
       const stored = await db
         .collection("perpConfigs")
@@ -302,99 +202,6 @@ describe("PATCH /perps/:symbol", () => {
       expect(stored?.samplingFrequencySeconds).toBe(
         DEFAULT_PERP_CONFIG.samplingFrequencySeconds,
       );
-    });
-  });
-
-  describe("leverage and position size fields", () => {
-    it("persists valid leverage and position size independently", async () => {
-      const res = await request(buildApp())
-        .patch("/perps/BTC")
-        .set("Cookie", authCookie())
-        .send({ leverage: 10, positionSizeUsd: 500 });
-
-      expect(res.status).toBe(200);
-      expect(res.body.leverage).toBe(10);
-      expect(res.body.positionSizeUsd).toBe(500);
-
-      const stored = await db
-        .collection("perpConfigs")
-        .findOne({ symbol: "BTC" });
-      expect(stored).toMatchObject({ leverage: 10, positionSizeUsd: 500 });
-    });
-
-    it("updating leverage alone leaves position size untouched, and vice versa", async () => {
-      await db.collection("perpConfigs").insertOne({
-        symbol: "BTC",
-        ...DEFAULT_PERP_CONFIG,
-        leverage: 5,
-        positionSizeUsd: 250,
-      });
-
-      const res = await request(buildApp())
-        .patch("/perps/BTC")
-        .set("Cookie", authCookie())
-        .send({ leverage: 20 });
-
-      expect(res.status).toBe(200);
-      expect(res.body.leverage).toBe(20);
-      expect(res.body.positionSizeUsd).toBe(250);
-    });
-
-    it.each([0, -1, NaN, Infinity, 51, "5", null])(
-      "rejects an invalid leverage value: %p",
-      async (value) => {
-        const res = await request(buildApp())
-          .patch("/perps/BTC")
-          .set("Cookie", authCookie())
-          .send({ leverage: value });
-        expect(res.status).toBe(400);
-      },
-    );
-
-    it.each([0, -1, NaN, Infinity, 1_000_001, "100", null])(
-      "rejects an invalid positionSizeUsd value: %p",
-      async (value) => {
-        const res = await request(buildApp())
-          .patch("/perps/BTC")
-          .set("Cookie", authCookie())
-          .send({ positionSizeUsd: value });
-        expect(res.status).toBe(400);
-      },
-    );
-
-    it("accepts boundary values 1x/$1 and 50x/$1,000,000", async () => {
-      const res = await request(buildApp())
-        .patch("/perps/BTC")
-        .set("Cookie", authCookie())
-        .send({ leverage: 1, positionSizeUsd: 1 });
-      expect(res.status).toBe(200);
-      expect(res.body.leverage).toBe(1);
-      expect(res.body.positionSizeUsd).toBe(1);
-
-      const res2 = await request(buildApp())
-        .patch("/perps/BTC")
-        .set("Cookie", authCookie())
-        .send({ leverage: 50, positionSizeUsd: 1_000_000 });
-      expect(res2.status).toBe(200);
-      expect(res2.body.leverage).toBe(50);
-      expect(res2.body.positionSizeUsd).toBe(1_000_000);
-    });
-
-    it("a rejected update does not persist any part of the invalid request", async () => {
-      await db.collection("perpConfigs").insertOne({
-        symbol: "BTC",
-        ...DEFAULT_PERP_CONFIG,
-      });
-
-      await request(buildApp())
-        .patch("/perps/BTC")
-        .set("Cookie", authCookie())
-        .send({ leverage: -1, positionSizeUsd: 999 });
-
-      const stored = await db
-        .collection("perpConfigs")
-        .findOne({ symbol: "BTC" });
-      expect(stored?.positionSizeUsd).toBe(DEFAULT_PERP_CONFIG.positionSizeUsd);
     });
   });
 });

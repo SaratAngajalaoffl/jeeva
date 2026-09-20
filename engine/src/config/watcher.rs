@@ -6,7 +6,7 @@ use mongodb::options::{ChangeStreamOptions, FullDocumentType};
 use mongodb::{Client, Collection};
 
 use super::diff::{log_change, log_removed};
-use super::model::PerpConfig;
+use super::model::MarketSettings;
 use super::store::ConfigStore;
 
 const COLLECTION_NAME: &str = "perpConfigs";
@@ -16,7 +16,7 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(5);
 /// whenever we reconnect, so the store is always caught up before we
 /// start tailing new changes.
 pub async fn load_initial(
-    collection: &Collection<PerpConfig>,
+    collection: &Collection<MarketSettings>,
     store: &ConfigStore,
 ) -> mongodb::error::Result<()> {
     let mut cursor = collection.find(mongodb::bson::doc! {}).await?;
@@ -30,7 +30,7 @@ pub async fn load_initial(
 /// replace to the store and logging what changed. Returns when the
 /// stream ends (the caller is expected to reconnect).
 pub async fn watch_changes(
-    collection: Collection<PerpConfig>,
+    collection: Collection<MarketSettings>,
     store: ConfigStore,
 ) -> mongodb::error::Result<()> {
     let options = ChangeStreamOptions::builder()
@@ -64,7 +64,7 @@ async fn connect_and_watch(mongo_url: &str, store: ConfigStore) -> mongodb::erro
     let db = client
         .default_database()
         .unwrap_or_else(|| client.database("jeeva"));
-    let collection = db.collection::<PerpConfig>(COLLECTION_NAME);
+    let collection = db.collection::<MarketSettings>(COLLECTION_NAME);
 
     load_initial(&collection, &store).await?;
     tracing::info!(count = store.len(), "loaded initial perp config");

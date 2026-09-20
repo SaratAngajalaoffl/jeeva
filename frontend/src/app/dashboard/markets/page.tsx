@@ -3,19 +3,18 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
+  fetchAllTradingSessions,
   fetchMarketData,
   fetchPerpHealth,
   fetchPerps,
   fetchPerpStats,
   fetchPositions,
-  fetchSelectableWallets,
   updatePerpConfig,
-  type DecisionMaker,
   type Perp,
   type PerpHealth,
   type PerpStats,
   type Position,
-  type Wallet,
+  type TradingSession,
 } from "@/lib/api";
 import { SiteHeader } from "@/components/SiteHeader";
 import {
@@ -30,13 +29,15 @@ import {
 } from "@/components/ui";
 import Modal from "@/components/Modal";
 import Sparkline from "@/components/Sparkline";
-import { SamplingIcon, TradingIcon, ViewIcon } from "@/components/icons";
+import { SamplingIcon, ViewIcon } from "@/components/icons";
 
 type MarketRow = Perp & {
   price: number | null;
   changePct: number | null;
   volumeUsd: number | null;
   openInterestUsd: number | null;
+  activeSessionCount: number;
+  closedSessionCount: number;
 };
 
 type SortKey =
@@ -48,21 +49,13 @@ type SortKey =
 
 type StatusFilter = "all" | "trading" | "sampling" | "inactive";
 
-type ConfigDialog =
-  | { type: "sampling"; perp: Perp }
-  | { type: "trading"; perp: Perp };
+type ConfigDialog = { type: "sampling"; perp: Perp };
 
 const TD = "border-b border-surface-1 py-2 pr-4";
 const PAGE_SIZE = 10;
 // Mirrors the engine's AUTO_FLATTEN_THRESHOLD (#12) so the dashboard
 // warns the operator before the auto-flatten safety net kicks in.
 const AUTO_FLATTEN_THRESHOLD = 5;
-
-const DECISION_MAKER_LABELS: Record<DecisionMaker, string> = {
-  random: "Random",
-  typesafe: "TypeSafe Jev",
-  openrouter: "OpenRouter Jev",
-};
 
 const SORT_COLUMNS: { key: SortKey; label: string }[] = [
   { key: "symbol", label: "Symbol" },
@@ -92,6 +85,7 @@ export default function MarketsPage() {
   const [stats, setStats] = useState<PerpStats[] | null>(null);
   const [positions, setPositions] = useState<Position[]>([]);
   const [health, setHealth] = useState<PerpHealth[]>([]);
+  const [sessions, setSessions] = useState<TradingSession[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
@@ -114,6 +108,9 @@ export default function MarketsPage() {
     fetchPerpHealth()
       .then(setHealth)
       .catch(() => setHealth([]));
+    fetchAllTradingSessions()
+      .then(setSessions)
+      .catch(() => setSessions([]));
   }, []);
 
   async function applyPatch(
@@ -156,13 +153,23 @@ export default function MarketsPage() {
     }
   }
 
-  function handleTradingClick(perp: Perp) {
-    if (perp.tradingEnabled) {
-      applyPatch(perp.symbol, { tradingEnabled: false });
-    } else {
-      setDialog({ type: "trading", perp });
+  const activeSessionCountBySymbol = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const session of sessions) {
+      if (session.status === "closed") continue;
+      counts.set(session.symbol, (counts.get(session.symbol) ?? 0) + 1);
     }
-  }
+    return counts;
+  }, [sessions]);
+
+  const closedSessionCountBySymbol = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const session of sessions) {
+      if (session.status !== "closed") continue;
+      counts.set(session.symbol, (counts.get(session.symbol) ?? 0) + 1);
+    }
+    return counts;
+  }, [sessions]);
 
   const rows: MarketRow[] = useMemo(() => {
     if (!perps) return [];
@@ -175,9 +182,11 @@ export default function MarketsPage() {
         changePct: s?.changePct ?? null,
         volumeUsd: s?.volumeUsd ?? null,
         openInterestUsd: s?.openInterestUsd ?? null,
+        activeSessionCount: activeSessionCountBySymbol.get(p.symbol) ?? 0,
+        closedSessionCount: closedSessionCountBySymbol.get(p.symbol) ?? 0,
       };
     });
-  }, [perps, stats]);
+  }, [perps, stats, activeSessionCountBySymbol, closedSessionCountBySymbol]);
 
   const filteredSorted = useMemo(() => {
     let result = rows;
@@ -188,11 +197,13 @@ export default function MarketsPage() {
     }
 
     if (statusFilter === "trading") {
-      result = result.filter((p) => p.tradingEnabled);
+      result = result.filter((p) => p.activeSessionCount > 0);
     } else if (statusFilter === "sampling") {
       result = result.filter((p) => p.samplingEnabled);
     } else if (statusFilter === "inactive") {
-      result = result.filter((p) => !p.tradingEnabled && !p.samplingEnabled);
+      result = result.filter(
+        (p) => p.activeSessionCount === 0 && !p.samplingEnabled,
+      );
     }
 
     const dir = sortDir === "asc" ? 1 : -1;
@@ -216,7 +227,7 @@ export default function MarketsPage() {
     [rows],
   );
   const tradingMarkets = useMemo(
-    () => rows.filter((p) => p.tradingEnabled),
+    () => rows.filter((p) => p.activeSessionCount > 0),
     [rows],
   );
   const positionsBySymbol = useMemo(
@@ -249,7 +260,7 @@ export default function MarketsPage() {
             <StatTile label="Total markets" value={perps.length} />
             <StatTile
               label="Markets trading"
-              value={perps.filter((p) => p.tradingEnabled).length}
+              value={tradingMarkets.length}
             />
             <StatTile
               label="Markets syncing"
@@ -383,6 +394,12 @@ export default function MarketsPage() {
                       </th>
                     ))}
                     <th className="border-b border-surface-1 py-2 pr-4 text-left text-xs font-medium uppercase tracking-wide text-subtext-0">
+                      Active sessions
+                    </th>
+                    <th className="border-b border-surface-1 py-2 pr-4 text-left text-xs font-medium uppercase tracking-wide text-subtext-0">
+                      Closed sessions
+                    </th>
+                    <th className="border-b border-surface-1 py-2 pr-4 text-left text-xs font-medium uppercase tracking-wide text-subtext-0">
                       Actions
                     </th>
                   </tr>
@@ -391,7 +408,7 @@ export default function MarketsPage() {
                   {paged.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={SORT_COLUMNS.length + 1}
+                        colSpan={SORT_COLUMNS.length + 3}
                         className="py-6 text-center text-sm text-subtext-1"
                       >
                         No markets match your filters.
@@ -420,6 +437,8 @@ export default function MarketsPage() {
                         </td>
                         <td className={TD}>{formatVolume(perp.volumeUsd)}</td>
                         <td className={TD}>{formatVolume(perp.openInterestUsd)}</td>
+                        <td className={TD}>{perp.activeSessionCount}</td>
+                        <td className={TD}>{perp.closedSessionCount}</td>
                         <td className={TD}>
                           <div className="flex items-center gap-2">
                             <IconButton
@@ -437,22 +456,6 @@ export default function MarketsPage() {
                               onClick={() => handleSamplingClick(perp)}
                             >
                               <SamplingIcon className="h-4 w-4" />
-                            </IconButton>
-                            <IconButton
-                              active={perp.tradingEnabled}
-                              aria-label={`${perp.symbol} ${
-                                perp.tradingEnabled
-                                  ? "disable trading"
-                                  : "enable trading"
-                              }`}
-                              title={
-                                perp.tradingEnabled
-                                  ? "Disable trading"
-                                  : "Enable trading"
-                              }
-                              onClick={() => handleTradingClick(perp)}
-                            >
-                              <TradingIcon className="h-4 w-4" />
                             </IconButton>
                             <Link
                               href={`/dashboard/markets/${perp.symbol}`}
@@ -508,25 +511,6 @@ export default function MarketsPage() {
               onSubmit={async (values) => {
                 await applyPatch(dialog.perp.symbol, {
                   samplingEnabled: true,
-                  ...values,
-                });
-                setDialog(null);
-              }}
-            />
-          </Modal>
-        )}
-
-        {dialog?.type === "trading" && (
-          <Modal
-            title={`Enable trading — ${dialog.perp.symbol}`}
-            onClose={() => setDialog(null)}
-          >
-            <TradingForm
-              perp={dialog.perp}
-              onCancel={() => setDialog(null)}
-              onSubmit={async (values) => {
-                await applyPatch(dialog.perp.symbol, {
-                  tradingEnabled: true,
                   ...values,
                 });
                 setDialog(null);
@@ -660,13 +644,8 @@ function TradingMarketCard({
             value={pnl === null ? "-" : `${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}`}
           />
           <CardStat
-            label="Position size"
-            value={`$${market.positionSizeUsd.toLocaleString()}`}
-          />
-          <CardStat label="Leverage" value={`${market.leverage}x`} />
-          <CardStat
-            label="Decision maker"
-            value={DECISION_MAKER_LABELS[market.decisionMaker]}
+            label="Active sessions"
+            value={String(market.activeSessionCount)}
           />
         </div>
         <div className="flex items-center justify-between border-t border-surface-1 pt-2">
@@ -721,167 +700,6 @@ function SamplingForm({
         </Button>
         <Button type="submit" disabled={submitting}>
           {submitting ? "Enabling..." : "Enable sampling"}
-        </Button>
-      </div>
-    </form>
-  );
-}
-
-function TradingForm({
-  perp,
-  onSubmit,
-  onCancel,
-}: {
-  perp: Perp;
-  onSubmit: (values: {
-    decisionFrequencySeconds: number;
-    leverage: number;
-    positionSizeUsd: number;
-    decisionMaker: DecisionMaker;
-    walletId: string;
-  }) => Promise<void>;
-  onCancel: () => void;
-}) {
-  const [decisionFrequencySeconds, setDecisionFrequencySeconds] = useState(
-    String(perp.decisionFrequencySeconds),
-  );
-  const [leverage, setLeverage] = useState(String(perp.leverage));
-  const [positionSizeUsd, setPositionSizeUsd] = useState(
-    String(perp.positionSizeUsd),
-  );
-  const [decisionMaker, setDecisionMaker] = useState<DecisionMaker>(
-    perp.decisionMaker ?? "random",
-  );
-  const [walletId, setWalletId] = useState(perp.walletId ?? "");
-  const [wallets, setWallets] = useState<Wallet[] | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    const size = Number(positionSizeUsd);
-    if (!Number.isFinite(size) || size <= 0) {
-      setWallets([]);
-      return;
-    }
-    let cancelled = false;
-    fetchSelectableWallets(perp.symbol, size)
-      .then((w) => {
-        if (!cancelled) setWallets(w);
-      })
-      .catch(() => {
-        if (!cancelled) setWallets([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [perp.symbol, positionSizeUsd]);
-
-  useEffect(() => {
-    if (wallets && !wallets.some((w) => w.id === walletId)) {
-      setWalletId(wallets[0]?.id ?? "");
-    }
-  }, [wallets, walletId]);
-
-  return (
-    <form
-      className="flex flex-col gap-3"
-      onSubmit={async (e) => {
-        e.preventDefault();
-        const decision = Number(decisionFrequencySeconds);
-        const lev = Number(leverage);
-        const size = Number(positionSizeUsd);
-        if (
-          !Number.isFinite(decision) ||
-          decision <= 0 ||
-          !Number.isFinite(lev) ||
-          lev <= 0 ||
-          !Number.isFinite(size) ||
-          size <= 0 ||
-          !walletId
-        ) {
-          return;
-        }
-        setSubmitting(true);
-        await onSubmit({
-          decisionFrequencySeconds: decision,
-          leverage: lev,
-          positionSizeUsd: size,
-          decisionMaker,
-          walletId,
-        });
-        setSubmitting(false);
-      }}
-    >
-      <p className="text-xs text-subtext-0">
-        Enabling trading also enables sampling for this market.
-      </p>
-      <label className="flex flex-col gap-1">
-        <Label>Decision maker</Label>
-        <Select
-          value={decisionMaker}
-          onChange={(e) => setDecisionMaker(e.target.value as DecisionMaker)}
-        >
-          <option value="random">Random (synthetic decisions)</option>
-          <option value="typesafe">TypeSafe Jev</option>
-          <option value="openrouter">OpenRouter Jev</option>
-        </Select>
-      </label>
-      <label className="flex flex-col gap-1">
-        <Label>Decision frequency (seconds)</Label>
-        <Input
-          type="number"
-          min={1}
-          value={decisionFrequencySeconds}
-          onChange={(e) => setDecisionFrequencySeconds(e.target.value)}
-        />
-      </label>
-      <label className="flex flex-col gap-1">
-        <Label>Leverage</Label>
-        <Input
-          type="number"
-          min={1}
-          value={leverage}
-          onChange={(e) => setLeverage(e.target.value)}
-        />
-      </label>
-      <label className="flex flex-col gap-1">
-        <Label>Position size (USD)</Label>
-        <Input
-          type="number"
-          min={1}
-          value={positionSizeUsd}
-          onChange={(e) => setPositionSizeUsd(e.target.value)}
-        />
-      </label>
-      <label className="flex flex-col gap-1">
-        <Label>Wallet</Label>
-        <Select
-          value={walletId}
-          onChange={(e) => setWalletId(e.target.value)}
-        >
-          <option value="" disabled>
-            {wallets === null
-              ? "Loading..."
-              : wallets.length === 0
-                ? "No eligible wallets"
-                : "Select a wallet"}
-          </option>
-          {wallets?.map((w) => (
-            <option key={w.id} value={w.id}>
-              {w.label} ({w.kind}
-              {w.currentBalanceUsd !== null
-                ? `, $${w.currentBalanceUsd.toLocaleString()}`
-                : ""}
-              )
-            </option>
-          ))}
-        </Select>
-      </label>
-      <div className="mt-1 flex justify-end gap-2">
-        <Button type="button" variant="ghost" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button type="submit" disabled={submitting || !walletId}>
-          {submitting ? "Enabling..." : "Enable trading"}
         </Button>
       </div>
     </form>

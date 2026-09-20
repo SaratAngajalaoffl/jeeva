@@ -222,12 +222,21 @@ impl LiveExecutionAdapter {
 
 #[async_trait]
 impl ExecutionAdapter for LiveExecutionAdapter {
-    async fn get_position(&self, symbol: &str) -> Result<Option<OpenPosition>, ExecutionError> {
+    /// Hyperliquid has no session concept — it nets to one position per
+    /// wallet+symbol regardless of which session is driving it, so
+    /// `session_id` is unused here (wallet exclusivity guarantees at
+    /// most one non-closed session drives a given live wallet at a time).
+    async fn get_position(
+        &self,
+        _session_id: &str,
+        symbol: &str,
+    ) -> Result<Option<OpenPosition>, ExecutionError> {
         self.fetch_position(symbol).await
     }
 
     async fn open(
         &self,
+        _session_id: &str,
         symbol: &str,
         direction: Direction,
         position_size_usd: f64,
@@ -253,7 +262,12 @@ impl ExecutionAdapter for LiveExecutionAdapter {
         })
     }
 
-    async fn close(&self, symbol: &str, mid_price: f64) -> Result<(), ExecutionError> {
+    async fn close(
+        &self,
+        _session_id: &str,
+        symbol: &str,
+        mid_price: f64,
+    ) -> Result<(), ExecutionError> {
         let Some(position) = self.fetch_position(symbol).await? else {
             return Ok(());
         };
@@ -328,7 +342,7 @@ mod tests {
             .await;
 
         let adapter = adapter_against(&server);
-        assert_eq!(adapter.get_position("BTC").await.unwrap(), None);
+        assert_eq!(adapter.get_position("s1", "BTC").await.unwrap(), None);
     }
 
     #[tokio::test]
@@ -345,7 +359,7 @@ mod tests {
             .await;
 
         let adapter = adapter_against(&server);
-        let position = adapter.get_position("BTC").await.unwrap().unwrap();
+        let position = adapter.get_position("s1", "BTC").await.unwrap().unwrap();
         assert_eq!(position.direction, Direction::Long);
         assert_eq!(position.entry_price, 50000.0);
         assert_eq!(position.notional_usd, 25000.0);
@@ -365,7 +379,7 @@ mod tests {
             .await;
 
         let adapter = adapter_against(&server);
-        let position = adapter.get_position("ETH").await.unwrap().unwrap();
+        let position = adapter.get_position("s1", "ETH").await.unwrap().unwrap();
         assert_eq!(position.direction, Direction::Short);
         assert_eq!(position.notional_usd, 6000.0);
     }
@@ -400,7 +414,7 @@ mod tests {
 
         let adapter = adapter_against(&server);
         let position = adapter
-            .open("BTC", Direction::Long, 1000.0, 1.0, 50000.0)
+            .open("s1", "BTC", Direction::Long, 1000.0, 1.0, 50000.0)
             .await
             .unwrap();
         assert_eq!(position.direction, Direction::Long);
@@ -427,7 +441,7 @@ mod tests {
 
         let adapter = adapter_against(&server);
         let error = adapter
-            .open("BTC", Direction::Long, 1000.0, 1.0, 50000.0)
+            .open("s1", "BTC", Direction::Long, 1000.0, 1.0, 50000.0)
             .await
             .unwrap_err();
         assert!(error.0.contains("rejected"));
@@ -443,7 +457,7 @@ mod tests {
             .await;
 
         let adapter = adapter_against(&server);
-        adapter.close("BTC", 50000.0).await.unwrap();
+        adapter.close("s1", "BTC", 50000.0).await.unwrap();
     }
 
     #[tokio::test]

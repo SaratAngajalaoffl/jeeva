@@ -3,21 +3,23 @@ use std::time::Duration;
 
 use engine::config::{run_with_reconnect, ConfigStore};
 use engine::decision::{
-    self, DecisionMaker, DecisionMakerRegistry, RandomDecisionMaker, OpenRouterJevDecisionMaker,
-    PerpHealthTracker, PostgresDecisionLogWriter, PostgresMarketDataHistoryReader,
-    TypeSafeJevDecisionMaker, UnconfiguredDecisionMaker,
+    self, DecisionMaker, DecisionMakerRegistry, OpenRouterJevDecisionMaker, PerpHealthTracker,
+    PostgresDecisionLogWriter, PostgresMarketDataHistoryReader, PostgresSessionLifecycle,
+    RandomDecisionMaker, TypeSafeJevDecisionMaker, UnconfiguredDecisionMaker,
 };
 use engine::funding::{
     self, HyperliquidFundingRateSource, PostgresFundingHistoryReader, PostgresFundingPaymentWriter,
 };
 use engine::market_data::{self, HyperliquidMarketDataClient, PostgresMarketDataWriter};
 use engine::mode::{self as engine_mode, ModeStore};
+use engine::session::{self, SessionStore};
 use engine::wallets::WalletRegistry;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 
 const SAMPLING_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const DECISION_POLL_INTERVAL: Duration = Duration::from_secs(1);
+const SESSION_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const WALLET_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const POSTGRES_CONNECT_RETRY_DELAY: Duration = Duration::from_secs(5);
 // Hyperliquid applies funding hourly.
@@ -27,9 +29,10 @@ fn require_env(name: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| panic!("Missing required environment variable: {name}"))
 }
 
-/// Builds one `DecisionMaker` per `DecisionMakerKind`, so each PERP can
-/// pick its decision maker independently via `PerpConfig::decision_maker`
-/// without restarting the engine. `typesafe` falls back to an
+/// Builds one `DecisionMaker` per `DecisionMakerKind`, so each trading
+/// session can pick its decision maker independently via
+/// `TradingSessionConfig::decision_maker` without restarting the engine.
+/// `typesafe` falls back to an
 /// `UnconfiguredDecisionMaker` when `TYPESAFE_API_KEY` isn't set, so the
 /// engine still starts — it only fails once a PERP is actually switched
 /// to `typesafe`. `openrouter` mirrors that wiring with
@@ -101,6 +104,9 @@ async fn main() {
     let decision_log: Arc<dyn decision::DecisionLogWriter> =
         Arc::new(PostgresDecisionLogWriter::new(pool.clone()));
     let health: Arc<dyn decision::FailureTracker> = Arc::new(PerpHealthTracker::new(pool.clone()));
+    let session_store = SessionStore::new();
+    let session_lifecycle: Arc<dyn decision::SessionLifecycle> =
+        Arc::new(PostgresSessionLifecycle::new(pool.clone()));
 
     let funding_rate_source: Arc<dyn funding::FundingRateSource> =
         Arc::new(HyperliquidFundingRateSource::default());
@@ -114,7 +120,8 @@ async fn main() {
         _ = engine_mode::run_with_reconnect(&mongo_url, mode_store.clone()) => {},
         _ = market_data::run(store.clone(), market_data_client, market_data_writer, SAMPLING_POLL_INTERVAL) => {},
         _ = wallets.clone().run(WALLET_POLL_INTERVAL) => {},
-        _ = decision::run(store, history, decision_makers, wallets.clone(), mode_store, funding_history, decision_log, health, DECISION_POLL_INTERVAL) => {},
+        _ = session::run(pool.clone(), session_store.clone(), SESSION_POLL_INTERVAL) => {},
+        _ = decision::run(session_store, history, decision_makers, wallets.clone(), mode_store, funding_history, decision_log, health, session_lifecycle, DECISION_POLL_INTERVAL) => {},
         _ = funding::run(wallets, funding_rate_source, funding_payment_writer, FUNDING_INTERVAL) => {},
     }
 }

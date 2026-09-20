@@ -30,5 +30,7 @@ pub use model::{
     decide_action, Direction, JevDecision, PositionAction, Probabilities, TargetDirection,
 };
 pub use openrouter_jev_decision_maker::OpenRouterJevDecisionMaker;
-pub use supervisor::{desired_state, run, run_decision_cycle};
+pub use supervisor::{
+    desired_state, run, run_decision_cycle, PostgresSessionLifecycle, SessionLifecycle,
+};
 pub use typesafe_jev_decision_maker::TypeSafeJevDecisionMaker;

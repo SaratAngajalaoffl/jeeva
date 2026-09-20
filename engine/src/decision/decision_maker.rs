@@ -56,6 +56,28 @@ pub enum DecisionMakerKind {
     OpenRouter,
 }
 
+impl DecisionMakerKind {
+    /// Matches the lowercase spelling stored in Postgres's
+    /// `trading_sessions.decision_maker` column (and Mongo's old
+    /// `perpConfigs.decisionMaker`, via serde's `rename_all = "lowercase"`).
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "random" => Some(Self::Random),
+            "typesafe" => Some(Self::TypeSafe),
+            "openrouter" => Some(Self::OpenRouter),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Random => "random",
+            Self::TypeSafe => "typesafe",
+            Self::OpenRouter => "openrouter",
+        }
+    }
+}
+
 fn decision_for(direction: TargetDirection) -> JevDecision {
     // A plausible-looking probability distribution skewed toward the
     // chosen direction, not just a hardcoded 1.0/0.0/0.0 — closer to

@@ -15,6 +15,7 @@ import { createFundingRouter } from "./funding/routes.js";
 import { createPerpHealthRouter } from "./health/routes.js";
 import { createPerpsRouter } from "./perps/routes.js";
 import { createPositionsRouter } from "./positions/routes.js";
+import { createTradingSessionsRouter } from "./trading-sessions/routes.js";
 import { createWalletsRouter } from "./wallets/routes.js";
 
 export interface AppDeps {
@@ -52,6 +53,9 @@ export function createApp(deps: AppDeps = {}): Express {
     app.use(
       "/wallets",
       createWalletsRouter(deps.db, deps.pgPool, hyperliquidClient),
+    );
+    app.use(
+      createTradingSessionsRouter(deps.db, deps.pgPool, hyperliquidClient),
     );
   }
 

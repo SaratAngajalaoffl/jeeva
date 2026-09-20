@@ -2,7 +2,10 @@ import { Router } from "express";
 import type { Db } from "mongodb";
 import type { Pool } from "pg";
 import { requireAuth } from "../auth/requireAuth.js";
-import { getAllConfigs, updatePerpConfig } from "../perps/repository.js";
+import {
+  hardCloseTradingSession,
+  listTradingSessions,
+} from "../trading-sessions/repository.js";
 import { listWallets } from "../wallets/repository.js";
 import { getEngineMode, setEngineMode, type EngineMode } from "./repository.js";
 
@@ -11,17 +14,14 @@ function isValidMode(value: unknown): value is EngineMode {
 }
 
 /**
- * A market must never be left "enabled" against a real wallet while
- * live trading is disabled. When the engine mode switches to mock,
- * force-disable trading on any perp currently pointed at a live
- * wallet, rather than leaving it enabled but unable to execute.
+ * A trading session must never be left running against a real wallet
+ * while live trading is disabled. When the engine mode switches to
+ * mock, force-close any non-closed session currently attached to a
+ * live wallet, rather than leaving it running but unable to execute.
  */
-async function disableTradingOnLiveWallets(
-  db: Db,
-  pgPool: Pool,
-): Promise<void> {
-  const [configs, wallets] = await Promise.all([
-    getAllConfigs(db),
+async function closeSessionsOnLiveWallets(pgPool: Pool): Promise<void> {
+  const [sessions, wallets] = await Promise.all([
+    listTradingSessions(pgPool),
     listWallets(pgPool),
   ]);
   const liveWalletIds = new Set(
@@ -29,14 +29,14 @@ async function disableTradingOnLiveWallets(
   );
 
   await Promise.all(
-    configs
+    sessions
       .filter(
-        (c) =>
-          c.tradingEnabled && c.walletId && liveWalletIds.has(c.walletId),
+        (s) =>
+          s.status !== "closed" &&
+          s.walletId &&
+          liveWalletIds.has(s.walletId),
       )
-      .map((c) =>
-        updatePerpConfig(db, c.symbol, { tradingEnabled: false }),
-      ),
+      .map((s) => hardCloseTradingSession(pgPool, s.id)),
   );
 }
 
@@ -59,7 +59,7 @@ export function createEngineModeRouter(db: Db, pgPool: Pool): Router {
 
     const updated = await setEngineMode(db, mode);
     if (updated === "mock") {
-      await disableTradingOnLiveWallets(db, pgPool);
+      await closeSessionsOnLiveWallets(pgPool);
     }
     res.status(200).json({ mode: updated });
   });

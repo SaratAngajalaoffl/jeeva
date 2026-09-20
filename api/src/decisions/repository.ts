@@ -2,6 +2,7 @@ import type { Pool } from "pg";
 
 export interface DecisionLogEntry {
   time: string;
+  sessionId: string | null;
   symbol: string;
   contextSummary: string;
   targetDirection: "long" | "short" | "flat" | null;
@@ -18,6 +19,7 @@ export interface DecisionLogEntry {
 
 export interface DecisionHistoryFilter {
   symbol?: string;
+  sessionId?: string;
   from: Date;
   to: Date;
   limit: number;
@@ -35,11 +37,17 @@ export async function getDecisionHistory(
     conditions.push(`symbol = $${params.length}`);
   }
 
+  if (filter.sessionId) {
+    params.push(filter.sessionId);
+    conditions.push(`session_id = $${params.length}`);
+  }
+
   params.push(filter.limit);
   const limitParam = `$${params.length}`;
 
   const result = await pool.query<{
     time: Date;
+    session_id: string | null;
     symbol: string;
     context_summary: string;
     target_direction: "long" | "short" | "flat" | null;
@@ -51,7 +59,7 @@ export async function getDecisionHistory(
     success: boolean;
     error: string | null;
   }>(
-    `SELECT time, symbol, context_summary, target_direction, confidence,
+    `SELECT time, session_id, symbol, context_summary, target_direction, confidence,
             prob_long, prob_short, prob_flat, position_action, success, error
      FROM decisions
      WHERE ${conditions.join(" AND ")}
@@ -62,6 +70,7 @@ export async function getDecisionHistory(
 
   return result.rows.map((row) => ({
     time: row.time.toISOString(),
+    sessionId: row.session_id,
     symbol: row.symbol,
     contextSummary: row.context_summary,
     targetDirection: row.target_direction,

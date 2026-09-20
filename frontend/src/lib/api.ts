@@ -38,14 +38,8 @@ export type DecisionMaker = "random" | "typesafe" | "openrouter";
 
 export interface Perp {
   symbol: string;
-  tradingEnabled: boolean;
   samplingEnabled: boolean;
-  decisionFrequencySeconds: number;
   samplingFrequencySeconds: number;
-  leverage: number;
-  positionSizeUsd: number;
-  decisionMaker: DecisionMaker;
-  walletId: string | null;
 }
 
 export async function fetchPerps(): Promise<Perp[]> {
@@ -163,6 +157,8 @@ export interface Wallet {
   initialBalanceUsd: number | null;
   currentBalanceUsd: number | null;
   createdAt: string;
+  /** The non-closed trading session this wallet is attached to, if any. */
+  activeSessionId: string | null;
 }
 
 export async function fetchWallets(): Promise<Wallet[]> {
@@ -225,7 +221,120 @@ export async function deleteWallet(
   return { ok: true };
 }
 
+export type TradingSessionStatus =
+  | "active"
+  | "soft_closing"
+  | "hard_closing"
+  | "closed";
+
+export interface TradingSession {
+  id: string;
+  symbol: string;
+  decisionMaker: DecisionMaker;
+  decisionFrequencySeconds: number;
+  leverage: number;
+  positionSizeUsd: number;
+  walletId: string | null;
+  status: TradingSessionStatus;
+  createdAt: string;
+  closedAt: string | null;
+}
+
+export async function fetchTradingSessions(
+  symbol: string,
+): Promise<TradingSession[]> {
+  const res = await fetch(
+    `${API_URL}/perps/${encodeURIComponent(symbol)}/trading-sessions`,
+    { credentials: "include" },
+  );
+  if (!res.ok) {
+    throw new Error("Failed to load trading sessions");
+  }
+  const body = (await res.json()) as { sessions: TradingSession[] };
+  return body.sessions;
+}
+
+export async function fetchAllTradingSessions(): Promise<TradingSession[]> {
+  const res = await fetch(`${API_URL}/trading-sessions`, {
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error("Failed to load trading sessions");
+  }
+  const body = (await res.json()) as { sessions: TradingSession[] };
+  return body.sessions;
+}
+
+export interface CreateTradingSessionInput {
+  decisionMaker: DecisionMaker;
+  decisionFrequencySeconds: number;
+  leverage: number;
+  positionSizeUsd: number;
+  walletId?: string | null;
+}
+
+export async function createTradingSession(
+  symbol: string,
+  input: CreateTradingSessionInput,
+): Promise<{ ok: true; session: TradingSession } | { ok: false; error: string }> {
+  const res = await fetch(
+    `${API_URL}/perps/${encodeURIComponent(symbol)}/trading-sessions`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(input),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    return {
+      ok: false,
+      error: body?.error ?? "Failed to create trading session",
+    };
+  }
+  return { ok: true, session: await res.json() };
+}
+
+async function postTradingSessionAction(
+  id: string,
+  action: "attach-wallet" | "detach-wallet" | "soft-close" | "hard-close",
+  body?: unknown,
+): Promise<{ ok: true; session: TradingSession } | { ok: false; error: string }> {
+  const res = await fetch(
+    `${API_URL}/trading-sessions/${encodeURIComponent(id)}/${action}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    },
+  );
+  if (!res.ok) {
+    const resBody = await res.json().catch(() => null);
+    return { ok: false, error: resBody?.error ?? `Failed to ${action} session` };
+  }
+  return { ok: true, session: await res.json() };
+}
+
+export function attachSessionWallet(id: string, walletId: string) {
+  return postTradingSessionAction(id, "attach-wallet", { walletId });
+}
+
+export function detachSessionWallet(id: string) {
+  return postTradingSessionAction(id, "detach-wallet");
+}
+
+export function softCloseTradingSession(id: string) {
+  return postTradingSessionAction(id, "soft-close");
+}
+
+export function hardCloseTradingSession(id: string) {
+  return postTradingSessionAction(id, "hard-close");
+}
+
 export interface Position {
+  sessionId: string;
   symbol: string;
   direction: "long" | "short";
   entryPrice: number;
@@ -244,6 +353,7 @@ export async function fetchPositions(): Promise<Position[]> {
 
 export interface DecisionLogEntry {
   time: string;
+  sessionId: string | null;
   symbol: string;
   contextSummary: string;
   targetDirection: "long" | "short" | "flat" | null;
@@ -255,9 +365,12 @@ export interface DecisionLogEntry {
 }
 
 export async function fetchDecisions(
-  symbol?: string,
+  filter: { symbol?: string; sessionId?: string } = {},
 ): Promise<DecisionLogEntry[]> {
-  const query = symbol ? `?symbol=${encodeURIComponent(symbol)}` : "";
+  const params = new URLSearchParams();
+  if (filter.symbol) params.set("symbol", filter.symbol);
+  if (filter.sessionId) params.set("sessionId", filter.sessionId);
+  const query = params.toString() ? `?${params.toString()}` : "";
   const res = await fetch(`${API_URL}/decisions${query}`, {
     credentials: "include",
   });
@@ -270,6 +383,7 @@ export async function fetchDecisions(
 
 export interface FundingPayment {
   time: string;
+  sessionId: string | null;
   symbol: string;
   direction: "long" | "short";
   fundingRate: number;

@@ -1,14 +1,14 @@
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use engine::config::PerpConfig;
 use engine::decision::{
     run_decision_cycle, DecisionLogEntry, DecisionLogWriter, Direction, ExecutionAdapter,
-    ExecutionError, RandomDecisionMaker, HistoryError, InMemoryFailureTracker,
-    MarketDataHistoryReader, OpenPosition, TargetDirection,
+    ExecutionError, HistoryError, InMemoryFailureTracker, MarketDataHistoryReader, OpenPosition,
+    RandomDecisionMaker, SessionLifecycle, TargetDirection,
 };
 use engine::funding::{FundingHistoryError, FundingHistoryReader, FundingRecord};
 use engine::market_data::MarketDataSample;
+use engine::session::{TradingSessionConfig, TradingSessionStatus};
 
 struct EmptyFunding;
 
@@ -56,12 +56,17 @@ struct FakeExecution {
 
 #[async_trait]
 impl ExecutionAdapter for FakeExecution {
-    async fn get_position(&self, _symbol: &str) -> Result<Option<OpenPosition>, ExecutionError> {
+    async fn get_position(
+        &self,
+        _session_id: &str,
+        _symbol: &str,
+    ) -> Result<Option<OpenPosition>, ExecutionError> {
         Ok(*self.position.lock().unwrap())
     }
 
     async fn open(
         &self,
+        _session_id: &str,
         symbol: &str,
         direction: Direction,
         position_size_usd: f64,
@@ -84,7 +89,12 @@ impl ExecutionAdapter for FakeExecution {
         Ok(position)
     }
 
-    async fn close(&self, symbol: &str, _mid_price: f64) -> Result<(), ExecutionError> {
+    async fn close(
+        &self,
+        _session_id: &str,
+        symbol: &str,
+        _mid_price: f64,
+    ) -> Result<(), ExecutionError> {
         self.close_calls.lock().unwrap().push(symbol.to_string());
         *self.position.lock().unwrap() = None;
         Ok(())
@@ -139,18 +149,24 @@ fn sample(price: f64) -> MarketDataSample {
     }
 }
 
-fn config() -> PerpConfig {
-    PerpConfig {
+fn config() -> TradingSessionConfig {
+    TradingSessionConfig {
+        id: "session-1".to_string(),
         symbol: "BTC".to_string(),
-        trading_enabled: true,
-        sampling_enabled: true,
+        decision_maker: Default::default(),
         decision_frequency_seconds: 60.0,
-        sampling_frequency_seconds: 60.0,
         leverage: 2.0,
         position_size_usd: 500.0,
-        decision_maker: Default::default(),
         wallet_id: None,
+        status: TradingSessionStatus::Active,
     }
+}
+
+struct NoopLifecycle;
+
+#[async_trait]
+impl SessionLifecycle for NoopLifecycle {
+    async fn mark_closed(&self, _session_id: &str) {}
 }
 
 #[tokio::test]
@@ -163,6 +179,7 @@ async fn opens_a_position_from_flat_when_jev_says_long() {
     let log = FakeDecisionLog::default();
 
     run_decision_cycle(
+        "session-1",
         "BTC",
         &config(),
         &history,
@@ -171,6 +188,7 @@ async fn opens_a_position_from_flat_when_jev_says_long() {
         &EmptyFunding,
         &log,
         &InMemoryFailureTracker::new(),
+        &NoopLifecycle,
     )
     .await;
 
@@ -195,6 +213,7 @@ async fn repeating_the_same_direction_is_a_no_op() {
     let log = FakeDecisionLog::default();
 
     run_decision_cycle(
+        "session-1",
         "BTC",
         &config(),
         &history,
@@ -203,9 +222,11 @@ async fn repeating_the_same_direction_is_a_no_op() {
         &EmptyFunding,
         &log,
         &InMemoryFailureTracker::new(),
+        &NoopLifecycle,
     )
     .await;
     run_decision_cycle(
+        "session-1",
         "BTC",
         &config(),
         &history,
@@ -214,6 +235,7 @@ async fn repeating_the_same_direction_is_a_no_op() {
         &EmptyFunding,
         &log,
         &InMemoryFailureTracker::new(),
+        &NoopLifecycle,
     )
     .await;
 
@@ -234,6 +256,7 @@ async fn flipping_direction_closes_then_opens() {
     let log = FakeDecisionLog::default();
 
     run_decision_cycle(
+        "session-1",
         "BTC",
         &config(),
         &history,
@@ -242,9 +265,11 @@ async fn flipping_direction_closes_then_opens() {
         &EmptyFunding,
         &log,
         &InMemoryFailureTracker::new(),
+        &NoopLifecycle,
     )
     .await;
     run_decision_cycle(
+        "session-1",
         "BTC",
         &config(),
         &history,
@@ -253,6 +278,7 @@ async fn flipping_direction_closes_then_opens() {
         &EmptyFunding,
         &log,
         &InMemoryFailureTracker::new(),
+        &NoopLifecycle,
     )
     .await;
 
@@ -273,6 +299,7 @@ async fn going_flat_closes_the_position() {
     let log = FakeDecisionLog::default();
 
     run_decision_cycle(
+        "session-1",
         "BTC",
         &config(),
         &history,
@@ -281,9 +308,11 @@ async fn going_flat_closes_the_position() {
         &EmptyFunding,
         &log,
         &InMemoryFailureTracker::new(),
+        &NoopLifecycle,
     )
     .await;
     run_decision_cycle(
+        "session-1",
         "BTC",
         &config(),
         &history,
@@ -292,6 +321,7 @@ async fn going_flat_closes_the_position() {
         &EmptyFunding,
         &log,
         &InMemoryFailureTracker::new(),
+        &NoopLifecycle,
     )
     .await;
 
@@ -309,6 +339,7 @@ async fn staying_flat_while_already_flat_is_a_no_op() {
     let log = FakeDecisionLog::default();
 
     run_decision_cycle(
+        "session-1",
         "BTC",
         &config(),
         &history,
@@ -317,6 +348,7 @@ async fn staying_flat_while_already_flat_is_a_no_op() {
         &EmptyFunding,
         &log,
         &InMemoryFailureTracker::new(),
+        &NoopLifecycle,
     )
     .await;
 
@@ -335,6 +367,7 @@ async fn writes_a_decision_log_entry_even_with_no_market_data() {
     let log = FakeDecisionLog::default();
 
     run_decision_cycle(
+        "session-1",
         "BTC",
         &config(),
         &history,
@@ -343,6 +376,7 @@ async fn writes_a_decision_log_entry_even_with_no_market_data() {
         &EmptyFunding,
         &log,
         &InMemoryFailureTracker::new(),
+        &NoopLifecycle,
     )
     .await;
 
@@ -375,6 +409,7 @@ async fn every_cycle_writes_exactly_one_log_entry_across_a_full_state_machine_wa
 
     for _ in 0..5 {
         run_decision_cycle(
+            "session-1",
             "BTC",
             &config(),
             &history,
@@ -383,6 +418,7 @@ async fn every_cycle_writes_exactly_one_log_entry_across_a_full_state_machine_wa
             &EmptyFunding,
             &log,
             &InMemoryFailureTracker::new(),
+            &NoopLifecycle,
         )
         .await;
     }

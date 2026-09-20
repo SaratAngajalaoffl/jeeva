@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use super::model::PerpConfig;
+use super::model::MarketSettings;
 
-/// Thread-safe in-memory view of every PERP's current config, kept in
-/// sync with MongoDB by the change-stream watcher.
+/// Thread-safe in-memory view of every market's current settings, kept
+/// in sync with MongoDB by the change-stream watcher.
 #[derive(Debug, Clone, Default)]
 pub struct ConfigStore {
-    inner: Arc<RwLock<HashMap<String, PerpConfig>>>,
+    inner: Arc<RwLock<HashMap<String, MarketSettings>>>,
 }
 
 impl ConfigStore {
@@ -15,11 +15,11 @@ impl ConfigStore {
         Self::default()
     }
 
-    pub fn get(&self, symbol: &str) -> Option<PerpConfig> {
+    pub fn get(&self, symbol: &str) -> Option<MarketSettings> {
         self.inner.read().unwrap().get(symbol).cloned()
     }
 
-    pub fn snapshot(&self) -> HashMap<String, PerpConfig> {
+    pub fn snapshot(&self) -> HashMap<String, MarketSettings> {
         self.inner.read().unwrap().clone()
     }
 
@@ -31,16 +31,16 @@ impl ConfigStore {
         self.len() == 0
     }
 
-    /// Inserts or replaces a PERP's config, returning the prior value
-    /// (if any) so the caller can log what changed.
-    pub fn upsert(&self, config: PerpConfig) -> Option<PerpConfig> {
+    /// Inserts or replaces a market's settings, returning the prior
+    /// value (if any) so the caller can log what changed.
+    pub fn upsert(&self, config: MarketSettings) -> Option<MarketSettings> {
         self.inner
             .write()
             .unwrap()
             .insert(config.symbol.clone(), config)
     }
 
-    pub fn remove(&self, symbol: &str) -> Option<PerpConfig> {
+    pub fn remove(&self, symbol: &str) -> Option<MarketSettings> {
         self.inner.write().unwrap().remove(symbol)
     }
 }
@@ -49,17 +49,11 @@ impl ConfigStore {
 mod tests {
     use super::*;
 
-    fn sample(symbol: &str) -> PerpConfig {
-        PerpConfig {
+    fn sample(symbol: &str) -> MarketSettings {
+        MarketSettings {
             symbol: symbol.to_string(),
-            trading_enabled: false,
             sampling_enabled: false,
-            decision_frequency_seconds: 300.0,
             sampling_frequency_seconds: 60.0,
-            leverage: 1.0,
-            position_size_usd: 100.0,
-            decision_maker: Default::default(),
-            wallet_id: None,
         }
     }
 
@@ -76,7 +70,7 @@ mod tests {
         store.upsert(sample("BTC"));
 
         let mut updated = sample("BTC");
-        updated.trading_enabled = true;
+        updated.sampling_enabled = true;
 
         let previous = store.upsert(updated.clone());
         assert_eq!(previous, Some(sample("BTC")));

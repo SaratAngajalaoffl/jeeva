@@ -74,6 +74,7 @@ describe("WalletPage", () => {
         initialBalanceUsd: 10000,
         currentBalanceUsd: 10500,
         createdAt: "2026-01-01T00:00:00.000Z",
+        activeSessionId: null,
       },
       {
         id: "2",
@@ -83,6 +84,7 @@ describe("WalletPage", () => {
         initialBalanceUsd: null,
         currentBalanceUsd: null,
         createdAt: "2026-01-01T00:00:00.000Z",
+        activeSessionId: null,
       },
     ]);
 
@@ -105,6 +107,7 @@ describe("WalletPage", () => {
         initialBalanceUsd: 5000,
         currentBalanceUsd: 5000,
         createdAt: "2026-01-01T00:00:00.000Z",
+        activeSessionId: null,
       },
     });
 
@@ -156,6 +159,7 @@ describe("WalletPage", () => {
     fetchFundingPaymentsMock.mockResolvedValue([
       {
         time: "2026-01-01T01:00:00.000Z",
+        sessionId: null,
         symbol: "BTC",
         direction: "long",
         fundingRate: 0.0001,

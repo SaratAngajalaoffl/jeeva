@@ -32,10 +32,20 @@ pub struct OpenPosition {
 /// tested without a database.
 #[async_trait]
 pub trait ExecutionAdapter: Send + Sync {
-    async fn get_position(&self, symbol: &str) -> Result<Option<OpenPosition>, ExecutionError>;
+    /// `session_id` disambiguates concurrent trading sessions on the
+    /// same symbol (each session's position is tracked independently);
+    /// `symbol` is still needed for logging and, on `LiveExecutionAdapter`,
+    /// for the exchange calls themselves (Hyperliquid has no session
+    /// concept — it nets to one position per wallet+symbol regardless).
+    async fn get_position(
+        &self,
+        session_id: &str,
+        symbol: &str,
+    ) -> Result<Option<OpenPosition>, ExecutionError>;
 
     async fn open(
         &self,
+        session_id: &str,
         symbol: &str,
         direction: Direction,
         position_size_usd: f64,
@@ -43,8 +53,13 @@ pub trait ExecutionAdapter: Send + Sync {
         mid_price: f64,
     ) -> Result<OpenPosition, ExecutionError>;
 
-    /// No-ops if there is no open position for the symbol.
-    async fn close(&self, symbol: &str, mid_price: f64) -> Result<(), ExecutionError>;
+    /// No-ops if there is no open position for the session.
+    async fn close(
+        &self,
+        session_id: &str,
+        symbol: &str,
+        mid_price: f64,
+    ) -> Result<(), ExecutionError>;
 
     /// Every currently open mock position, symbol-keyed. Used by the
     /// funding sweep, which applies to all open positions regardless of
@@ -112,11 +127,15 @@ impl MockExecutionAdapter {
 
 #[async_trait]
 impl ExecutionAdapter for MockExecutionAdapter {
-    async fn get_position(&self, symbol: &str) -> Result<Option<OpenPosition>, ExecutionError> {
+    async fn get_position(
+        &self,
+        session_id: &str,
+        _symbol: &str,
+    ) -> Result<Option<OpenPosition>, ExecutionError> {
         let row = sqlx::query_as::<_, (String, f64, f64, DateTime<Utc>)>(
-            "SELECT direction, entry_price, notional_usd, opened_at FROM mock_positions WHERE symbol = $1",
+            "SELECT direction, entry_price, notional_usd, opened_at FROM mock_positions WHERE session_id = $1::uuid",
         )
-        .bind(symbol)
+        .bind(session_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| ExecutionError(format!("failed to read position: {e}")))?;
@@ -137,6 +156,7 @@ impl ExecutionAdapter for MockExecutionAdapter {
 
     async fn open(
         &self,
+        session_id: &str,
         symbol: &str,
         direction: Direction,
         position_size_usd: f64,
@@ -148,11 +168,12 @@ impl ExecutionAdapter for MockExecutionAdapter {
 
         let (opened_at,) = sqlx::query_as::<_, (DateTime<Utc>,)>(
             r#"
-            INSERT INTO mock_positions (symbol, direction, entry_price, notional_usd, wallet_id)
-            VALUES ($1, $2, $3, $4, $5::uuid)
+            INSERT INTO mock_positions (session_id, symbol, direction, entry_price, notional_usd, wallet_id)
+            VALUES ($1::uuid, $2, $3, $4, $5, $6::uuid)
             RETURNING opened_at
             "#,
         )
+        .bind(session_id)
         .bind(symbol)
         .bind(direction.as_str())
         .bind(entry_price)
@@ -164,6 +185,7 @@ impl ExecutionAdapter for MockExecutionAdapter {
 
         tracing::info!(
             symbol,
+            session_id,
             direction = direction.as_str(),
             entry_price,
             notional_usd,
@@ -178,8 +200,13 @@ impl ExecutionAdapter for MockExecutionAdapter {
         })
     }
 
-    async fn close(&self, symbol: &str, mid_price: f64) -> Result<(), ExecutionError> {
-        let Some(position) = self.get_position(symbol).await? else {
+    async fn close(
+        &self,
+        session_id: &str,
+        symbol: &str,
+        mid_price: f64,
+    ) -> Result<(), ExecutionError> {
+        let Some(position) = self.get_position(session_id, symbol).await? else {
             return Ok(());
         };
 
@@ -206,8 +233,8 @@ impl ExecutionAdapter for MockExecutionAdapter {
         .await
         .map_err(|e| ExecutionError(format!("failed to update wallet balance: {e}")))?;
 
-        sqlx::query("DELETE FROM mock_positions WHERE symbol = $1")
-            .bind(symbol)
+        sqlx::query("DELETE FROM mock_positions WHERE session_id = $1::uuid")
+            .bind(session_id)
             .execute(&mut *tx)
             .await
             .map_err(|e| ExecutionError(format!("failed to delete position: {e}")))?;
@@ -218,6 +245,7 @@ impl ExecutionAdapter for MockExecutionAdapter {
 
         tracing::info!(
             symbol,
+            session_id,
             direction = position.direction.as_str(),
             entry_price = position.entry_price,
             exit_price,
@@ -229,9 +257,14 @@ impl ExecutionAdapter for MockExecutionAdapter {
     }
 
     async fn list_open_positions(&self) -> Result<Vec<(String, OpenPosition)>, ExecutionError> {
+        // Scoped to this adapter's own wallet: each `MockExecutionAdapter`
+        // is wallet-scoped, and the funding sweep runs one cycle per
+        // wallet (see `crate::funding::run`), so an unscoped query here
+        // would double-apply funding once per other wallet in the system.
         let rows = sqlx::query_as::<_, (String, String, f64, f64, DateTime<Utc>)>(
-            "SELECT symbol, direction, entry_price, notional_usd, opened_at FROM mock_positions",
+            "SELECT symbol, direction, entry_price, notional_usd, opened_at FROM mock_positions WHERE wallet_id = $1::uuid",
         )
+        .bind(&self.wallet_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| ExecutionError(format!("failed to list positions: {e}")))?;

@@ -1,11 +1,11 @@
 use serde_json::{json, Map, Value as JsonValue};
 
-use super::model::PerpConfig;
+use super::model::MarketSettings;
 
-/// Computes which fields differ between an old and new config, keyed by
-/// field name, each mapping to `{"from": ..., "to": ...}`. Returns an
-/// empty map if nothing changed.
-pub fn diff_fields(old: &PerpConfig, new: &PerpConfig) -> Map<String, JsonValue> {
+/// Computes which fields differ between an old and new market settings,
+/// keyed by field name, each mapping to `{"from": ..., "to": ...}`.
+/// Returns an empty map if nothing changed.
+pub fn diff_fields(old: &MarketSettings, new: &MarketSettings) -> Map<String, JsonValue> {
     let mut changes = Map::new();
 
     macro_rules! field {
@@ -19,28 +19,23 @@ pub fn diff_fields(old: &PerpConfig, new: &PerpConfig) -> Map<String, JsonValue>
         };
     }
 
-    field!("tradingEnabled", trading_enabled);
     field!("samplingEnabled", sampling_enabled);
-    field!("decisionFrequencySeconds", decision_frequency_seconds);
     field!("samplingFrequencySeconds", sampling_frequency_seconds);
-    field!("leverage", leverage);
-    field!("positionSizeUsd", position_size_usd);
-    field!("walletId", wallet_id);
 
     changes
 }
 
-/// Logs a structured event for a PERP config change: a `created` event
-/// for a brand-new symbol, a `changed` event naming exactly which fields
-/// differed (skipped entirely if nothing actually changed), or a
+/// Logs a structured event for a market settings change: a `created`
+/// event for a brand-new symbol, a `changed` event naming exactly which
+/// fields differed (skipped entirely if nothing actually changed), or a
 /// `removed` event when a symbol disappears from the collection.
-pub fn log_change(old: Option<&PerpConfig>, new: &PerpConfig) {
+pub fn log_change(old: Option<&MarketSettings>, new: &MarketSettings) {
     match old {
         None => {
             tracing::info!(
                 symbol = %new.symbol,
                 config = %serde_json::to_string(new).unwrap_or_default(),
-                "perp config created"
+                "market settings created"
             );
         }
         Some(old) => {
@@ -51,31 +46,25 @@ pub fn log_change(old: Option<&PerpConfig>, new: &PerpConfig) {
             tracing::info!(
                 symbol = %new.symbol,
                 changes = %JsonValue::Object(changes).to_string(),
-                "perp config changed"
+                "market settings changed"
             );
         }
     }
 }
 
 pub fn log_removed(symbol: &str) {
-    tracing::info!(symbol = %symbol, "perp config removed");
+    tracing::info!(symbol = %symbol, "market settings removed");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn sample(symbol: &str) -> PerpConfig {
-        PerpConfig {
+    fn sample(symbol: &str) -> MarketSettings {
+        MarketSettings {
             symbol: symbol.to_string(),
-            trading_enabled: false,
             sampling_enabled: false,
-            decision_frequency_seconds: 300.0,
             sampling_frequency_seconds: 60.0,
-            leverage: 1.0,
-            position_size_usd: 100.0,
-            decision_maker: Default::default(),
-            wallet_id: None,
         }
     }
 
@@ -90,38 +79,22 @@ mod tests {
     fn detects_a_single_changed_field() {
         let old = sample("BTC");
         let mut new = sample("BTC");
-        new.trading_enabled = true;
+        new.sampling_enabled = true;
 
         let changes = diff_fields(&old, &new);
         assert_eq!(changes.len(), 1);
-        assert_eq!(changes["tradingEnabled"]["from"], json!(false));
-        assert_eq!(changes["tradingEnabled"]["to"], json!(true));
-    }
-
-    #[test]
-    fn detects_multiple_changed_fields_independently() {
-        let old = sample("BTC");
-        let mut new = sample("BTC");
-        new.leverage = 10.0;
-        new.position_size_usd = 500.0;
-
-        let changes = diff_fields(&old, &new);
-        assert_eq!(changes.len(), 2);
-        assert!(changes.contains_key("leverage"));
-        assert!(changes.contains_key("positionSizeUsd"));
-        assert!(!changes.contains_key("tradingEnabled"));
+        assert_eq!(changes["samplingEnabled"]["from"], json!(false));
+        assert_eq!(changes["samplingEnabled"]["to"], json!(true));
     }
 
     #[test]
     fn detects_frequency_changes() {
         let old = sample("BTC");
         let mut new = sample("BTC");
-        new.decision_frequency_seconds = 30.0;
         new.sampling_frequency_seconds = 10.0;
 
         let changes = diff_fields(&old, &new);
-        assert_eq!(changes.len(), 2);
-        assert_eq!(changes["decisionFrequencySeconds"]["to"], json!(30.0));
+        assert_eq!(changes.len(), 1);
         assert_eq!(changes["samplingFrequencySeconds"]["to"], json!(10.0));
     }
 }

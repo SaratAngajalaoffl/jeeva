@@ -147,7 +147,32 @@ export async function createWallet(
   });
 }
 
+export class WalletInUseError extends Error {
+  constructor() {
+    super("This wallet is attached to an active trading session");
+    this.name = "WalletInUseError";
+  }
+}
+
+/**
+ * The id of the non-closed trading session (if any) a wallet is
+ * currently attached to. `null` means the wallet is free to attach.
+ */
+export async function getWalletSessionId(
+  pool: Pool,
+  walletId: string,
+): Promise<string | null> {
+  const result = await pool.query<{ id: string }>(
+    "SELECT id FROM trading_sessions WHERE wallet_id = $1 AND status <> 'closed'",
+    [walletId],
+  );
+  return result.rows[0]?.id ?? null;
+}
+
 export async function deleteWallet(pool: Pool, id: string): Promise<boolean> {
+  if (await getWalletSessionId(pool, id)) {
+    throw new WalletInUseError();
+  }
   const result = await pool.query("DELETE FROM wallets WHERE id = $1", [id]);
   return (result.rowCount ?? 0) > 0;
 }

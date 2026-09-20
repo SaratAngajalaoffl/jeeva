@@ -1,4 +1,16 @@
-# Jeeva
+<div align="center">
+  <img src="./docs/assets/logo.svg" alt="Jeeva" height="72">
+
+  <p><strong>AI-assisted trading for Hyperliquid perpetual futures.</strong></p>
+
+  [![CI](https://github.com/SaratAngajalaoffl/jeeva/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/SaratAngajalaoffl/jeeva/actions/workflows/ci.yml)
+  [![Publish images](https://github.com/SaratAngajalaoffl/jeeva/actions/workflows/publish.yml/badge.svg?branch=main)](https://github.com/SaratAngajalaoffl/jeeva/actions/workflows/publish.yml)
+  [![Last commit](https://img.shields.io/github/last-commit/SaratAngajalaoffl/jeeva)](https://github.com/SaratAngajalaoffl/jeeva/commits/main)
+  [![Open issues](https://img.shields.io/github/issues/SaratAngajalaoffl/jeeva)](https://github.com/SaratAngajalaoffl/jeeva/issues)
+  [![Node](https://img.shields.io/badge/node-20-339933?logo=node.js&logoColor=white)](https://nodejs.org)
+  [![Rust](https://img.shields.io/badge/rust-stable-000000?logo=rust&logoColor=white)](https://www.rust-lang.org)
+  [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+</div>
 
 Jeeva is an AI-assisted trading application for Hyperliquid perpetual futures. It watches the market, periodically asks an AI decision model ("Jev") whether a given market should be long, short, or flat, and moves each position to match — either against a simulated paper-trading wallet or a real Hyperliquid wallet.
 
@@ -138,3 +150,11 @@ To use real Jev decisions or real Hyperliquid execution, set the corresponding e
 | `HYPERLIQUID_PRIVATE_KEY` (+ optional `HYPERLIQUID_TESTNET`) | Live execution |
 
 See [`CONTEXT.md`](./CONTEXT.md) for the project's internal glossary and naming conventions.
+
+## Contributing
+
+Contributions are welcome — see [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the dev workflow, lint/test commands, and PR guidelines.
+
+## License
+
+MIT — see [`LICENSE`](./LICENSE).

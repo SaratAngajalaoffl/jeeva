@@ -45,7 +45,11 @@ impl FakeExecution {
 
 #[async_trait]
 impl ExecutionAdapter for FakeExecution {
-    async fn get_position(&self, symbol: &str) -> Result<Option<OpenPosition>, ExecutionError> {
+    async fn get_position(
+        &self,
+        _session_id: &str,
+        symbol: &str,
+    ) -> Result<Option<OpenPosition>, ExecutionError> {
         Ok(self
             .positions
             .lock()
@@ -57,6 +61,7 @@ impl ExecutionAdapter for FakeExecution {
 
     async fn open(
         &self,
+        _session_id: &str,
         _symbol: &str,
         _direction: Direction,
         _position_size_usd: f64,
@@ -66,7 +71,12 @@ impl ExecutionAdapter for FakeExecution {
         unimplemented!("not exercised by funding cycle tests")
     }
 
-    async fn close(&self, _symbol: &str, _mid_price: f64) -> Result<(), ExecutionError> {
+    async fn close(
+        &self,
+        _session_id: &str,
+        _symbol: &str,
+        _mid_price: f64,
+    ) -> Result<(), ExecutionError> {
         unimplemented!("not exercised by funding cycle tests")
     }
 

@@ -85,13 +85,28 @@ function WalletCard({
       <div className="flex items-start justify-between gap-2">
         <div className="flex flex-col gap-1">
           <span className="font-medium text-text">{wallet.label}</span>
-          <KindBadge kind={wallet.kind} />
+          <div className="flex items-center gap-1.5">
+            <KindBadge kind={wallet.kind} />
+            {wallet.activeSessionId && (
+              <span
+                className="inline-flex items-center rounded-full border border-peach/50 bg-peach/10 px-2.5 py-0.5 text-xs font-medium text-peach"
+                title={`Attached to session ${wallet.activeSessionId}`}
+              >
+                In use
+              </span>
+            )}
+          </div>
         </div>
         <button
           type="button"
-          title="Delete wallet"
+          title={
+            wallet.activeSessionId
+              ? "Attached to an active session — close it first"
+              : "Delete wallet"
+          }
+          disabled={Boolean(wallet.activeSessionId)}
           onClick={() => onDelete(wallet.id)}
-          className="text-subtext-0 transition-colors hover:text-destructive"
+          className="text-subtext-0 transition-colors hover:text-destructive disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-subtext-0"
         >
           <Trash2 size={16} />
         </button>

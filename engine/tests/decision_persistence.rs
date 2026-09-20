@@ -57,15 +57,22 @@ mod execution {
         let pool = pool().await;
         let _guard = WALLET_LOCK.lock().await;
         let wallet_id = reset_wallet(&pool, 10_000.0).await;
-        sqlx::query("DELETE FROM mock_positions WHERE symbol = $1")
-            .bind("TESTOPEN")
+        sqlx::query("DELETE FROM mock_positions WHERE session_id = $1::uuid")
+            .bind("00000000-0000-0000-0000-0000000000e1")
             .execute(&pool)
             .await
             .unwrap();
 
         let adapter = MockExecutionAdapter::new(pool.clone(), 0.0, wallet_id);
         let position = adapter
-            .open("TESTOPEN", Direction::Long, 100.0, 5.0, 200.0)
+            .open(
+                "00000000-0000-0000-0000-0000000000e1",
+                "TESTOPEN",
+                Direction::Long,
+                100.0,
+                5.0,
+                200.0,
+            )
             .await
             .unwrap();
 
@@ -73,7 +80,11 @@ mod execution {
         assert_eq!(position.entry_price, 200.0);
         assert_eq!(position.notional_usd, 500.0);
 
-        let fetched = adapter.get_position("TESTOPEN").await.unwrap().unwrap();
+        let fetched = adapter
+            .get_position("00000000-0000-0000-0000-0000000000e1", "TESTOPEN")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(fetched, position);
         assert_eq!(wallet_balance(&pool).await, 10_000.0);
     }
@@ -83,24 +94,38 @@ mod execution {
         let pool = pool().await;
         let _guard = WALLET_LOCK.lock().await;
         let wallet_id = reset_wallet(&pool, 10_000.0).await;
-        sqlx::query("DELETE FROM mock_positions WHERE symbol = $1")
-            .bind("TESTCLOSEWIN")
+        sqlx::query("DELETE FROM mock_positions WHERE session_id = $1::uuid")
+            .bind("00000000-0000-0000-0000-0000000000e2")
             .execute(&pool)
             .await
             .unwrap();
 
         let adapter = MockExecutionAdapter::new(pool.clone(), 0.0, wallet_id);
         adapter
-            .open("TESTCLOSEWIN", Direction::Long, 1000.0, 1.0, 100.0)
+            .open(
+                "00000000-0000-0000-0000-0000000000e2",
+                "TESTCLOSEWIN",
+                Direction::Long,
+                1000.0,
+                1.0,
+                100.0,
+            )
             .await
             .unwrap();
 
-        adapter.close("TESTCLOSEWIN", 110.0).await.unwrap();
+        adapter
+            .close(
+                "00000000-0000-0000-0000-0000000000e2",
+                "TESTCLOSEWIN",
+                110.0,
+            )
+            .await
+            .unwrap();
 
         // (110 - 100) / 100 * 1000 = +100
         assert_eq!(wallet_balance(&pool).await, 10_100.0);
         assert!(adapter
-            .get_position("TESTCLOSEWIN")
+            .get_position("00000000-0000-0000-0000-0000000000e2", "TESTCLOSEWIN")
             .await
             .unwrap()
             .is_none());
@@ -111,20 +136,34 @@ mod execution {
         let pool = pool().await;
         let _guard = WALLET_LOCK.lock().await;
         let wallet_id = reset_wallet(&pool, 10_000.0).await;
-        sqlx::query("DELETE FROM mock_positions WHERE symbol = $1")
-            .bind("TESTCLOSELOSE")
+        sqlx::query("DELETE FROM mock_positions WHERE session_id = $1::uuid")
+            .bind("00000000-0000-0000-0000-0000000000e3")
             .execute(&pool)
             .await
             .unwrap();
 
         let adapter = MockExecutionAdapter::new(pool.clone(), 0.0, wallet_id);
         adapter
-            .open("TESTCLOSELOSE", Direction::Short, 1000.0, 1.0, 100.0)
+            .open(
+                "00000000-0000-0000-0000-0000000000e3",
+                "TESTCLOSELOSE",
+                Direction::Short,
+                1000.0,
+                1.0,
+                100.0,
+            )
             .await
             .unwrap();
 
         // price rose from 100 to 110: a short loses
-        adapter.close("TESTCLOSELOSE", 110.0).await.unwrap();
+        adapter
+            .close(
+                "00000000-0000-0000-0000-0000000000e3",
+                "TESTCLOSELOSE",
+                110.0,
+            )
+            .await
+            .unwrap();
 
         assert_eq!(wallet_balance(&pool).await, 9_900.0);
     }
@@ -134,14 +173,17 @@ mod execution {
         let pool = pool().await;
         let _guard = WALLET_LOCK.lock().await;
         let wallet_id = reset_wallet(&pool, 5_000.0).await;
-        sqlx::query("DELETE FROM mock_positions WHERE symbol = $1")
-            .bind("TESTNOOP")
+        sqlx::query("DELETE FROM mock_positions WHERE session_id = $1::uuid")
+            .bind("00000000-0000-0000-0000-0000000000e4")
             .execute(&pool)
             .await
             .unwrap();
 
         let adapter = MockExecutionAdapter::new(pool.clone(), 0.0, wallet_id);
-        adapter.close("TESTNOOP", 100.0).await.unwrap();
+        adapter
+            .close("00000000-0000-0000-0000-0000000000e4", "TESTNOOP", 100.0)
+            .await
+            .unwrap();
 
         assert_eq!(wallet_balance(&pool).await, 5_000.0);
     }

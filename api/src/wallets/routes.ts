@@ -9,8 +9,10 @@ import {
   createWallet,
   deleteWallet,
   getWallet,
+  getWalletSessionId,
   listWallets,
   WalletAlreadyExistsError,
+  WalletInUseError,
   type WalletKind,
 } from "./repository.js";
 import { getWalletBalanceUsd, listSelectableWallets } from "./eligibility.js";
@@ -29,7 +31,13 @@ export function createWalletsRouter(
 
   router.get("/", async (_req, res) => {
     const wallets = await listWallets(pgPool);
-    res.status(200).json({ wallets });
+    const withUsage = await Promise.all(
+      wallets.map(async (wallet) => ({
+        ...wallet,
+        activeSessionId: await getWalletSessionId(pgPool, wallet.id),
+      })),
+    );
+    res.status(200).json({ wallets: withUsage });
   });
 
   router.get("/selectable", async (req, res) => {
@@ -112,12 +120,20 @@ export function createWalletsRouter(
   });
 
   router.delete("/:id", async (req, res) => {
-    const deleted = await deleteWallet(pgPool, req.params.id);
-    if (!deleted) {
-      res.status(404).json({ error: "wallet not found" });
-      return;
+    try {
+      const deleted = await deleteWallet(pgPool, req.params.id);
+      if (!deleted) {
+        res.status(404).json({ error: "wallet not found" });
+        return;
+      }
+      res.status(204).send();
+    } catch (error) {
+      if (error instanceof WalletInUseError) {
+        res.status(409).json({ error: error.message });
+        return;
+      }
+      throw error;
     }
-    res.status(204).send();
   });
 
   return router;

@@ -1,0 +1,227 @@
+import { Router } from "express";
+import type { Db } from "mongodb";
+import type { Pool } from "pg";
+import { requireAuth } from "../auth/requireAuth.js";
+import type { HyperliquidClient } from "../hyperliquid/client.js";
+import { isValidFrequencySeconds } from "../perps/frequency.js";
+import { isValidLeverage, isValidPositionSizeUsd } from "../perps/sizing.js";
+import { isWalletEligible } from "../wallets/eligibility.js";
+import {
+  createTradingSession,
+  getTradingSession,
+  hardCloseTradingSession,
+  listTradingSessions,
+  setSessionWallet,
+  softCloseTradingSession,
+  updateTradingSessionConfig,
+  WalletInUseError,
+  type DecisionMaker,
+} from "./repository.js";
+
+const DECISION_MAKERS: readonly DecisionMaker[] = [
+  "random",
+  "typesafe",
+  "openrouter",
+];
+
+function isValidDecisionMaker(value: unknown): value is DecisionMaker {
+  return DECISION_MAKERS.includes(value as DecisionMaker);
+}
+
+export function createTradingSessionsRouter(
+  db: Db,
+  pgPool: Pool,
+  hyperliquidClient: HyperliquidClient,
+): Router {
+  const router = Router();
+  router.use(requireAuth);
+
+  router.get("/perps/:symbol/trading-sessions", async (req, res) => {
+    const sessions = await listTradingSessions(pgPool, req.params.symbol);
+    res.status(200).json({ sessions });
+  });
+
+  router.get("/trading-sessions", async (_req, res) => {
+    const sessions = await listTradingSessions(pgPool);
+    res.status(200).json({ sessions });
+  });
+
+  router.post("/perps/:symbol/trading-sessions", async (req, res) => {
+    const { symbol } = req.params;
+    const {
+      decisionMaker,
+      decisionFrequencySeconds,
+      leverage,
+      positionSizeUsd,
+      walletId,
+    } = req.body ?? {};
+
+    if (
+      !isValidDecisionMaker(decisionMaker) ||
+      !isValidFrequencySeconds(decisionFrequencySeconds) ||
+      !isValidLeverage(leverage) ||
+      !isValidPositionSizeUsd(positionSizeUsd) ||
+      (walletId !== undefined &&
+        walletId !== null &&
+        typeof walletId !== "string")
+    ) {
+      res.status(400).json({ error: "invalid request" });
+      return;
+    }
+
+    const resolvedWalletId: string | null = walletId ?? null;
+    if (
+      resolvedWalletId &&
+      !(await isWalletEligible(
+        db,
+        pgPool,
+        hyperliquidClient,
+        resolvedWalletId,
+        positionSizeUsd,
+      ))
+    ) {
+      res.status(400).json({
+        error:
+          "the selected wallet must match the current engine mode and have sufficient balance",
+      });
+      return;
+    }
+
+    try {
+      const session = await createTradingSession(pgPool, {
+        symbol,
+        decisionMaker,
+        decisionFrequencySeconds,
+        leverage,
+        positionSizeUsd,
+        walletId: resolvedWalletId,
+      });
+      res.status(201).json(session);
+    } catch (error) {
+      if (error instanceof WalletInUseError) {
+        res.status(409).json({ error: error.message });
+        return;
+      }
+      throw error;
+    }
+  });
+
+  router.get("/trading-sessions/:id", async (req, res) => {
+    const session = await getTradingSession(pgPool, req.params.id);
+    if (!session) {
+      res.status(404).json({ error: "trading session not found" });
+      return;
+    }
+    res.status(200).json(session);
+  });
+
+  router.patch("/trading-sessions/:id", async (req, res) => {
+    const { id } = req.params;
+    const {
+      decisionMaker,
+      decisionFrequencySeconds,
+      leverage,
+      positionSizeUsd,
+    } = req.body ?? {};
+
+    if (
+      (decisionMaker !== undefined && !isValidDecisionMaker(decisionMaker)) ||
+      (decisionFrequencySeconds !== undefined &&
+        !isValidFrequencySeconds(decisionFrequencySeconds)) ||
+      (leverage !== undefined && !isValidLeverage(leverage)) ||
+      (positionSizeUsd !== undefined &&
+        !isValidPositionSizeUsd(positionSizeUsd))
+    ) {
+      res.status(400).json({ error: "invalid request" });
+      return;
+    }
+
+    const session = await updateTradingSessionConfig(pgPool, id, {
+      decisionMaker,
+      decisionFrequencySeconds,
+      leverage,
+      positionSizeUsd,
+    });
+    if (!session) {
+      res.status(404).json({ error: "trading session not found" });
+      return;
+    }
+    res.status(200).json(session);
+  });
+
+  router.post("/trading-sessions/:id/attach-wallet", async (req, res) => {
+    const { id } = req.params;
+    const { walletId } = req.body ?? {};
+
+    if (typeof walletId !== "string" || !walletId.trim()) {
+      res.status(400).json({ error: "invalid request" });
+      return;
+    }
+
+    const existing = await getTradingSession(pgPool, id);
+    if (!existing) {
+      res.status(404).json({ error: "trading session not found" });
+      return;
+    }
+
+    if (
+      !(await isWalletEligible(
+        db,
+        pgPool,
+        hyperliquidClient,
+        walletId,
+        existing.positionSizeUsd,
+      ))
+    ) {
+      res.status(400).json({
+        error:
+          "the selected wallet must match the current engine mode and have sufficient balance",
+      });
+      return;
+    }
+
+    try {
+      const session = await setSessionWallet(pgPool, id, walletId);
+      res.status(200).json(session);
+    } catch (error) {
+      if (error instanceof WalletInUseError) {
+        res.status(409).json({ error: error.message });
+        return;
+      }
+      throw error;
+    }
+  });
+
+  router.post("/trading-sessions/:id/detach-wallet", async (req, res) => {
+    const session = await setSessionWallet(pgPool, req.params.id, null);
+    if (!session) {
+      res.status(404).json({ error: "trading session not found" });
+      return;
+    }
+    res.status(200).json(session);
+  });
+
+  router.post("/trading-sessions/:id/soft-close", async (req, res) => {
+    const session = await softCloseTradingSession(pgPool, req.params.id);
+    if (!session) {
+      res.status(409).json({
+        error: "trading session not found or not in a closable state",
+      });
+      return;
+    }
+    res.status(200).json(session);
+  });
+
+  router.post("/trading-sessions/:id/hard-close", async (req, res) => {
+    const session = await hardCloseTradingSession(pgPool, req.params.id);
+    if (!session) {
+      res.status(409).json({
+        error: "trading session not found or not in a closable state",
+      });
+      return;
+    }
+    res.status(200).json(session);
+  });
+
+  return router;
+}

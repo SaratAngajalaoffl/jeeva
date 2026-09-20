@@ -6,6 +6,7 @@ import Link from "next/link";
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
 import {
   checkSession,
+  fetchAllTradingSessions,
   fetchDecisions,
   fetchFundingPayments,
   fetchPerpHealth,
@@ -18,6 +19,7 @@ import {
   type Perp,
   type PerpHealth,
   type Position,
+  type TradingSession,
   type Wallet,
 } from "@/lib/api";
 import { SiteHeader } from "@/components/SiteHeader";
@@ -34,6 +36,7 @@ export default function DashboardPage() {
   const [checking, setChecking] = useState(true);
 
   const [perps, setPerps] = useState<Perp[] | null>(null);
+  const [sessions, setSessions] = useState<TradingSession[]>([]);
   const [positions, setPositions] = useState<Position[] | null>(null);
   const [decisions, setDecisions] = useState<DecisionLogEntry[] | null>(null);
   const [wallets, setWallets] = useState<Wallet[] | undefined>(undefined);
@@ -62,6 +65,7 @@ export default function DashboardPage() {
   useEffect(() => {
     if (checking) return;
     fetchPerps().then(setPerps).catch(() => setPerps([]));
+    fetchAllTradingSessions().then(setSessions).catch(() => setSessions([]));
     fetchPositions().then(setPositions).catch(() => setPositions([]));
     fetchDecisions().then(setDecisions).catch(() => setDecisions([]));
     fetchWallets().then(setWallets).catch(() => setWallets([]));
@@ -93,9 +97,14 @@ export default function DashboardPage() {
     (d) => d.positionAction && ORDER_ACTIONS.has(d.positionAction),
   ) ?? [];
 
-  const positionSizeBySymbol = new Map(
-    (perps ?? []).map((p) => [p.symbol, p.positionSizeUsd]),
-  );
+  const positionSizeBySymbol = new Map<string, number>();
+  for (const session of sessions) {
+    if (session.status === "closed") continue;
+    positionSizeBySymbol.set(
+      session.symbol,
+      (positionSizeBySymbol.get(session.symbol) ?? 0) + session.positionSizeUsd,
+    );
+  }
   const totalVolumeUsd = orders.reduce(
     (sum, d) => sum + (positionSizeBySymbol.get(d.symbol) ?? 0),
     0,

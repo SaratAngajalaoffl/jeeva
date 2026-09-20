@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use engine::config::{ConfigStore, PerpConfig};
+use engine::config::{ConfigStore, MarketSettings};
 use engine::market_data::{
     self, MarketDataClient, MarketDataError, MarketDataSample, MarketDataWriter,
 };
@@ -57,17 +57,11 @@ impl MarketDataWriter for FakeWriter {
     }
 }
 
-fn config(symbol: &str, sampling_enabled: bool, frequency_seconds: f64) -> PerpConfig {
-    PerpConfig {
+fn config(symbol: &str, sampling_enabled: bool, frequency_seconds: f64) -> MarketSettings {
+    MarketSettings {
         symbol: symbol.to_string(),
-        trading_enabled: false,
         sampling_enabled,
-        decision_frequency_seconds: 300.0,
         sampling_frequency_seconds: frequency_seconds,
-        leverage: 1.0,
-        position_size_usd: 100.0,
-        decision_maker: Default::default(),
-        wallet_id: None,
     }
 }
 

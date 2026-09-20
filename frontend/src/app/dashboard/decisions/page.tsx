@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Clock, XCircle } from "lucide-react";
 import {
+  fetchAllTradingSessions,
   fetchDecisions,
   fetchPerpHealth,
   fetchPerpStats,
@@ -13,6 +14,7 @@ import {
   type PerpHealth,
   type PerpStats,
   type Position,
+  type TradingSession,
 } from "@/lib/api";
 import { SiteHeader } from "@/components/SiteHeader";
 import { Card, Label, Select, Skeleton, StatTile } from "@/components/ui";
@@ -179,6 +181,7 @@ export default function DecisionsPage() {
   const [positions, setPositions] = useState<Position[] | null>(null);
   const [perpStats, setPerpStats] = useState<PerpStats[]>([]);
   const [perpHealth, setPerpHealth] = useState<PerpHealth[]>([]);
+  const [sessions, setSessions] = useState<TradingSession[]>([]);
   const [decisions, setDecisions] = useState<DecisionLogEntry[] | null>(null);
   const [symbolFilter, setSymbolFilter] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
@@ -196,10 +199,13 @@ export default function DecisionsPage() {
     fetchPerpHealth()
       .then(setPerpHealth)
       .catch(() => setPerpHealth([]));
+    fetchAllTradingSessions()
+      .then(setSessions)
+      .catch(() => setSessions([]));
   }, []);
 
   useEffect(() => {
-    fetchDecisions(symbolFilter || undefined)
+    fetchDecisions({ symbol: symbolFilter || undefined })
       .then(setDecisions)
       .catch(() => setError("Failed to load decision history"));
   }, [symbolFilter]);
@@ -213,7 +219,10 @@ export default function DecisionsPage() {
     [perpHealth],
   );
 
-  const tradingPerps = (perps ?? []).filter((p) => p.tradingEnabled);
+  const tradedSymbols = new Set(
+    sessions.filter((s) => s.status !== "closed").map((s) => s.symbol),
+  );
+  const tradingPerps = (perps ?? []).filter((p) => tradedSymbols.has(p.symbol));
   const openPositions = positions ?? [];
   const longCount = openPositions.filter((p) => p.direction === "long").length;
   const shortCount = openPositions.filter(

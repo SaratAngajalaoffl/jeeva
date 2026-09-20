@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
+use sqlx::PgPool;
 use tokio::task::JoinHandle;
 use tokio::time::{interval_at, Instant, MissedTickBehavior};
 
@@ -11,48 +13,88 @@ use super::execution::ExecutionAdapter;
 use super::health::FailureTracker;
 use super::history::{build_context_summary, MarketDataHistoryReader};
 use super::log::{DecisionLogEntry, DecisionLogWriter};
-use super::model::decide_action;
-use crate::config::{ConfigStore, PerpConfig};
+use super::model::{decide_action, JevDecision, Probabilities, TargetDirection};
 use crate::funding::FundingHistoryReader;
 use crate::mode::ModeStore;
 use crate::scheduler::{delay_until_next_boundary, reconcile};
+use crate::session::{SessionStore, TradingSessionConfig, TradingSessionStatus};
 use crate::wallets::WalletRegistry;
 
 const HISTORY_WINDOW: u32 = 1000;
 const AUTO_FLATTEN_THRESHOLD: u32 = 5;
 
-/// The set of symbols that should currently be evaluated, each mapped
-/// to its configured decision frequency (in seconds).
-pub fn desired_state(configs: &HashMap<String, PerpConfig>) -> HashMap<String, f64> {
-    configs
+/// Transitions a trading session to `closed` once the engine has
+/// finished flattening it (soft or hard close). Abstracted behind a
+/// trait so `run_decision_cycle` stays DB-free and directly testable.
+#[async_trait]
+pub trait SessionLifecycle: Send + Sync {
+    async fn mark_closed(&self, session_id: &str);
+}
+
+pub struct PostgresSessionLifecycle {
+    pool: PgPool,
+}
+
+impl PostgresSessionLifecycle {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl SessionLifecycle for PostgresSessionLifecycle {
+    async fn mark_closed(&self, session_id: &str) {
+        crate::session::close_session(&self.pool, session_id).await;
+    }
+}
+
+/// The set of trading sessions that should currently be evaluated, each
+/// mapped to its configured decision frequency (in seconds). Every
+/// non-closed session runs a task — including `soft_closing`/
+/// `hard_closing` ones, whose task flattens the position and then
+/// closes the session itself (see `run_decision_cycle`).
+pub fn desired_state(sessions: &HashMap<String, TradingSessionConfig>) -> HashMap<String, f64> {
+    sessions
         .iter()
-        .filter(|(_, c)| c.trading_enabled)
-        .map(|(symbol, c)| (symbol.clone(), c.decision_frequency_seconds))
+        .map(|(id, s)| (id.clone(), s.decision_frequency_seconds))
         .collect()
 }
 
-/// Runs a single decision cycle for one PERP: builds context from
-/// recent market history, asks its configured `DecisionMaker` for a
-/// Target Direction, compares it to the current Position State, applies
-/// the resulting action, and always writes a decision-log row —
-/// including when there's no market data yet or the decision
-/// maker/execution fails, so the log is a complete audit trail. Free of
-/// any scheduling concerns, so it's directly testable.
+fn flat_decision() -> JevDecision {
+    JevDecision {
+        direction: TargetDirection::Flat,
+        confidence: 1.0,
+        probabilities: Probabilities {
+            long: 0.0,
+            short: 0.0,
+            flat: 1.0,
+        },
+    }
+}
+
+/// Runs a single decision cycle for one trading session: builds context
+/// from recent market history, asks its configured `DecisionMaker` for
+/// a Target Direction (or, when the session is closing, skips straight
+/// to a forced Flat target), compares it to the current Position State,
+/// applies the resulting action, and always writes a decision-log row.
+/// Free of any scheduling concerns, so it's directly testable.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_decision_cycle(
+    session_id: &str,
     symbol: &str,
-    config: &PerpConfig,
+    config: &TradingSessionConfig,
     history: &dyn MarketDataHistoryReader,
     decision_maker: &dyn DecisionMaker,
     execution: &dyn ExecutionAdapter,
     funding: &dyn FundingHistoryReader,
     decision_log: &dyn DecisionLogWriter,
     health: &dyn FailureTracker,
+    lifecycle: &dyn SessionLifecycle,
 ) {
     let samples = match history.recent_samples(symbol, HISTORY_WINDOW).await {
         Ok(samples) => samples,
         Err(error) => {
-            tracing::error!(symbol, %error, "failed to read market data history");
+            tracing::error!(symbol, session_id, %error, "failed to read market data history");
             let _ = decision_log
                 .write(DecisionLogEntry {
                     symbol,
@@ -71,6 +113,7 @@ pub async fn run_decision_cycle(
         let context_summary = build_context_summary(symbol, &samples, None, None);
         tracing::warn!(
             symbol,
+            session_id,
             "no market data available yet; skipping decision cycle"
         );
         let _ = decision_log
@@ -88,15 +131,39 @@ pub async fn run_decision_cycle(
 
     let latest_mid_price = samples.last().unwrap().mid_price;
 
-    let current_position = match execution.get_position(symbol).await {
+    if config.status == TradingSessionStatus::HardClosing {
+        let result = execution.close(session_id, symbol, latest_mid_price).await;
+        let error = result.as_ref().err().map(|e| e.to_string());
+        let _ = decision_log
+            .write(DecisionLogEntry {
+                symbol,
+                context_summary: "hard close: force-flattening position",
+                decision: None,
+                position_action: Some(super::model::PositionAction::Close),
+                error: error.as_deref(),
+                auto_flatten: false,
+            })
+            .await;
+
+        match result {
+            Ok(()) => lifecycle.mark_closed(session_id).await,
+            Err(error) => {
+                tracing::error!(symbol, session_id, %error, "hard close failed to flatten position; will retry")
+            }
+        }
+        return;
+    }
+
+    let current_position = match execution.get_position(session_id, symbol).await {
         Ok(position) => position,
         Err(error) => {
-            tracing::error!(symbol, %error, "failed to read current position");
+            tracing::error!(symbol, session_id, %error, "failed to read current position");
             let context_summary = build_context_summary(symbol, &samples, None, None);
             handle_cycle_failure(
                 symbol,
                 &error.to_string(),
                 &context_summary,
+                session_id,
                 latest_mid_price,
                 execution,
                 decision_log,
@@ -110,7 +177,7 @@ pub async fn run_decision_cycle(
     let latest_funding = match funding.latest(symbol).await {
         Ok(funding) => funding,
         Err(error) => {
-            tracing::warn!(symbol, %error, "failed to read latest funding rate; continuing without it");
+            tracing::warn!(symbol, session_id, %error, "failed to read latest funding rate; continuing without it");
             None
         }
     };
@@ -122,21 +189,28 @@ pub async fn run_decision_cycle(
         latest_funding.as_ref(),
     );
 
-    let decision = match decision_maker.decide(symbol, &context_summary).await {
-        Ok(decision) => decision,
-        Err(error) => {
-            tracing::error!(symbol, %error, "decision maker failed");
-            handle_cycle_failure(
-                symbol,
-                &error.to_string(),
-                &context_summary,
-                latest_mid_price,
-                execution,
-                decision_log,
-                health,
-            )
-            .await;
-            return;
+    let is_soft_closing = config.status == TradingSessionStatus::SoftClosing;
+
+    let decision = if is_soft_closing {
+        flat_decision()
+    } else {
+        match decision_maker.decide(symbol, &context_summary).await {
+            Ok(decision) => decision,
+            Err(error) => {
+                tracing::error!(symbol, session_id, %error, "decision maker failed");
+                handle_cycle_failure(
+                    symbol,
+                    &error.to_string(),
+                    &context_summary,
+                    session_id,
+                    latest_mid_price,
+                    execution,
+                    decision_log,
+                    health,
+                )
+                .await;
+                return;
+            }
         }
     };
 
@@ -146,6 +220,7 @@ pub async fn run_decision_cycle(
 
     let execution_result = apply_action(
         execution,
+        session_id,
         symbol,
         action,
         config.position_size_usd,
@@ -158,6 +233,7 @@ pub async fn run_decision_cycle(
         Ok(()) => {
             tracing::info!(
                 symbol,
+                session_id,
                 target_direction = decision.direction.as_str(),
                 action = ?action,
                 "decision cycle complete"
@@ -173,9 +249,13 @@ pub async fn run_decision_cycle(
                     auto_flatten: false,
                 })
                 .await;
+
+            if is_soft_closing {
+                lifecycle.mark_closed(session_id).await;
+            }
         }
         Err(error) => {
-            tracing::error!(symbol, %error, "failed to apply position action");
+            tracing::error!(symbol, session_id, %error, "failed to apply position action");
             let count = health.record_failure(symbol, &error).await;
             let _ = decision_log
                 .write(DecisionLogEntry {
@@ -188,7 +268,14 @@ pub async fn run_decision_cycle(
                 })
                 .await;
             if count >= AUTO_FLATTEN_THRESHOLD {
-                auto_flatten(symbol, latest_mid_price, execution, decision_log).await;
+                auto_flatten(
+                    symbol,
+                    session_id,
+                    latest_mid_price,
+                    execution,
+                    decision_log,
+                )
+                .await;
             }
         }
     }
@@ -196,13 +283,15 @@ pub async fn run_decision_cycle(
 
 /// Common handling for a `DecisionMaker`/`ExecutionAdapter` failure that happens
 /// before a decision is even reached: logs the normal failure entry,
-/// increments the PERP's consecutive-failure count, and — once that
+/// increments the symbol's consecutive-failure count, and — once that
 /// count hits the auto-flatten threshold — force-flattens the position
 /// and logs that distinctly from a normal decision-driven change.
+#[allow(clippy::too_many_arguments)]
 async fn handle_cycle_failure(
     symbol: &str,
     reason: &str,
     context_summary: &str,
+    session_id: &str,
     mid_price: f64,
     execution: &dyn ExecutionAdapter,
     decision_log: &dyn DecisionLogWriter,
@@ -221,24 +310,26 @@ async fn handle_cycle_failure(
         .await;
 
     if count >= AUTO_FLATTEN_THRESHOLD {
-        auto_flatten(symbol, mid_price, execution, decision_log).await;
+        auto_flatten(symbol, session_id, mid_price, execution, decision_log).await;
     }
 }
 
 async fn auto_flatten(
     symbol: &str,
+    session_id: &str,
     mid_price: f64,
     execution: &dyn ExecutionAdapter,
     decision_log: &dyn DecisionLogWriter,
 ) {
     tracing::warn!(
         symbol,
+        session_id,
         "5 consecutive failures reached; force-flattening position"
     );
 
-    let result = execution.close(symbol, mid_price).await;
+    let result = execution.close(session_id, symbol, mid_price).await;
     if let Err(error) = &result {
-        tracing::error!(symbol, %error, "auto-flatten failed to close position");
+        tracing::error!(symbol, session_id, %error, "auto-flatten failed to close position");
     }
 
     let _ = decision_log
@@ -253,8 +344,10 @@ async fn auto_flatten(
         .await;
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn apply_action(
     execution: &dyn ExecutionAdapter,
+    session_id: &str,
     symbol: &str,
     action: super::model::PositionAction,
     position_size_usd: f64,
@@ -266,21 +359,35 @@ async fn apply_action(
     match action {
         PositionAction::NoOp => Ok(()),
         PositionAction::Open(direction) => execution
-            .open(symbol, direction, position_size_usd, leverage, mid_price)
+            .open(
+                session_id,
+                symbol,
+                direction,
+                position_size_usd,
+                leverage,
+                mid_price,
+            )
             .await
             .map(|_| ())
             .map_err(|e| e.to_string()),
         PositionAction::Close => execution
-            .close(symbol, mid_price)
+            .close(session_id, symbol, mid_price)
             .await
             .map_err(|e| e.to_string()),
         PositionAction::CloseThenOpen(direction) => {
             execution
-                .close(symbol, mid_price)
+                .close(session_id, symbol, mid_price)
                 .await
                 .map_err(|e| e.to_string())?;
             execution
-                .open(symbol, direction, position_size_usd, leverage, mid_price)
+                .open(
+                    session_id,
+                    symbol,
+                    direction,
+                    position_size_usd,
+                    leverage,
+                    mid_price,
+                )
                 .await
                 .map(|_| ())
                 .map_err(|e| e.to_string())
@@ -290,9 +397,9 @@ async fn apply_action(
 
 #[allow(clippy::too_many_arguments)]
 fn spawn_task(
-    symbol: String,
+    session_id: String,
     frequency_seconds: f64,
-    store: ConfigStore,
+    store: SessionStore,
     history: Arc<dyn MarketDataHistoryReader>,
     decision_makers: Arc<DecisionMakerRegistry>,
     wallets: Arc<WalletRegistry>,
@@ -300,6 +407,7 @@ fn spawn_task(
     funding: Arc<dyn FundingHistoryReader>,
     decision_log: Arc<dyn DecisionLogWriter>,
     health: Arc<dyn FailureTracker>,
+    lifecycle: Arc<dyn SessionLifecycle>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let period = Duration::from_secs_f64(frequency_seconds.max(0.001));
@@ -309,13 +417,14 @@ fn spawn_task(
 
         loop {
             ticker.tick().await;
-            if let Some(config) = store.get(&symbol) {
-                let Some(execution) = resolve_execution(&symbol, &config, &wallets, &mode) else {
+            if let Some(config) = store.get(&session_id) {
+                let Some(execution) = resolve_execution(&config, &wallets, &mode) else {
                     continue;
                 };
                 let decision_maker = decision_makers.get(config.decision_maker);
                 run_decision_cycle(
-                    &symbol,
+                    &session_id,
+                    &config.symbol,
                     &config,
                     history.as_ref(),
                     decision_maker.as_ref(),
@@ -323,6 +432,7 @@ fn spawn_task(
                     funding.as_ref(),
                     decision_log.as_ref(),
                     health.as_ref(),
+                    lifecycle.as_ref(),
                 )
                 .await;
             }
@@ -330,22 +440,22 @@ fn spawn_task(
     })
 }
 
-/// Resolves the `ExecutionAdapter` for a PERP's configured wallet and
-/// enforces the safety net: a market must never execute against a real
+/// Resolves the `ExecutionAdapter` for a session's configured wallet and
+/// enforces the safety net: a session must never execute against a real
 /// wallet while live trading is globally disabled (or a mock wallet
 /// while the engine is switched to live) — this is checked on every
-/// cycle, not just at config-write time, in case the two ever
-/// disagree.
+/// cycle, not just at attach-time, in case the two ever disagree.
 fn resolve_execution(
-    symbol: &str,
-    config: &PerpConfig,
+    config: &TradingSessionConfig,
     wallets: &WalletRegistry,
     mode: &ModeStore,
 ) -> Option<Arc<dyn ExecutionAdapter>> {
+    let symbol = config.symbol.as_str();
     let Some(wallet_id) = &config.wallet_id else {
         tracing::error!(
             symbol,
-            "trading enabled but no wallet configured; skipping cycle"
+            session_id = %config.id,
+            "session has no wallet attached; skipping cycle"
         );
         return None;
     };
@@ -353,6 +463,7 @@ fn resolve_execution(
     let Some((kind, adapter)) = wallets.resolve(wallet_id) else {
         tracing::error!(
             symbol,
+            session_id = %config.id,
             wallet_id,
             "configured wallet not found or not ready; skipping cycle"
         );
@@ -362,6 +473,7 @@ fn resolve_execution(
     if !kind.matches_mode(mode.get()) {
         tracing::error!(
             symbol,
+            session_id = %config.id,
             wallet_id,
             wallet_kind = ?kind,
             mode = mode.get().as_str(),
@@ -373,14 +485,13 @@ fn resolve_execution(
     Some(adapter)
 }
 
-/// Runs forever, polling the config store on `poll_interval` and
-/// starting/stopping/restarting one decision task per trading-enabled
-/// PERP so the running tasks always match `trading_enabled` +
-/// `decision_frequency_seconds` from config — without ever restarting
-/// the engine itself.
+/// Runs forever, polling the session store on `poll_interval` and
+/// starting/stopping/restarting one decision task per non-closed
+/// trading session so the running tasks always match what's in
+/// Postgres — without ever restarting the engine itself.
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
-    store: ConfigStore,
+    store: SessionStore,
     history: Arc<dyn MarketDataHistoryReader>,
     decision_makers: Arc<DecisionMakerRegistry>,
     wallets: Arc<WalletRegistry>,
@@ -388,31 +499,32 @@ pub async fn run(
     funding: Arc<dyn FundingHistoryReader>,
     decision_log: Arc<dyn DecisionLogWriter>,
     health: Arc<dyn FailureTracker>,
+    lifecycle: Arc<dyn SessionLifecycle>,
     poll_interval: Duration,
 ) -> ! {
     let mut running: HashMap<String, (f64, JoinHandle<()>)> = HashMap::new();
 
     loop {
-        let configs = store.snapshot();
-        let desired = desired_state(&configs);
+        let sessions = store.snapshot();
+        let desired = desired_state(&sessions);
         let running_frequencies: HashMap<String, f64> =
             running.iter().map(|(k, (f, _))| (k.clone(), *f)).collect();
         let actions = reconcile(&running_frequencies, &desired);
 
-        for symbol in actions.to_stop {
-            if let Some((_, handle)) = running.remove(&symbol) {
+        for session_id in actions.to_stop {
+            if let Some((_, handle)) = running.remove(&session_id) {
                 handle.abort();
-                tracing::info!(symbol = %symbol, "stopped decision loop");
+                tracing::info!(session_id = %session_id, "stopped decision loop");
             }
         }
 
-        for (symbol, frequency) in actions.to_start {
-            if let Some((_, handle)) = running.remove(&symbol) {
+        for (session_id, frequency) in actions.to_start {
+            if let Some((_, handle)) = running.remove(&session_id) {
                 handle.abort();
             }
-            tracing::info!(symbol = %symbol, frequency_seconds = frequency, "starting decision loop");
+            tracing::info!(session_id = %session_id, frequency_seconds = frequency, "starting decision loop");
             let handle = spawn_task(
-                symbol.clone(),
+                session_id.clone(),
                 frequency,
                 store.clone(),
                 history.clone(),
@@ -422,8 +534,9 @@ pub async fn run(
                 funding.clone(),
                 decision_log.clone(),
                 health.clone(),
+                lifecycle.clone(),
             );
-            running.insert(symbol, (frequency, handle));
+            running.insert(session_id, (frequency, handle));
         }
 
         tokio::time::sleep(poll_interval).await;
@@ -444,33 +557,39 @@ mod tests {
     use super::super::log::LogError;
     use super::super::model::{Direction, JevDecision, Probabilities, TargetDirection};
     use super::*;
+    use crate::decision::DecisionMakerKind;
     use crate::funding::{FundingHistoryError, FundingRecord};
     use crate::market_data::MarketDataSample;
 
-    fn sample_config(symbol: &str, trading_enabled: bool, frequency: f64) -> PerpConfig {
-        PerpConfig {
-            symbol: symbol.to_string(),
-            trading_enabled,
-            sampling_enabled: trading_enabled,
+    fn sample_config(status: TradingSessionStatus, frequency: f64) -> TradingSessionConfig {
+        TradingSessionConfig {
+            id: "session-1".to_string(),
+            symbol: "BTC".to_string(),
+            decision_maker: DecisionMakerKind::Random,
             decision_frequency_seconds: frequency,
-            sampling_frequency_seconds: 60.0,
             leverage: 1.0,
             position_size_usd: 100.0,
-            decision_maker: crate::decision::DecisionMakerKind::Random,
             wallet_id: Some("test-wallet".to_string()),
+            status,
         }
     }
 
     #[test]
-    fn desired_state_excludes_trading_disabled_perps() {
-        let configs = HashMap::from([
-            ("BTC".to_string(), sample_config("BTC", true, 30.0)),
-            ("ETH".to_string(), sample_config("ETH", false, 15.0)),
+    fn desired_state_includes_every_non_closed_session() {
+        let sessions = HashMap::from([
+            (
+                "s1".to_string(),
+                sample_config(TradingSessionStatus::Active, 30.0),
+            ),
+            (
+                "s2".to_string(),
+                sample_config(TradingSessionStatus::SoftClosing, 15.0),
+            ),
         ]);
 
-        let desired = desired_state(&configs);
-        assert_eq!(desired.get("BTC"), Some(&30.0));
-        assert_eq!(desired.get("ETH"), None);
+        let desired = desired_state(&sessions);
+        assert_eq!(desired.get("s1"), Some(&30.0));
+        assert_eq!(desired.get("s2"), Some(&15.0));
     }
 
     struct FakeHistory;
@@ -511,6 +630,18 @@ mod tests {
     impl DecisionLogWriter for NoopDecisionLog {
         async fn write(&self, _entry: DecisionLogEntry<'_>) -> Result<(), LogError> {
             Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeLifecycle {
+        closed: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl SessionLifecycle for FakeLifecycle {
+        async fn mark_closed(&self, session_id: &str) {
+            self.closed.lock().unwrap().push(session_id.to_string());
         }
     }
 
@@ -610,6 +741,7 @@ mod tests {
     impl ExecutionAdapter for FakeExecution {
         async fn get_position(
             &self,
+            _session_id: &str,
             _symbol: &str,
         ) -> Result<Option<OpenPosition>, ExecutionError> {
             Ok(*self.position.lock().unwrap())
@@ -617,6 +749,7 @@ mod tests {
 
         async fn open(
             &self,
+            _session_id: &str,
             _symbol: &str,
             direction: Direction,
             _position_size_usd: f64,
@@ -633,7 +766,12 @@ mod tests {
             Ok(position)
         }
 
-        async fn close(&self, _symbol: &str, _mid_price: f64) -> Result<(), ExecutionError> {
+        async fn close(
+            &self,
+            _session_id: &str,
+            _symbol: &str,
+            _mid_price: f64,
+        ) -> Result<(), ExecutionError> {
             self.close_calls.fetch_add(1, Ordering::SeqCst);
             *self.position.lock().unwrap() = None;
             Ok(())
@@ -660,12 +798,13 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_jev_call_skips_the_cycle_and_increments_the_failure_counter() {
-        let config = sample_config("BTC", true, 30.0);
+        let config = sample_config(TradingSessionStatus::Active, 30.0);
         let execution = FakeExecution::with_open_position();
         let health = InMemoryFailureTracker::new();
 
         run_decision_cycle(
-            "BTC",
+            &config.id,
+            &config.symbol,
             &config,
             &FakeHistory,
             &AlwaysFailingDecisionMaker,
@@ -673,18 +812,23 @@ mod tests {
             &FakeFunding,
             &NoopDecisionLog,
             &health,
+            &FakeLifecycle::default(),
         )
         .await;
 
         assert_eq!(health.count("BTC"), 1);
         // Position State is unchanged by a failed cycle.
-        assert!(execution.get_position("BTC").await.unwrap().is_some());
+        assert!(execution
+            .get_position(&config.id, "BTC")
+            .await
+            .unwrap()
+            .is_some());
         assert_eq!(execution.close_calls.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
     async fn a_successful_cycle_resets_the_failure_counter_to_zero() {
-        let config = sample_config("BTC", true, 30.0);
+        let config = sample_config(TradingSessionStatus::Active, 30.0);
         let execution = FakeExecution::with_open_position();
         let health = InMemoryFailureTracker::new();
         health.record_failure("BTC", "previous failure").await;
@@ -696,7 +840,8 @@ mod tests {
         };
 
         run_decision_cycle(
-            "BTC",
+            &config.id,
+            &config.symbol,
             &config,
             &FakeHistory,
             &decision_maker,
@@ -704,6 +849,7 @@ mod tests {
             &FakeFunding,
             &NoopDecisionLog,
             &health,
+            &FakeLifecycle::default(),
         )
         .await;
 
@@ -712,14 +858,15 @@ mod tests {
 
     #[tokio::test]
     async fn five_consecutive_failures_auto_flattens_the_position() {
-        let config = sample_config("BTC", true, 30.0);
+        let config = sample_config(TradingSessionStatus::Active, 30.0);
         let execution = FakeExecution::with_open_position();
         let health = InMemoryFailureTracker::new();
         let decision_log = CapturingDecisionLog::default();
 
         for _ in 0..5 {
             run_decision_cycle(
-                "BTC",
+                &config.id,
+                &config.symbol,
                 &config,
                 &FakeHistory,
                 &AlwaysFailingDecisionMaker,
@@ -727,19 +874,24 @@ mod tests {
                 &FakeFunding,
                 &decision_log,
                 &health,
+                &FakeLifecycle::default(),
             )
             .await;
         }
 
         assert_eq!(health.count("BTC"), 5);
         assert_eq!(execution.close_calls.load(Ordering::SeqCst), 1);
-        assert!(execution.get_position("BTC").await.unwrap().is_none());
+        assert!(execution
+            .get_position(&config.id, "BTC")
+            .await
+            .unwrap()
+            .is_none());
         assert_eq!(decision_log.auto_flatten_count(), 1);
     }
 
     #[tokio::test]
     async fn a_success_at_the_fourth_failure_prevents_the_auto_flatten() {
-        let config = sample_config("BTC", true, 30.0);
+        let config = sample_config(TradingSessionStatus::Active, 30.0);
         let execution = FakeExecution::with_open_position();
         let health = InMemoryFailureTracker::new();
         let decision_log = CapturingDecisionLog::default();
@@ -751,7 +903,8 @@ mod tests {
 
         for _ in 0..5 {
             run_decision_cycle(
-                "BTC",
+                &config.id,
+                &config.symbol,
                 &config,
                 &FakeHistory,
                 &decision_maker,
@@ -759,6 +912,7 @@ mod tests {
                 &FakeFunding,
                 &decision_log,
                 &health,
+                &FakeLifecycle::default(),
             )
             .await;
         }
@@ -769,5 +923,65 @@ mod tests {
         // decision, not a forced flatten.
         assert_eq!(execution.close_calls.load(Ordering::SeqCst), 1);
         assert_eq!(decision_log.auto_flatten_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn soft_closing_forces_a_flat_target_and_closes_the_session_once_flat() {
+        let config = sample_config(TradingSessionStatus::SoftClosing, 30.0);
+        let execution = FakeExecution::with_open_position();
+        let health = InMemoryFailureTracker::new();
+        let lifecycle = FakeLifecycle::default();
+
+        run_decision_cycle(
+            &config.id,
+            &config.symbol,
+            &config,
+            &FakeHistory,
+            // Even a decision maker that would pick Long must be
+            // ignored while soft-closing.
+            &SucceedsOnceDecisionMaker {
+                succeed_on: 1,
+                calls: AtomicUsize::new(0),
+            },
+            &execution,
+            &FakeFunding,
+            &NoopDecisionLog,
+            &health,
+            &lifecycle,
+        )
+        .await;
+
+        assert_eq!(execution.close_calls.load(Ordering::SeqCst), 1);
+        assert!(execution
+            .get_position(&config.id, "BTC")
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(lifecycle.closed.lock().unwrap().as_slice(), ["session-1"]);
+    }
+
+    #[tokio::test]
+    async fn hard_closing_flattens_immediately_without_consulting_the_decision_maker() {
+        let config = sample_config(TradingSessionStatus::HardClosing, 30.0);
+        let execution = FakeExecution::with_open_position();
+        let health = InMemoryFailureTracker::new();
+        let lifecycle = FakeLifecycle::default();
+
+        run_decision_cycle(
+            &config.id,
+            &config.symbol,
+            &config,
+            &FakeHistory,
+            &AlwaysFailingDecisionMaker,
+            &execution,
+            &FakeFunding,
+            &NoopDecisionLog,
+            &health,
+            &lifecycle,
+        )
+        .await;
+
+        assert_eq!(execution.close_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(lifecycle.closed.lock().unwrap().as_slice(), ["session-1"]);
     }
 }

@@ -1,51 +1,19 @@
 import type { Collection, Db } from "mongodb";
-import { applyToggleRules, type PerpToggles } from "./toggleRules.js";
 
-export interface PerpFrequencies {
-  decisionFrequencySeconds: number;
+export interface PerpMarketSettings {
+  samplingEnabled: boolean;
   samplingFrequencySeconds: number;
 }
 
-export interface PerpSizing {
-  leverage: number;
-  positionSizeUsd: number;
-}
-
-// The engine's DecisionMaker implementation for this PERP: `random`
-// (synthetic, no network), `typesafe` (calls TypeSafe's Jev API
-// directly), or `openrouter` (calls Jev via OpenRouter).
-export type DecisionMaker = "random" | "typesafe" | "openrouter";
-
-export interface PerpDecisionMaker {
-  decisionMaker: DecisionMaker;
-}
-
-export interface PerpWallet {
-  walletId: string | null;
-}
-
-export interface PerpConfigDoc
-  extends PerpToggles, PerpFrequencies, PerpSizing, PerpDecisionMaker, PerpWallet {
+export interface PerpConfigDoc extends PerpMarketSettings {
   symbol: string;
 }
 
-export type PerpConfigPatch = Partial<
-  PerpToggles & PerpFrequencies & PerpSizing & PerpDecisionMaker & PerpWallet
->;
+export type PerpConfigPatch = Partial<PerpMarketSettings>;
 
-export const DEFAULT_PERP_CONFIG: PerpToggles &
-  PerpFrequencies &
-  PerpSizing &
-  PerpDecisionMaker &
-  PerpWallet = {
-  tradingEnabled: false,
+export const DEFAULT_PERP_CONFIG: PerpMarketSettings = {
   samplingEnabled: false,
-  decisionFrequencySeconds: 300,
   samplingFrequencySeconds: 60,
-  leverage: 1,
-  positionSizeUsd: 100,
-  decisionMaker: "random",
-  walletId: null,
 };
 
 const COLLECTION_NAME = "perpConfigs";
@@ -78,23 +46,11 @@ export async function updatePerpConfig(
     ...DEFAULT_PERP_CONFIG,
   };
 
-  const toggles = applyToggleRules(current, {
-    tradingEnabled: patch.tradingEnabled,
-    samplingEnabled: patch.samplingEnabled,
-  });
-
   const next: PerpConfigDoc = {
     symbol,
-    ...toggles,
-    decisionFrequencySeconds:
-      patch.decisionFrequencySeconds ?? current.decisionFrequencySeconds,
+    samplingEnabled: patch.samplingEnabled ?? current.samplingEnabled,
     samplingFrequencySeconds:
       patch.samplingFrequencySeconds ?? current.samplingFrequencySeconds,
-    leverage: patch.leverage ?? current.leverage,
-    positionSizeUsd: patch.positionSizeUsd ?? current.positionSizeUsd,
-    decisionMaker: patch.decisionMaker ?? current.decisionMaker,
-    walletId:
-      patch.walletId !== undefined ? patch.walletId : current.walletId,
   };
 
   await collection(db).updateOne({ symbol }, { $set: next }, { upsert: true });

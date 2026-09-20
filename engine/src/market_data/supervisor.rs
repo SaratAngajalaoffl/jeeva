@@ -7,12 +7,12 @@ use tokio::time::{interval_at, Instant, MissedTickBehavior};
 
 use super::client::MarketDataClient;
 use super::writer::MarketDataWriter;
-use crate::config::{ConfigStore, PerpConfig};
+use crate::config::{ConfigStore, MarketSettings};
 use crate::scheduler::{delay_until_next_boundary, reconcile};
 
 /// The set of symbols that should currently be sampled, each mapped to
 /// its configured sampling frequency (in seconds).
-pub fn desired_state(configs: &HashMap<String, PerpConfig>) -> HashMap<String, f64> {
+pub fn desired_state(configs: &HashMap<String, MarketSettings>) -> HashMap<String, f64> {
     configs
         .iter()
         .filter(|(_, c)| c.sampling_enabled)
@@ -91,17 +91,11 @@ pub async fn run(
 mod tests {
     use super::*;
 
-    fn sample_config(symbol: &str, sampling_enabled: bool, frequency: f64) -> PerpConfig {
-        PerpConfig {
+    fn sample_config(symbol: &str, sampling_enabled: bool, frequency: f64) -> MarketSettings {
+        MarketSettings {
             symbol: symbol.to_string(),
-            trading_enabled: false,
             sampling_enabled,
-            decision_frequency_seconds: 300.0,
             sampling_frequency_seconds: frequency,
-            leverage: 1.0,
-            position_size_usd: 100.0,
-            decision_maker: Default::default(),
-            wallet_id: None,
         }
     }
 

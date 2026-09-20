@@ -5,8 +5,10 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import PriceVolumeChart from "@/components/PriceVolumeChart";
 import Modal from "@/components/Modal";
-import { SamplingIcon, TradingIcon } from "@/components/icons";
+import { SamplingIcon } from "@/components/icons";
 import {
+  attachSessionWallet,
+  createTradingSession,
   fetchDecisions,
   fetchFundingPayments,
   fetchMarketData,
@@ -16,8 +18,12 @@ import {
   fetchPositions,
   fetchRecentTrades,
   fetchSelectableWallets,
+  fetchTradingSessions,
+  hardCloseTradingSession,
+  softCloseTradingSession,
   updatePerpConfig,
   type DecisionLogEntry,
+  type DecisionMaker,
   type FundingPayment,
   type MarketDataPoint,
   type OrderBook,
@@ -25,6 +31,7 @@ import {
   type PerpStats,
   type Position,
   type Trade,
+  type TradingSession,
   type Wallet,
 } from "@/lib/api";
 import { SiteHeader } from "@/components/SiteHeader";
@@ -79,8 +86,30 @@ function StatusBadge({ label, active }: { label: string; active: boolean }) {
   );
 }
 
-type ConfigDialog = "sampling" | "trading" | null;
-type DetailTab = "position" | "decisions" | "funding";
+function SessionStatusBadge({ status }: { status: TradingSession["status"] }) {
+  const styles: Record<TradingSession["status"], string> = {
+    active: "border-emerald-400/50 bg-emerald-400/10 text-emerald-400",
+    soft_closing: "border-peach/50 bg-peach/10 text-peach",
+    hard_closing: "border-destructive/50 bg-destructive/10 text-destructive",
+    closed: "border-surface-1 text-subtext-0",
+  };
+  const labels: Record<TradingSession["status"], string> = {
+    active: "Active",
+    soft_closing: "Soft closing",
+    hard_closing: "Hard closing",
+    closed: "Closed",
+  };
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${styles[status]}`}
+    >
+      {labels[status]}
+    </span>
+  );
+}
+
+type ConfigDialog = "sampling" | "new-session" | null;
+type DetailTab = "position" | "decisions" | "funding" | "sessions";
 type BookTab = "book" | "trades";
 
 const POLL_MS = 10_000;
@@ -93,17 +122,24 @@ export default function MarketDataPage() {
   const [samples, setSamples] = useState<MarketDataPoint[] | null>(null);
   const [perp, setPerp] = useState<Perp | null>(null);
   const [stats, setStats] = useState<PerpStats | null>(null);
-  const [position, setPosition] = useState<Position | null>(null);
+  const [positions, setPositions] = useState<Position[] | null>(null);
   const [decisions, setDecisions] = useState<DecisionLogEntry[] | null>(null);
   const [fundingPayments, setFundingPayments] = useState<
     FundingPayment[] | null
   >(null);
+  const [sessions, setSessions] = useState<TradingSession[] | null>(null);
   const [orderBook, setOrderBook] = useState<OrderBook | null>(null);
   const [trades, setTrades] = useState<Trade[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<ConfigDialog>(null);
-  const [detailTab, setDetailTab] = useState<DetailTab>("position");
+  const [detailTab, setDetailTab] = useState<DetailTab>("sessions");
   const [bookTab, setBookTab] = useState<BookTab>("book");
+
+  function refreshSessions() {
+    fetchTradingSessions(symbol)
+      .then((s) => setSessions(s))
+      .catch(() => {});
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -131,11 +167,11 @@ export default function MarketDataPage() {
       fetchPositions()
         .then((positions) => {
           if (!cancelled) {
-            setPosition(positions.find((p) => p.symbol === symbol) ?? null);
+            setPositions(positions.filter((p) => p.symbol === symbol));
           }
         })
         .catch(() => {});
-      fetchDecisions(symbol)
+      fetchDecisions({ symbol })
         .then((d) => {
           if (!cancelled) setDecisions(d);
         })
@@ -150,6 +186,13 @@ export default function MarketDataPage() {
         })
         .catch(() => {
           if (!cancelled) setFundingPayments([]);
+        });
+      fetchTradingSessions(symbol)
+        .then((s) => {
+          if (!cancelled) setSessions(s);
+        })
+        .catch(() => {
+          if (!cancelled) setSessions([]);
         });
       fetchOrderBook(symbol)
         .then((book) => {
@@ -203,23 +246,20 @@ export default function MarketDataPage() {
     }
   }
 
-  function handleTradingClick() {
-    if (!perp) return;
-    if (perp.tradingEnabled) {
-      applyPatch({ tradingEnabled: false });
-    } else {
-      setDialog("trading");
-    }
-  }
+  const totalPnl = useMemo(() => {
+    if (!positions || !stats) return null;
+    return positions.reduce((sum, position) => {
+      const pnl =
+        ((stats.price - position.entryPrice) / position.entryPrice) *
+        position.notionalUsd *
+        (position.direction === "long" ? 1 : -1);
+      return sum + pnl;
+    }, 0);
+  }, [positions, stats]);
 
-  const pnl = useMemo(() => {
-    if (!position || !stats) return null;
-    return (
-      ((stats.price - position.entryPrice) / position.entryPrice) *
-      position.notionalUsd *
-      (position.direction === "long" ? 1 : -1)
-    );
-  }, [position, stats]);
+  const activeSessionCount = sessions
+    ? sessions.filter((s) => s.status !== "closed").length
+    : null;
 
   const loading = !samples && !error;
 
@@ -239,7 +279,10 @@ export default function MarketDataPage() {
           {perp && (
             <div className="flex items-center gap-2">
               <StatusBadge label="Sampling" active={perp.samplingEnabled} />
-              <StatusBadge label="Trading" active={perp.tradingEnabled} />
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-surface-1 px-2.5 py-1 text-xs font-medium text-subtext-0">
+                {activeSessionCount ?? "-"} active session
+                {activeSessionCount === 1 ? "" : "s"}
+              </span>
             </div>
           )}
         </div>
@@ -273,17 +316,24 @@ export default function MarketDataPage() {
             value={formatVolume(stats?.openInterestUsd)}
           />
           <HeaderStat
-            label="Decision freq"
-            value={perp ? `${perp.decisionFrequencySeconds}s` : "-"}
-          />
-          <HeaderStat
             label="Sampling freq"
             value={perp ? `${perp.samplingFrequencySeconds}s` : "-"}
           />
-          <HeaderStat label="Leverage" value={perp ? `${perp.leverage}x` : "-"} />
           <HeaderStat
-            label="Position size"
-            value={perp ? `$${perp.positionSizeUsd.toLocaleString()}` : "-"}
+            label="Aggregate P&amp;L"
+            value={
+              totalPnl === null ? (
+                "-"
+              ) : (
+                <span
+                  className={
+                    totalPnl >= 0 ? "text-emerald-400" : "text-destructive"
+                  }
+                >
+                  {totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}
+                </span>
+              )
+            }
           />
 
           {perp && (
@@ -299,16 +349,6 @@ export default function MarketDataPage() {
                 onClick={handleSamplingClick}
               >
                 <SamplingIcon className="h-4 w-4" />
-              </IconButton>
-              <IconButton
-                active={perp.tradingEnabled}
-                aria-label={
-                  perp.tradingEnabled ? "Disable trading" : "Enable trading"
-                }
-                title={perp.tradingEnabled ? "Disable trading" : "Enable trading"}
-                onClick={handleTradingClick}
-              >
-                <TradingIcon className="h-4 w-4" />
               </IconButton>
             </div>
           )}
@@ -369,6 +409,7 @@ export default function MarketDataPage() {
           <div className="flex border-b border-surface-1">
             {(
               [
+                ["sessions", "Sessions"],
                 ["position", "Position"],
                 ["decisions", "Decision history"],
                 ["funding", "Funding history"],
@@ -389,45 +430,83 @@ export default function MarketDataPage() {
             ))}
           </div>
 
+          {detailTab === "sessions" && (
+            <SessionsPanel
+              symbol={symbol}
+              sessions={sessions}
+              onNewSession={() => setDialog("new-session")}
+              onChanged={refreshSessions}
+            />
+          )}
+
           {detailTab === "position" && (
-            <div className="p-5">
-              {!position ? (
-                <p className="text-sm text-subtext-1">No open position.</p>
+            <div className="overflow-x-auto">
+              {!positions ? (
+                <p className="p-5 text-sm text-subtext-1">Loading...</p>
+              ) : positions.length === 0 ? (
+                <p className="p-5 text-sm text-subtext-1">No open positions.</p>
               ) : (
-                <dl className="grid max-w-sm grid-cols-2 gap-y-2 text-sm">
-                  <dt className="text-subtext-0">Direction</dt>
-                  <dd
-                    className={`text-right font-medium ${
-                      position.direction === "long"
-                        ? "text-emerald-400"
-                        : "text-destructive"
-                    }`}
-                  >
-                    {position.direction}
-                  </dd>
-                  <dt className="text-subtext-0">Entry price</dt>
-                  <dd className="text-right text-text">
-                    {formatPrice(position.entryPrice)}
-                  </dd>
-                  <dt className="text-subtext-0">Notional</dt>
-                  <dd className="text-right text-text">
-                    ${position.notionalUsd.toLocaleString()}
-                  </dd>
-                  <dt className="text-subtext-0">Unrealized P&amp;L</dt>
-                  <dd
-                    className={`text-right font-medium ${
-                      (pnl ?? 0) >= 0 ? "text-emerald-400" : "text-destructive"
-                    }`}
-                  >
-                    {pnl === null
-                      ? "-"
-                      : `${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}`}
-                  </dd>
-                  <dt className="text-subtext-0">Opened</dt>
-                  <dd className="text-right text-text">
-                    {new Date(position.openedAt).toLocaleString()}
-                  </dd>
-                </dl>
+                <table className="w-full min-w-[640px] border-collapse text-left text-sm text-text">
+                  <thead>
+                    <tr>
+                      <th className={TH}>Session</th>
+                      <th className={TH}>Direction</th>
+                      <th className={TH}>Entry price</th>
+                      <th className={TH}>Notional</th>
+                      <th className={TH}>Unrealized P&amp;L</th>
+                      <th className={TH}>Opened</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {positions.map((position) => {
+                      const pnl =
+                        stats &&
+                        ((stats.price - position.entryPrice) /
+                          position.entryPrice) *
+                          position.notionalUsd *
+                          (position.direction === "long" ? 1 : -1);
+                      return (
+                        <tr key={position.sessionId} className="hover:bg-surface-0/60">
+                          <td className={TD}>
+                            <Link
+                              href={`/dashboard/markets/${symbol}/sessions/${position.sessionId}`}
+                              className="text-ember hover:underline"
+                            >
+                              {position.sessionId.slice(0, 8)}
+                            </Link>
+                          </td>
+                          <td
+                            className={`${TD} font-medium ${
+                              position.direction === "long"
+                                ? "text-emerald-400"
+                                : "text-destructive"
+                            }`}
+                          >
+                            {position.direction}
+                          </td>
+                          <td className={TD}>{formatPrice(position.entryPrice)}</td>
+                          <td className={TD}>
+                            ${position.notionalUsd.toLocaleString()}
+                          </td>
+                          <td
+                            className={`${TD} font-medium ${
+                              (pnl ?? 0) >= 0
+                                ? "text-emerald-400"
+                                : "text-destructive"
+                            }`}
+                          >
+                            {pnl === null || pnl === undefined
+                              ? "-"
+                              : `${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}`}
+                          </td>
+                          <td className={TD}>
+                            {new Date(position.openedAt).toLocaleString()}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               )}
             </div>
           )}
@@ -443,6 +522,7 @@ export default function MarketDataPage() {
                   <thead>
                     <tr>
                       <th className={TH}>Time</th>
+                      <th className={TH}>Session</th>
                       <th className={TH}>Direction</th>
                       <th className={TH}>Confidence</th>
                       <th className={TH}>Action</th>
@@ -454,6 +534,18 @@ export default function MarketDataPage() {
                       <tr key={i} className="hover:bg-surface-0/60">
                         <td className={TD}>
                           {new Date(d.time).toLocaleString()}
+                        </td>
+                        <td className={TD}>
+                          {d.sessionId ? (
+                            <Link
+                              href={`/dashboard/markets/${symbol}/sessions/${d.sessionId}`}
+                              className="text-ember hover:underline"
+                            >
+                              {d.sessionId.slice(0, 8)}
+                            </Link>
+                          ) : (
+                            "-"
+                          )}
                         </td>
                         <td className={TD}>{d.targetDirection ?? "-"}</td>
                         <td className={TD}>
@@ -530,23 +622,298 @@ export default function MarketDataPage() {
         </Modal>
       )}
 
-      {dialog === "trading" && perp && (
-        <Modal
-          title={`Enable trading — ${symbol}`}
-          onClose={() => setDialog(null)}
-        >
-          <TradingForm
-            perp={perp}
+      {dialog === "new-session" && (
+        <Modal title={`New trading session — ${symbol}`} onClose={() => setDialog(null)}>
+          <NewSessionForm
             symbol={symbol}
             onCancel={() => setDialog(null)}
-            onSubmit={async (values) => {
-              await applyPatch({ tradingEnabled: true, ...values });
+            onCreated={() => {
               setDialog(null);
+              refreshSessions();
             }}
           />
         </Modal>
       )}
     </SiteHeader>
+  );
+}
+
+function SessionsPanel({
+  symbol,
+  sessions,
+  onNewSession,
+  onChanged,
+}: {
+  symbol: string;
+  sessions: TradingSession[] | null;
+  onNewSession: () => void;
+  onChanged: () => void;
+}) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  async function handleSoftClose(id: string) {
+    setBusyId(id);
+    setActionError(null);
+    const result = await softCloseTradingSession(id);
+    if (!result.ok) setActionError(result.error);
+    setBusyId(null);
+    onChanged();
+  }
+
+  async function handleHardClose(id: string) {
+    setBusyId(id);
+    setActionError(null);
+    const result = await hardCloseTradingSession(id);
+    if (!result.ok) setActionError(result.error);
+    setBusyId(null);
+    onChanged();
+  }
+
+  return (
+    <div className="flex flex-col gap-3 p-5">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-subtext-1">
+          Each session runs its own decision maker against an exclusively
+          attached wallet.
+        </p>
+        <Button type="button" onClick={onNewSession}>
+          New session
+        </Button>
+      </div>
+      {actionError && <p className="text-sm text-destructive">{actionError}</p>}
+      {!sessions ? (
+        <p className="text-sm text-subtext-1">Loading...</p>
+      ) : sessions.length === 0 ? (
+        <p className="text-sm text-subtext-1">No trading sessions yet.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[720px] border-collapse text-left text-sm text-text">
+            <thead>
+              <tr>
+                <th className={TH}>Session</th>
+                <th className={TH}>Status</th>
+                <th className={TH}>Decision maker</th>
+                <th className={TH}>Freq</th>
+                <th className={TH}>Leverage</th>
+                <th className={TH}>Size</th>
+                <th className={TH}>Wallet</th>
+                <th className={TH}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {sessions.map((session) => (
+                <tr key={session.id} className="hover:bg-surface-0/60">
+                  <td className={TD}>
+                    <Link
+                      href={`/dashboard/markets/${symbol}/sessions/${session.id}`}
+                      className="text-ember hover:underline"
+                    >
+                      {session.id.slice(0, 8)}
+                    </Link>
+                  </td>
+                  <td className={TD}>
+                    <SessionStatusBadge status={session.status} />
+                  </td>
+                  <td className={TD}>{session.decisionMaker}</td>
+                  <td className={TD}>{session.decisionFrequencySeconds}s</td>
+                  <td className={TD}>{session.leverage}x</td>
+                  <td className={TD}>
+                    ${session.positionSizeUsd.toLocaleString()}
+                  </td>
+                  <td className={TD}>
+                    {session.walletId ? session.walletId.slice(0, 8) : "-"}
+                  </td>
+                  <td className={TD}>
+                    {session.status === "active" && (
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          disabled={busyId === session.id}
+                          onClick={() => handleSoftClose(session.id)}
+                        >
+                          Soft close
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          disabled={busyId === session.id}
+                          onClick={() => handleHardClose(session.id)}
+                        >
+                          Hard close
+                        </Button>
+                      </div>
+                    )}
+                    {session.status === "soft_closing" && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        disabled={busyId === session.id}
+                        onClick={() => handleHardClose(session.id)}
+                      >
+                        Force close now
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const DECISION_MAKERS: DecisionMaker[] = ["random", "typesafe", "openrouter"];
+
+function NewSessionForm({
+  symbol,
+  onCancel,
+  onCreated,
+}: {
+  symbol: string;
+  onCancel: () => void;
+  onCreated: () => void;
+}) {
+  const [decisionMaker, setDecisionMaker] = useState<DecisionMaker>("random");
+  const [decisionFrequencySeconds, setDecisionFrequencySeconds] = useState("300");
+  const [leverage, setLeverage] = useState("1");
+  const [positionSizeUsd, setPositionSizeUsd] = useState("100");
+  const [walletId, setWalletId] = useState("");
+  const [wallets, setWallets] = useState<Wallet[] | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const size = Number(positionSizeUsd);
+    if (!Number.isFinite(size) || size <= 0) {
+      setWallets([]);
+      return;
+    }
+    let cancelled = false;
+    fetchSelectableWallets(symbol, size)
+      .then((w) => {
+        if (!cancelled) setWallets(w);
+      })
+      .catch(() => {
+        if (!cancelled) setWallets([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [symbol, positionSizeUsd]);
+
+  useEffect(() => {
+    if (wallets && !wallets.some((w) => w.id === walletId)) {
+      setWalletId(wallets[0]?.id ?? "");
+    }
+  }, [wallets, walletId]);
+
+  return (
+    <form
+      className="flex flex-col gap-3"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        const decision = Number(decisionFrequencySeconds);
+        const lev = Number(leverage);
+        const size = Number(positionSizeUsd);
+        if (
+          !Number.isFinite(decision) ||
+          decision <= 0 ||
+          !Number.isFinite(lev) ||
+          lev <= 0 ||
+          !Number.isFinite(size) ||
+          size <= 0
+        ) {
+          return;
+        }
+        setSubmitting(true);
+        setError(null);
+        const result = await createTradingSession(symbol, {
+          decisionMaker,
+          decisionFrequencySeconds: decision,
+          leverage: lev,
+          positionSizeUsd: size,
+          walletId: walletId || null,
+        });
+        setSubmitting(false);
+        if (!result.ok) {
+          setError(result.error);
+          return;
+        }
+        if (walletId) {
+          await attachSessionWallet(result.session.id, walletId);
+        }
+        onCreated();
+      }}
+    >
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      <label className="flex flex-col gap-1">
+        <Label>Decision maker</Label>
+        <Select
+          value={decisionMaker}
+          onChange={(e) => setDecisionMaker(e.target.value as DecisionMaker)}
+        >
+          {DECISION_MAKERS.map((kind) => (
+            <option key={kind} value={kind}>
+              {kind}
+            </option>
+          ))}
+        </Select>
+      </label>
+      <label className="flex flex-col gap-1">
+        <Label>Decision frequency (seconds)</Label>
+        <Input
+          type="number"
+          min={1}
+          value={decisionFrequencySeconds}
+          onChange={(e) => setDecisionFrequencySeconds(e.target.value)}
+        />
+      </label>
+      <label className="flex flex-col gap-1">
+        <Label>Leverage</Label>
+        <Input
+          type="number"
+          min={1}
+          value={leverage}
+          onChange={(e) => setLeverage(e.target.value)}
+        />
+      </label>
+      <label className="flex flex-col gap-1">
+        <Label>Position size (USD)</Label>
+        <Input
+          type="number"
+          min={1}
+          value={positionSizeUsd}
+          onChange={(e) => setPositionSizeUsd(e.target.value)}
+        />
+      </label>
+      <label className="flex flex-col gap-1">
+        <Label>Wallet (optional — can attach later)</Label>
+        <Select value={walletId} onChange={(e) => setWalletId(e.target.value)}>
+          <option value="">No wallet</option>
+          {wallets?.map((w) => (
+            <option key={w.id} value={w.id}>
+              {w.label} ({w.kind}
+              {w.currentBalanceUsd !== null
+                ? `, $${w.currentBalanceUsd.toLocaleString()}`
+                : ""}
+              )
+            </option>
+          ))}
+        </Select>
+      </label>
+      <div className="mt-1 flex justify-end gap-2">
+        <Button type="button" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="submit" disabled={submitting}>
+          {submitting ? "Creating..." : "Create session"}
+        </Button>
+      </div>
+    </form>
   );
 }
 
@@ -719,153 +1086,6 @@ function SamplingForm({
         </Button>
         <Button type="submit" disabled={submitting}>
           {submitting ? "Enabling..." : "Enable sampling"}
-        </Button>
-      </div>
-    </form>
-  );
-}
-
-function TradingForm({
-  perp,
-  symbol,
-  onSubmit,
-  onCancel,
-}: {
-  perp: Perp;
-  symbol: string;
-  onSubmit: (values: {
-    decisionFrequencySeconds: number;
-    leverage: number;
-    positionSizeUsd: number;
-    walletId: string;
-  }) => Promise<void>;
-  onCancel: () => void;
-}) {
-  const [decisionFrequencySeconds, setDecisionFrequencySeconds] = useState(
-    String(perp.decisionFrequencySeconds),
-  );
-  const [leverage, setLeverage] = useState(String(perp.leverage));
-  const [positionSizeUsd, setPositionSizeUsd] = useState(
-    String(perp.positionSizeUsd),
-  );
-  const [walletId, setWalletId] = useState(perp.walletId ?? "");
-  const [wallets, setWallets] = useState<Wallet[] | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    const size = Number(positionSizeUsd);
-    if (!Number.isFinite(size) || size <= 0) {
-      setWallets([]);
-      return;
-    }
-    let cancelled = false;
-    fetchSelectableWallets(symbol, size)
-      .then((w) => {
-        if (!cancelled) setWallets(w);
-      })
-      .catch(() => {
-        if (!cancelled) setWallets([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [symbol, positionSizeUsd]);
-
-  useEffect(() => {
-    if (wallets && !wallets.some((w) => w.id === walletId)) {
-      setWalletId(wallets[0]?.id ?? "");
-    }
-  }, [wallets, walletId]);
-
-  return (
-    <form
-      className="flex flex-col gap-3"
-      onSubmit={async (e) => {
-        e.preventDefault();
-        const decision = Number(decisionFrequencySeconds);
-        const lev = Number(leverage);
-        const size = Number(positionSizeUsd);
-        if (
-          !Number.isFinite(decision) ||
-          decision <= 0 ||
-          !Number.isFinite(lev) ||
-          lev <= 0 ||
-          !Number.isFinite(size) ||
-          size <= 0 ||
-          !walletId
-        ) {
-          return;
-        }
-        setSubmitting(true);
-        await onSubmit({
-          decisionFrequencySeconds: decision,
-          leverage: lev,
-          positionSizeUsd: size,
-          walletId,
-        });
-        setSubmitting(false);
-      }}
-    >
-      <p className="text-xs text-subtext-0">
-        Enabling trading also enables sampling for this market.
-      </p>
-      <label className="flex flex-col gap-1">
-        <Label>Decision frequency (seconds)</Label>
-        <Input
-          type="number"
-          min={1}
-          value={decisionFrequencySeconds}
-          onChange={(e) => setDecisionFrequencySeconds(e.target.value)}
-        />
-      </label>
-      <label className="flex flex-col gap-1">
-        <Label>Leverage</Label>
-        <Input
-          type="number"
-          min={1}
-          value={leverage}
-          onChange={(e) => setLeverage(e.target.value)}
-        />
-      </label>
-      <label className="flex flex-col gap-1">
-        <Label>Position size (USD)</Label>
-        <Input
-          type="number"
-          min={1}
-          value={positionSizeUsd}
-          onChange={(e) => setPositionSizeUsd(e.target.value)}
-        />
-      </label>
-      <label className="flex flex-col gap-1">
-        <Label>Wallet</Label>
-        <Select
-          value={walletId}
-          onChange={(e) => setWalletId(e.target.value)}
-        >
-          <option value="" disabled>
-            {wallets === null
-              ? "Loading..."
-              : wallets.length === 0
-                ? "No eligible wallets"
-                : "Select a wallet"}
-          </option>
-          {wallets?.map((w) => (
-            <option key={w.id} value={w.id}>
-              {w.label} ({w.kind}
-              {w.currentBalanceUsd !== null
-                ? `, $${w.currentBalanceUsd.toLocaleString()}`
-                : ""}
-              )
-            </option>
-          ))}
-        </Select>
-      </label>
-      <div className="mt-1 flex justify-end gap-2">
-        <Button type="button" variant="ghost" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button type="submit" disabled={submitting || !walletId}>
-          {submitting ? "Enabling..." : "Enable trading"}
         </Button>
       </div>
     </form>

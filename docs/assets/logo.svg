@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Jeeva" width="620" height="210" viewBox="0 0 620 210">
+  <defs>
+    <clipPath id="jeeva-logo-letters">
+      <text
+        x="0"
+        y="188"
+        font-family="'Arial Black', 'Helvetica Neue', Arial, sans-serif"
+        font-weight="900"
+        font-size="195"
+        letter-spacing="-18"
+        textLength="610"
+        lengthAdjust="spacingAndGlyphs"
+      >JEEVA</text>
+    </clipPath>
+    <clipPath id="jeeva-logo-top-half">
+      <polygon points="0,0 620,0 620,40 0,170" />
+    </clipPath>
+  </defs>
+  <g clip-path="url(#jeeva-logo-letters)">
+    <rect x="0" y="0" width="620" height="210" fill="#ff3b3b" />
+    <g clip-path="url(#jeeva-logo-top-half)">
+      <rect x="0" y="0" width="620" height="210" fill="#ffb84d" />
+    </g>
+  </g>
+</svg>

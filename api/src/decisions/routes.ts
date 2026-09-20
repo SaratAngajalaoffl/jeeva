@@ -18,9 +18,13 @@ export function createDecisionsRouter(pgPool: Pool): Router {
       return;
     }
 
-    const { symbol, limit: rawLimit } = req.query;
+    const { symbol, sessionId, limit: rawLimit } = req.query;
     if (symbol !== undefined && typeof symbol !== "string") {
       res.status(400).json({ error: "invalid symbol" });
+      return;
+    }
+    if (sessionId !== undefined && typeof sessionId !== "string") {
+      res.status(400).json({ error: "invalid sessionId" });
       return;
     }
 
@@ -36,6 +40,7 @@ export function createDecisionsRouter(pgPool: Pool): Router {
 
     const decisions = await getDecisionHistory(pgPool, {
       symbol,
+      sessionId,
       from: range.from,
       to: range.to,
       limit,
