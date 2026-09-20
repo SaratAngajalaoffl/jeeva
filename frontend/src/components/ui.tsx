@@ -55,7 +55,7 @@ export function IconButton({
     <button
       className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
         active
-          ? "border-ember/60 bg-ember/15 text-ember"
+          ? "border-peach/60 bg-peach/15 text-peach"
           : "border-surface-1 bg-transparent text-subtext-1 hover:border-ember/40 hover:text-text"
       } ${className}`}
       {...props}

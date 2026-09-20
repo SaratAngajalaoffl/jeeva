@@ -95,8 +95,8 @@ export default function MarketsPage() {
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [sortKey, setSortKey] = useState<SortKey>("symbol");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [sortKey, setSortKey] = useState<SortKey>("volumeUsd");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
   const [dialog, setDialog] = useState<ConfigDialog | null>(null);
 
@@ -360,7 +360,7 @@ export default function MarketsPage() {
                       >
                         {col.label}
                         {sortKey === col.key && (
-                          <span className="ml-1 text-ember">
+                          <span className="ml-1 text-peach">
                             {sortDir === "asc" ? "↑" : "↓"}
                           </span>
                         )}

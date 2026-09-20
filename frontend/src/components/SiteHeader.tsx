@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import Logo from "./Logo";
 
 const NAV_LINKS = [
   { href: "/dashboard", label: "Overview" },
@@ -22,12 +23,8 @@ export function SiteHeader({
   return (
     <div className="flex min-h-screen">
       <aside className="sticky top-0 flex h-screen w-56 shrink-0 flex-col border-r border-surface-1 bg-mantle/80 px-4 py-6">
-        <Link
-          href="/dashboard"
-          className="flex items-center gap-2 px-2 font-semibold tracking-tight text-text"
-        >
-          <span className="inline-block h-2 w-2 rounded-full bg-ember shadow-[0_0_8px_theme(colors.ember)]" />
-          Jeeva
+        <Link href="/dashboard" className="flex items-center justify-center px-2 py-2">
+          <Logo height={36} />
         </Link>
         <nav className="mt-8 flex flex-col gap-1 text-sm">
           {NAV_LINKS.map((link) => {

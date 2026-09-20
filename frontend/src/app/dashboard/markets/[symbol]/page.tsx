@@ -65,13 +65,13 @@ function StatusBadge({ label, active }: { label: string; active: boolean }) {
     <span
       className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${
         active
-          ? "border-ember/50 bg-ember/10 text-ember"
+          ? "border-peach/50 bg-peach/10 text-peach"
           : "border-surface-1 text-subtext-0"
       }`}
     >
       <span
         className={`h-1.5 w-1.5 rounded-full ${
-          active ? "bg-ember" : "bg-overlay-0"
+          active ? "bg-peach" : "bg-overlay-0"
         }`}
       />
       {label}: {active ? "On" : "Off"}

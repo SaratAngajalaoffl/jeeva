@@ -1,7 +1,7 @@
 "use client";
 
 import { useId } from "react";
-import { Area, AreaChart, ResponsiveContainer, Tooltip } from "recharts";
+import { Area, AreaChart, ResponsiveContainer, Tooltip, YAxis } from "recharts";
 
 interface SparklineProps {
   points: number[];
@@ -29,6 +29,10 @@ export default function Sparkline({
 
   const data = points.map((value, i) => ({ i, value }));
 
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const padding = (max - min) * 0.1 || Math.abs(min) * 0.01 || 1;
+
   return (
     <div
       role="img"
@@ -38,6 +42,7 @@ export default function Sparkline({
     >
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={data} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
+          <YAxis hide domain={[min - padding, max + padding]} />
           <defs>
             <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor={color} stopOpacity={0.3} />

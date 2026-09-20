@@ -5,6 +5,6 @@ import Home from "./page";
 describe("Home", () => {
   it("renders the app title", () => {
     render(<Home />);
-    expect(screen.getByText("Jeeva")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Jeeva" })).toBeInTheDocument();
   });
 });

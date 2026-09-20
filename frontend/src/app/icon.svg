@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="#150d0f" />
+  <defs>
+    <clipPath id="j">
+      <text x="14" y="48" font-family="'Arial Black', 'Helvetica Neue', Arial, sans-serif" font-weight="900" font-size="46">J</text>
+    </clipPath>
+    <clipPath id="top">
+      <polygon points="0,0 64,0 64,16 0,44" />
+    </clipPath>
+  </defs>
+  <g clip-path="url(#j)">
+    <rect width="64" height="64" fill="#ff3b3b" />
+    <g clip-path="url(#top)">
+      <rect width="64" height="64" fill="#ffb84d" />
+    </g>
+  </g>
+</svg>
