@@ -16,28 +16,28 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
 const STEPS = [
   {
-    title: "Read the history",
-    body: "Up to the last 1,000 samples for that PERP — price, open interest, volume, spread.",
+    title: "Read the market",
+    body: "Recent history for that market — price, liquidity, volume, spread.",
   },
   {
     title: "Read the position",
-    body: "Flat, long or short, straight from the configured ExecutionAdapter.",
+    body: "Where this market currently stands: flat, long or short.",
   },
   {
-    title: "Ask Jev",
-    body: "One structured Choice question over a compact text summary of the state.",
+    title: "Ask the decision maker",
+    body: "Whatever strategy you've plugged in answers with a direction.",
   },
   {
-    title: "Diff target vs. current",
-    body: "Open, close, flip — or do nothing at all when the direction is unchanged.",
+    title: "Compare",
+    body: "Target against current — open, close, flip, or do nothing at all.",
   },
   {
-    title: "Apply the action",
-    body: "A simulated fill on the mock wallet, or a signed Hyperliquid order.",
+    title: "Hand it to the wallet",
+    body: "A simulated fill while you're evaluating, a real order once you're not.",
   },
   {
-    title: "Log the tick",
-    body: "Context, decision, action and any error — every cycle, including the ones that fail.",
+    title: "Write it down",
+    body: "What it saw, what it chose, what happened — including the cycles that fail.",
   },
 ];
 
@@ -135,7 +135,8 @@ export function DecisionCycle() {
             );
           })}
 
-          {/* Jev at the centre. */}
+          {/* One market at the centre — the loop belongs to it, not to any
+              particular strategy. */}
           <circle
             cx={CENTER}
             cy={CENTER}
@@ -144,27 +145,17 @@ export function DecisionCycle() {
             className="jv-breathe"
           />
           <rect
-            x={CENTER - 16}
-            y={CENTER - 16}
-            width="32"
-            height="32"
-            rx="6"
+            x={CENTER - 21}
+            y={CENTER - 21}
+            width="42"
+            height="42"
+            rx="8"
             transform={`rotate(45 ${CENTER} ${CENTER})`}
             fill="none"
             stroke="#ffb84d"
             strokeWidth="1.5"
           />
-          <text
-            x={CENTER}
-            y={CENTER + 4}
-            textAnchor="middle"
-            fontSize="13"
-            fontWeight="700"
-            letterSpacing="0.14em"
-            fill="#f6e9ea"
-          >
-            JEV
-          </text>
+          <circle cx={CENTER} cy={CENTER} r="5" fill="#ffb84d" />
         </svg>
       </Reveal>
 

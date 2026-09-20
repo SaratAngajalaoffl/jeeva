@@ -1,92 +1,94 @@
 import { Fragment } from "react";
 import Link from "next/link";
 import {
-  Activity,
   AlertTriangle,
-  ArrowLeftRight,
   ArrowRight,
+  ArrowUpRight,
+  Database,
+  Gauge,
   Layers,
-  Repeat,
+  Plug,
   ScrollText,
   ShieldCheck,
   SlidersHorizontal,
-  Sparkles,
+  Wallet,
 } from "lucide-react";
 import Logo from "@/components/Logo";
 import { AxisMatrix } from "@/components/landing/AxisMatrix";
 import { DecisionCycle } from "@/components/landing/DecisionCycle";
+import { Interfaces } from "@/components/landing/Interfaces";
 import { LandingNav } from "@/components/landing/LandingNav";
 import { Reveal } from "@/components/landing/Reveal";
 import { SignalPanel } from "@/components/landing/SignalPanel";
 import { SpotlightCard } from "@/components/landing/SpotlightCard";
-import { StateBlock } from "@/components/landing/StateBlock";
 import { TickerTape } from "@/components/landing/TickerTape";
 
+const REPO_URL = "https://github.com/SaratAngajalaoffl/jeeva";
+
 const HEADLINE = [
-  { word: "Hyperliquid" },
-  { word: "perps," },
-  { word: "traded" },
-  { word: "on" },
-  { word: "a" },
-  { word: "logged", accent: true },
-  { word: "decision.", accent: true },
+  { word: "A" },
+  { word: "trading" },
+  { word: "engine" },
+  { word: "built" },
+  { word: "from" },
+  { word: "swappable", accent: true },
+  { word: "parts.", accent: true },
 ];
 
 const HERO_STATS = [
-  { value: "3", label: "decision makers" },
-  { value: "2", label: "execution paths" },
-  { value: "1,000", label: "samples per decision" },
-  { value: "5", label: "failures → auto-flatten" },
+  { value: "Modular", label: "Easily extendable interfaces" },
+  { value: "Paper-first", label: "Evaluate before risking funds" },
+  { value: "Open source", label: "read it, fork it, extend it" },
 ];
 
 const FEATURES = [
   {
-    icon: Activity,
-    title: "Tracks the market",
-    body: "For every PERP with sampling on, Jeeva continuously records price, open interest, volume and spread — the history every later decision is made against.",
+    icon: Plug,
+    title: "Bring your own strategy",
+    body: "A decision maker is anything that can look at a market and answer long, short or flat. Jev ships in the box; your own rules or model drop into the same slot.",
   },
   {
-    icon: Sparkles,
-    title: "Asks Jev, not a chat loop",
-    body: "One structured Choice question per tick against a compact text state. Back comes a target direction, a confidence, and a probability for each outcome.",
+    icon: Wallet,
+    title: "Bring your own venue",
+    body: "Execution sits behind its own interface. Hyperliquid and a paper wallet are the adapters included — another exchange is another implementation, not a rewrite.",
   },
   {
-    icon: ArrowLeftRight,
-    title: "Moves to match",
-    body: "Target direction is diffed against the live position: open, close, or flip. Repeating the same direction is a no-op — no pyramiding, ever.",
+    icon: Database,
+    title: "Control what it sees",
+    body: "Choose which markets get recorded and how far back the history runs. A strategy is only ever as good as the window it reads, so that window is yours to set.",
+  },
+  {
+    icon: Gauge,
+    title: "Evaluate before you commit",
+    body: "Point anything new at the paper wallet and let it trade live conditions for as long as you like. Judge it on its own decision log, not on a backtest you have to trust.",
   },
   {
     icon: SlidersHorizontal,
-    title: "Tuned per market",
-    body: "Frequency, leverage, decision maker, sampling and trading are all per-PERP switches. Run one market hourly and another every minute.",
-  },
-  {
-    icon: Repeat,
-    title: "No restarts",
-    body: "Config lives in MongoDB and the engine watches it with change streams. Flip a switch on the dashboard and the next cycle already sees it.",
+    title: "Tuned market by market",
+    body: "How often it trades, how much size it takes, what decides it, whether it trades at all — every market carries its own settings.",
   },
   {
     icon: ScrollText,
-    title: "Auditable by default",
-    body: "Every tick writes its context, decision, action and error — including the ticks that fail. Each position traces back to the state that produced it.",
+    title: "Nothing happens off the record",
+    body: "Every cycle stores what the strategy saw, what it chose and what came of it — failures included. Any position can be traced back to its cause.",
   },
 ];
 
 const SAFETY = [
   {
     icon: ShieldCheck,
-    title: "Mock until you say otherwise",
-    body: "A fresh deployment and every new market start against a simulated wallet. Real Hyperliquid orders need an explicit switch to live and configured wallet credentials — both, not either.",
+    title: "Paper until you say otherwise",
+    body: "A fresh install and every new market start on the paper wallet. Trading real funds takes a connected wallet and a deliberate switch — both, not either.",
   },
   {
     icon: AlertTriangle,
-    title: "Five strikes, then flat",
-    body: "If a PERP's cycle fails five times in a row — bad data, a down decision API, a rejected order — Jeeva force-flattens that position rather than leaving it unmanaged.",
+    title: "Fails flat, not open",
+    body: "If a market's cycle keeps erroring — bad data, an unreachable strategy, a rejected order — Jeeva closes that position rather than leaving it unmanaged.",
   },
   {
     icon: Layers,
-    title: "Independent axes",
-    body: "Which model decides and where the order lands are separate settings. Real Jev decisions can run against the mock wallet indefinitely.",
+    title: "No accidental size",
+    body: "Repeating a direction does nothing at all. Positions never quietly stack up because a strategy said the same thing twice.",
   },
 ];
 
@@ -131,10 +133,10 @@ export default function Home() {
                 style={{ animationDelay: "0.05s" }}
               >
                 <span className="rounded-full bg-ember/15 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-ember">
-                  Mock first
+                  Paper first
                 </span>
                 <span className="text-xs text-subtext-1">
-                  Live orders only when you flip the switch
+                  Real funds only when you're sure
                 </span>
               </div>
 
@@ -161,10 +163,10 @@ export default function Home() {
                 className="jv-fade-up mt-6 max-w-xl text-pretty text-lg leading-relaxed text-subtext-1"
                 style={{ animationDelay: "0.55s" }}
               >
-                Jeeva watches Hyperliquid perpetual futures, periodically asks
-                an AI decision model whether each market should be long, short
-                or flat, and moves the position to match — against a paper
-                wallet until you decide otherwise.
+                Jeeva runs one loop per market: read the data, ask a strategy
+                for a direction, move the position to match. What decides, where
+                it trades, and what it gets to see are all interfaces — so the
+                engine stays the same while the parts change.
               </p>
 
               <div
@@ -186,23 +188,29 @@ export default function Home() {
                   />
                 </Link>
                 <a
-                  href="#cycle"
-                  className="inline-flex items-center gap-2 rounded-xl border border-surface-1 bg-surface-0/40 px-6 py-3 text-sm font-medium text-text backdrop-blur transition-colors hover:border-ember/50 hover:text-ember"
+                  href={REPO_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="group inline-flex items-center gap-2 rounded-xl border border-surface-1 bg-surface-0/40 px-6 py-3 text-sm font-medium text-text backdrop-blur transition-colors hover:border-ember/50 hover:text-ember"
                 >
-                  See the decision cycle
+                  Read the source
+                  <ArrowUpRight
+                    size={16}
+                    className="transition-transform duration-300 group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
+                  />
                 </a>
               </div>
 
               <dl
-                className="jv-fade-up mt-12 grid w-full grid-cols-2 gap-x-6 gap-y-5 border-t border-surface-1 pt-8 sm:grid-cols-4"
+                className="jv-fade-up mt-12 grid w-full gap-x-6 gap-y-5 border-t border-surface-1 pt-8 sm:grid-cols-3"
                 style={{ animationDelay: "0.8s" }}
               >
                 {HERO_STATS.map((stat) => (
                   <div key={stat.label} className="flex flex-col">
-                    <dt className="order-2 mt-1 text-xs leading-snug text-subtext-0">
+                    <dt className="order-2 mt-1 whitespace-nowrap text-xs leading-snug text-subtext-0">
                       {stat.label}
                     </dt>
-                    <dd className="order-1 text-2xl font-semibold tracking-tight text-text">
+                    <dd className="order-1 text-xl font-semibold tracking-tight text-text">
                       {stat.value}
                     </dd>
                   </div>
@@ -222,7 +230,7 @@ export default function Home() {
             <SectionHeading
               eyebrow="What it does"
               title="An operator's trading loop, not a black box"
-              body="Six things happen on repeat. All six are visible on the dashboard, and all six are yours to switch off."
+              body="Everything the engine does is visible on the dashboard — and every part of it is yours to replace or switch off."
             />
 
             <div className="mt-14 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -255,9 +263,9 @@ export default function Home() {
         >
           <div className="mx-auto max-w-6xl">
             <SectionHeading
-              eyebrow="The decision cycle"
+              eyebrow="The loop"
               title="One tick, six steps, every time"
-              body="Each trading-enabled market runs its own independent loop on its own frequency. Nothing is shared but the wallet."
+              body="Every enabled market runs its own loop at its own pace. Nothing is shared between them but the wallet."
             />
             <div className="mt-16">
               <DecisionCycle />
@@ -265,16 +273,16 @@ export default function Home() {
           </div>
         </section>
 
-        {/* What Jev sees --------------------------------------------------- */}
-        <section className="px-6 py-24 sm:py-32">
+        {/* Architecture ---------------------------------------------------- */}
+        <section id="architecture" className="scroll-mt-24 px-6 py-24 sm:py-32">
           <div className="mx-auto max-w-6xl">
             <SectionHeading
-              eyebrow="What Jev sees"
-              title="A sentence, not a database dump"
-              body="The engine compresses the whole sampled window into one line of text, asks a single question, and writes the structured answer straight to the log."
+              eyebrow="Architecture"
+              title="Three seams, and what fills them is up to you"
+              body="The loop is fixed. Everything it touches is an interface — which is where a new strategy, a new exchange, or an evaluation harness of your own plugs in."
             />
             <div className="mt-14">
-              <StateBlock />
+              <Interfaces />
             </div>
           </div>
         </section>
@@ -288,7 +296,7 @@ export default function Home() {
             <SectionHeading
               eyebrow="Two independent axes"
               title="Pick who decides. Pick where it lands."
-              body="The decision maker and the execution path are separate choices — which is how you get real intelligence trading a wallet that cannot lose anything."
+              body="Strategy and venue are separate choices, so every combination is reachable — including a serious strategy trading a wallet that cannot lose anything."
             />
             <Reveal className="mt-14" from="zoom">
               <AxisMatrix />
@@ -349,19 +357,33 @@ export default function Home() {
                   Start on the paper wallet.
                 </h2>
                 <p className="mx-auto mt-4 max-w-md text-pretty text-base leading-relaxed text-subtext-1">
-                  Enable a market, pick a decision maker, and watch the log fill
-                  up. Nothing touches the real orderbook until you say so.
+                  Enable a market, pick a strategy, and watch the log fill up.
+                  Nothing touches a real orderbook until you say so.
                 </p>
-                <Link
-                  href="/login"
-                  className="group mt-9 inline-flex items-center gap-2 rounded-xl bg-ember px-7 py-3.5 text-sm font-semibold text-primary-foreground shadow-lg shadow-ember/25 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-ember/35"
-                >
-                  Sign in
-                  <ArrowRight
-                    size={16}
-                    className="transition-transform duration-300 group-hover:translate-x-1"
-                  />
-                </Link>
+                <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
+                  <Link
+                    href="/login"
+                    className="group inline-flex items-center gap-2 rounded-xl bg-ember px-7 py-3.5 text-sm font-semibold text-primary-foreground shadow-lg shadow-ember/25 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-ember/35"
+                  >
+                    Sign in
+                    <ArrowRight
+                      size={16}
+                      className="transition-transform duration-300 group-hover:translate-x-1"
+                    />
+                  </Link>
+                  <a
+                    href={REPO_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="group inline-flex items-center gap-2 rounded-xl border border-surface-1 bg-surface-0/50 px-7 py-3.5 text-sm font-medium text-text backdrop-blur transition-colors hover:border-ember/50 hover:text-ember"
+                  >
+                    Read the source
+                    <ArrowUpRight
+                      size={16}
+                      className="transition-transform duration-300 group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
+                    />
+                  </a>
+                </div>
               </div>
             </div>
           </Reveal>
@@ -373,12 +395,12 @@ export default function Home() {
           <div className="flex items-center gap-3">
             <Logo height={18} className="opacity-70" />
             <span className="text-xs text-subtext-0">
-              AI-assisted trading for Hyperliquid perpetual futures
+              A modular trading engine for perpetual futures
             </span>
           </div>
           <div className="flex items-center gap-6 text-xs text-subtext-0">
             <a
-              href="https://github.com/SaratAngajalaoffl/jeeva"
+              href={REPO_URL}
               target="_blank"
               rel="noreferrer"
               className="transition-colors hover:text-text"
@@ -386,7 +408,7 @@ export default function Home() {
               GitHub
             </a>
             <a
-              href="https://github.com/SaratAngajalaoffl/jeeva/blob/main/LICENSE"
+              href={`${REPO_URL}/blob/main/LICENSE`}
               target="_blank"
               rel="noreferrer"
               className="transition-colors hover:text-text"

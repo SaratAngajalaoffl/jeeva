@@ -110,9 +110,9 @@ export function SignalPanel() {
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-peach/40 bg-peach/10 px-2.5 py-1 text-[11px] font-medium text-peach">
-              <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-peach" />
-              mock execution
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-[#97FCE4]/40 bg-[#97FCE4]/10 px-2.5 py-1 text-[11px] font-medium text-[#97FCE4]">
+              <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-[#97FCE4]" />
+              Hyperliquid
             </span>
           </div>
         </header>
@@ -236,9 +236,9 @@ export function SignalPanel() {
 
         <footer className="grid grid-cols-3 divide-x divide-surface-1 border-t border-surface-1 text-center">
           {[
-            { label: "Target", value: "long", tone: "text-emerald-400" },
+            { label: "Direction", value: "long", tone: "text-emerald-400" },
             { label: "Confidence", value: "0.72", tone: "text-text" },
-            { label: "Samples", value: "1,000", tone: "text-text" },
+            { label: "Interval", value: "5m", tone: "text-text" },
           ].map((stat) => (
             <div key={stat.label} className="px-4 py-3">
               <div className="text-[10px] font-medium uppercase tracking-wider text-subtext-0">
@@ -260,18 +260,18 @@ export function SignalPanel() {
         style={{ animationDelay: "0.8s" }}
       >
         <div className="text-[10px] font-medium uppercase tracking-wider text-subtext-0">
-          Decision
+          Decision maker
         </div>
-        <div className="text-xs font-semibold text-text">TypeSafe Jev</div>
+        <div className="text-xs font-semibold text-text">Jev</div>
       </div>
       <div
         className="jv-float absolute -right-4 bottom-20 hidden rounded-xl border border-surface-1 bg-mantle/90 px-3 py-2 shadow-xl shadow-black/40 backdrop-blur lg:block"
         style={{ animationDelay: "2.4s" }}
       >
         <div className="text-[10px] font-medium uppercase tracking-wider text-subtext-0">
-          Execution
+          Wallet adapter
         </div>
-        <div className="text-xs font-semibold text-peach">Mock wallet</div>
+        <div className="text-xs font-semibold text-[#97FCE4]">Hyperliquid</div>
       </div>
     </div>
   );

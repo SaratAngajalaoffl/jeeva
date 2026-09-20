@@ -2,12 +2,15 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { ArrowUpRight } from "lucide-react";
 import Logo from "@/components/Logo";
 
+const REPO_URL = "https://github.com/SaratAngajalaoffl/jeeva";
+
 const SECTIONS = [
-  { href: "#what-it-does", label: "What it does" },
-  { href: "#cycle", label: "The cycle" },
-  { href: "#axes", label: "Axes" },
+  { href: "#what-it-does", label: "Features" },
+  { href: "#cycle", label: "Workflow" },
+  { href: "#architecture", label: "Architecture" },
   { href: "#safety", label: "Safety" },
 ];
 
@@ -69,12 +72,23 @@ export function LandingNav() {
           ))}
         </nav>
 
-        <Link
-          href="/login"
-          className="inline-flex items-center justify-center rounded-lg border border-surface-1 bg-surface-0/60 px-4 py-1.5 text-sm font-medium text-text transition-colors hover:border-ember/60 hover:text-ember"
-        >
-          Sign in
-        </Link>
+        <div className="flex items-center gap-4">
+          <a
+            href={REPO_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="hidden items-center gap-1 text-sm text-subtext-1 transition-colors hover:text-text sm:inline-flex"
+          >
+            Source
+            <ArrowUpRight size={14} />
+          </a>
+          <Link
+            href="/login"
+            className="inline-flex items-center justify-center rounded-lg border border-surface-1 bg-surface-0/60 px-4 py-1.5 text-sm font-medium text-text transition-colors hover:border-ember/60 hover:text-ember"
+          >
+            Sign in
+          </Link>
+        </div>
       </div>
 
       <div

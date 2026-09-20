@@ -3,67 +3,76 @@
 import * as React from "react";
 
 /**
- * The two independent axes — which DecisionMaker answers, and where the order
- * goes — as a grid you can hover. Lighting the row and column headers from the
- * hovered cell is the whole point: it shows that the axes are separate
- * choices, not one "mode" dropdown.
+ * The two interfaces as a grid you can hover. Lighting the row and column
+ * headers from the hovered cell is the whole point: strategy and venue are
+ * separate choices, so every combination is reachable — including the ones
+ * nothing ships with yet.
  */
 
 const DECISION_MAKERS = [
-  { name: "Fake", note: "Synthetic decisions, no network calls." },
-  { name: "TypeSafe Jev", note: "Jev's systemOne API, called directly." },
-  { name: "OpenRouter Jev", note: "The same Jev, routed via OpenRouter." },
+  { name: "Jev", note: "The decision model included in the box." },
+  {
+    name: "Your rules",
+    note: "Indicators, thresholds, anything deterministic.",
+  },
+  { name: "Your model", note: "A service you call, or code you run yourself." },
 ];
 
-const EXECUTION = [
-  { name: "Mock", note: "Simulated fills against a virtual wallet." },
-  { name: "Live", note: "Signed orders on a real Hyperliquid wallet." },
+const WALLETS = [
+  { name: "Paper wallet", note: "Simulated fills. No funds involved." },
+  { name: "Hyperliquid", note: "Real orders on a connected wallet." },
+  {
+    name: "Your exchange",
+    note: "An adapter you write against the same interface.",
+  },
 ];
 
-const CELLS: Array<Array<{ text: string; tone: "safe" | "live"; tag?: string }>> =
+const CELLS: Array<
+  Array<{ text: string; tone: "safe" | "live"; tag?: string }>
+> = [
   [
-    [
-      {
-        text: "Safe out of the box — no credentials, no funds, no surprises.",
-        tone: "safe",
-        tag: "Default",
-      },
-      {
-        text: "Smoke-test the order path with throwaway decisions.",
-        tone: "live",
-      },
-    ],
-    [
-      {
-        text: "Paper-trading with real intelligence.",
-        tone: "safe",
-        tag: "Sweet spot",
-      },
-      { text: "Jev's calls, signed and sent to Hyperliquid.", tone: "live" },
-    ],
-    [
-      {
-        text: "The same decisions through a second provider, still risk-free.",
-        tone: "safe",
-      },
-      { text: "OpenRouter-routed Jev, trading real size.", tone: "live" },
-    ],
-  ];
+    {
+      text: "Try the bundled model with nothing at stake.",
+      tone: "safe",
+      tag: "Start here",
+    },
+    { text: "The setup Jeeva ships with, running live.", tone: "live" },
+    { text: "The same decisions, on a venue you add.", tone: "live" },
+  ],
+  [
+    {
+      text: "Prove your rules out on live market data, risk-free.",
+      tone: "safe",
+    },
+    { text: "Your logic, placing real orders.", tone: "live" },
+    { text: "Your logic, your venue.", tone: "live" },
+  ],
+  [
+    {
+      text: "Benchmark something new against the decision log.",
+      tone: "safe",
+    },
+    { text: "Promote it to live with one setting.", tone: "live" },
+    {
+      text: "Every part replaced — the loop around them is unchanged.",
+      tone: "live",
+    },
+  ],
+];
 
 export function AxisMatrix() {
   const [hovered, setHovered] = React.useState<[number, number] | null>(null);
   const [row, column] = hovered ?? [-1, -1];
 
   return (
-    <div className="overflow-x-auto">
-      <div className="grid min-w-[560px] grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)] gap-3">
-        {/* Column headers. */}
+    <div className="overflow-x-auto pb-2">
+      <div className="grid min-w-[760px] grid-cols-[minmax(0,0.9fr)_repeat(3,minmax(0,1fr))] gap-3">
         <div className="flex items-end pb-1 text-xs font-medium uppercase tracking-wider text-subtext-0">
-          Decision ↓ / Execution →
+          Decides ↓ / Executes →
         </div>
-        {EXECUTION.map((execution, columnIndex) => (
+        {WALLETS.map((wallet, columnIndex) => (
           <div
-            key={execution.name}
+            key={wallet.name}
             className={`rounded-xl border px-4 py-3 transition-all duration-300 ${
               column === columnIndex
                 ? "border-peach/50 bg-peach/10"
@@ -75,15 +84,12 @@ export function AxisMatrix() {
                 column === columnIndex ? "text-peach" : "text-text"
               }`}
             >
-              {execution.name}
+              {wallet.name}
             </div>
-            <div className="mt-0.5 text-xs text-subtext-0">
-              {execution.note}
-            </div>
+            <div className="mt-0.5 text-xs text-subtext-0">{wallet.note}</div>
           </div>
         ))}
 
-        {/* Rows. */}
         {DECISION_MAKERS.map((maker, rowIndex) => (
           <React.Fragment key={maker.name}>
             <div

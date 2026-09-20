@@ -5,7 +5,8 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Jeeva",
-  description: "Jev-driven Hyperliquid perp trading dashboard",
+  description:
+    "A modular trading engine for perpetual futures — swappable strategies, wallets and data sources, with paper trading by default.",
 };
 
 const montserrat = Montserrat({

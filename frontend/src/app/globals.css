@@ -235,6 +235,27 @@ html {
   transform-origin: center;
 }
 
+/* Architecture connectors -------------------------------------------------- */
+
+/* A pulse travelling along the line between two interface panels. */
+@keyframes jv-flow {
+  0% {
+    transform: translateX(-120%);
+    opacity: 0;
+  }
+  25%,
+  75% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(120%);
+    opacity: 0;
+  }
+}
+.jv-flow {
+  animation: jv-flow 2.8s cubic-bezier(0.55, 0, 0.45, 1) infinite;
+}
+
 /* Ticker ------------------------------------------------------------------ */
 
 @keyframes jv-marquee {

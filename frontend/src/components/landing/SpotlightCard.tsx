@@ -12,9 +12,16 @@ import * as React from "react";
  */
 export function SpotlightCard({
   className = "",
+  contentClassName = "",
   children,
 }: {
   className?: string;
+  /**
+   * Applied to the wrapper the children actually sit in. Needed when the
+   * content has to fill the card — e.g. `flex h-full flex-col` so a footer
+   * can `mt-auto` to the bottom edge.
+   */
+  contentClassName?: string;
   children: React.ReactNode;
 }) {
   const ref = React.useRef<HTMLDivElement>(null);
@@ -63,7 +70,7 @@ export function SpotlightCard({
           padding: 1,
         }}
       />
-      <div className="relative">{children}</div>
+      <div className={`relative ${contentClassName}`}>{children}</div>
     </div>
   );
 }
