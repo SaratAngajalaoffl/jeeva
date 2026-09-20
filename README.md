@@ -5,8 +5,6 @@
 
   [![CI](https://github.com/SaratAngajalaoffl/jeeva/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/SaratAngajalaoffl/jeeva/actions/workflows/ci.yml)
   [![Publish images](https://github.com/SaratAngajalaoffl/jeeva/actions/workflows/publish.yml/badge.svg?branch=main)](https://github.com/SaratAngajalaoffl/jeeva/actions/workflows/publish.yml)
-  [![Last commit](https://img.shields.io/github/last-commit/SaratAngajalaoffl/jeeva)](https://github.com/SaratAngajalaoffl/jeeva/commits/main)
-  [![Open issues](https://img.shields.io/github/issues/SaratAngajalaoffl/jeeva)](https://github.com/SaratAngajalaoffl/jeeva/issues)
   [![Node](https://img.shields.io/badge/node-20-339933?logo=node.js&logoColor=white)](https://nodejs.org)
   [![Rust](https://img.shields.io/badge/rust-stable-000000?logo=rust&logoColor=white)](https://www.rust-lang.org)
   [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
