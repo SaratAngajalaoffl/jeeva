@@ -10,7 +10,7 @@
   [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 </div>
 
-Jeeva is an AI-assisted trading application for Hyperliquid perpetual futures. It watches the market, periodically asks an AI decision model ("Jev") whether a given market should be long, short, or flat, and moves each position to match — either against a simulated paper-trading wallet or a real Hyperliquid wallet.
+A modular trading engine, initially built to test trading with Jev. But turned out to be a pretty useful tool that can be extended with other algorithm's for Mid-Frequency trading.
 
 A dashboard lets you turn markets on/off, tune how often and how aggressively each one trades, choose which decision engine drives it, and watch the resulting decisions, positions, and P&L in real time.
 
