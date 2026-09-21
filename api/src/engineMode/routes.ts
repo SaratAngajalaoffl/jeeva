@@ -7,7 +7,7 @@ import {
   listTradingSessions,
 } from "../trading-sessions/repository.js";
 import { listWallets } from "../wallets/repository.js";
-import { isPaperTradingOnly } from "./paperTradingOnly.js";
+import { isDemoMode } from "./demoMode.js";
 import { getEngineMode, setEngineMode, type EngineMode } from "./repository.js";
 
 function isValidMode(value: unknown): value is EngineMode {
@@ -45,11 +45,11 @@ export function createEngineModeRouter(db: Db, pgPool: Pool): Router {
   const router = Router();
   router.use(requireAuth);
 
-  const paperTradingOnly = isPaperTradingOnly();
+  const demoMode = isDemoMode();
 
   router.get("/", async (_req, res) => {
     const mode = await getEngineMode(db);
-    res.status(200).json({ mode, paperTradingOnly });
+    res.status(200).json({ mode, demoMode });
   });
 
   router.put("/", async (req, res) => {
@@ -60,7 +60,7 @@ export function createEngineModeRouter(db: Db, pgPool: Pool): Router {
       return;
     }
 
-    if (mode === "live" && paperTradingOnly) {
+    if (mode === "live" && demoMode) {
       res.status(403).json({ error: "live trading is disabled on this deployment" });
       return;
     }

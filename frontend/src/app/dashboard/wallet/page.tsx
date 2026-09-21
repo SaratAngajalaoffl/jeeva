@@ -148,7 +148,7 @@ export default function WalletPage() {
   const [publicAddress, setPublicAddress] = useState("");
   const [privateKey, setPrivateKey] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [paperTradingOnly, setPaperTradingOnly] = useState(false);
+  const [demoMode, setDemoMode] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -160,8 +160,8 @@ export default function WalletPage() {
       .then(setFundingPayments)
       .catch(() => setLoadError("Failed to load funding payments"));
     fetchEngineMode()
-      .then((s) => setPaperTradingOnly(Boolean(s.paperTradingOnly)))
-      .catch(() => setPaperTradingOnly(false));
+      .then((s) => setDemoMode(Boolean(s.demoMode)))
+      .catch(() => setDemoMode(false));
   }, []);
 
   const totalBalanceUsd = useMemo(
@@ -292,7 +292,7 @@ export default function WalletPage() {
               <WalletIcon size={28} className="text-subtext-0" />
               <p className="text-sm text-subtext-1">
                 No wallets yet. Add a mock wallet to start trading in
-                simulation{paperTradingOnly
+                simulation{demoMode
                   ? " — this deployment is paper-trading only"
                   : ", or a live wallet once you're ready to trade for real"}
               </p>

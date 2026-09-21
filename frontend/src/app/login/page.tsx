@@ -58,6 +58,10 @@ export default function LoginPage() {
           <Button type="submit" disabled={submitting}>
             {submitting ? "Signing in..." : "Sign in"}
           </Button>
+          <p className="text-center text-sm text-subtext-1">
+            Demo credentials: <span className="font-medium">admin</span> /{" "}
+            <span className="font-medium">password</span>
+          </p>
         </form>
       </Card>
     </main>

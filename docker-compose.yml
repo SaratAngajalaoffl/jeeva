@@ -66,13 +66,13 @@ services:
       - DATABASE_URL=postgres://jeeva:jeeva@timescaledb:5432/jeeva
       - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:3000}
       - AUTH_USERNAME=${AUTH_USERNAME:-admin}
-      - AUTH_PASSWORD=${AUTH_PASSWORD:-changeme}
+      - AUTH_PASSWORD=${AUTH_PASSWORD:-password}
       - JWT_SECRET=${JWT_SECRET:-dev-only-secret-change-me}
       # Bare names (no value) pass these through from .env only when set
       # there, so the decision-maker status endpoint can see whether
       # they're configured without the engine's own confusion between
       # "unset" and "empty string".
-      - PAPER_TRADING_ONLY
+      - DEMO_MODE
       - TYPESAFE_API_KEY
       - TYPESAFE_BASE_URL
       - OPENROUTER_API_KEY

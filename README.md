@@ -125,7 +125,7 @@ Execution mode is engine-wide (not per PERP) and stored in MongoDB, so switching
 ## Safety mechanisms
 
 - Fresh deployments and fresh PERPs default to mock execution and the Fake decision maker — nothing trades for real until you explicitly opt in.
-- Opening a trading session for a market automatically enables sampling for it too (you can't trade blind); disabling sampling automatically disables trading.
+- Enabling trading for a market automatically enables sampling for it too (you can't trade blind); disabling sampling automatically disables trading.
 - Deployments can enforce a floor on how fast markets may be sampled (`MIN_SAMPLING_FREQUENCY_SECONDS`) and a ceiling on how much history is kept (`MARKET_DATA_TTL_DAYS`).
 - 5 consecutive decision-cycle failures auto-flattens that PERP's position.
 - Every decision cycle — successful or failed — is written to an audit log visible in the dashboard.
@@ -146,6 +146,7 @@ To use real Jev decisions or real Hyperliquid execution, set the corresponding e
 | Variable | Needed for |
 |---|---|
 | `TYPESAFE_API_KEY` (+ optional `TYPESAFE_BASE_URL`) | TypeSafe Jev decision maker |
+| `OPENROUTER_API_KEY` (+ optional `OPENROUTER_BASE_URL`) | OpenRouter Jev decision maker |
 | `HYPERLIQUID_PRIVATE_KEY` (+ optional `HYPERLIQUID_TESTNET`) | Live execution |
 | `API_URL` | Dashboard → API base URL, read at container start (multi-instance deploys) |
 | `CORS_ORIGIN` | Origin(s) allowed to call the API, comma-separated for several dashboards |

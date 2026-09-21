@@ -2,7 +2,7 @@ import { Router } from "express";
 import type { Db } from "mongodb";
 import type { Pool } from "pg";
 import { requireAuth } from "../auth/requireAuth.js";
-import { isPaperTradingOnly } from "../engineMode/paperTradingOnly.js";
+import { isDemoMode } from "../engineMode/demoMode.js";
 import { isValidInitialBalanceUsd } from "./balance.js";
 import type { HyperliquidClient } from "../hyperliquid/client.js";
 import { isValidPositionSizeUsd } from "../perps/sizing.js";
@@ -79,7 +79,7 @@ export function createWalletsRouter(
       return;
     }
 
-    if (kind === "live" && isPaperTradingOnly()) {
+    if (kind === "live" && isDemoMode()) {
       res
         .status(403)
         .json({ error: "live wallets are disabled on this deployment" });

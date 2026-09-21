@@ -525,8 +525,8 @@ export type EngineMode = "mock" | "live";
 
 export interface EngineModeStatus {
   mode: EngineMode;
-  /** True when the deployment runs with PAPER_TRADING_ONLY=true. */
-  paperTradingOnly?: boolean;
+  /** True when the deployment runs with DEMO_MODE=true. */
+  demoMode?: boolean;
 }
 
 export async function fetchEngineMode(): Promise<EngineModeStatus> {

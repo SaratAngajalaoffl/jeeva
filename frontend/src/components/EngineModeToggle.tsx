@@ -52,7 +52,7 @@ export function EngineModeToggle() {
     return null;
   }
 
-  if (status.paperTradingOnly) {
+  if (status.demoMode) {
     return (
       <div
         role="note"

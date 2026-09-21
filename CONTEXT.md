@@ -1,19 +1,19 @@
 # Jeeva
 
-An AI-assisted trading application that uses a DecisionMaker backed by Jev (a TypeSafe "System One" decision model) to make buy/hold/sell calls on Hyperliquid perpetual futures, with a dashboard to control the trading engine.
+An AI-assisted trading application that uses a DecisionMaker backed by Jev (a TypeSafe "System One" decision model) to choose a target direction (long/short/flat) on Hyperliquid perpetual futures, with a dashboard to control the trading engine.
 
 ## Language
 
 **PERP**:
-A perpetual futures market on Hyperliquid (e.g. BTC-PERP). Each PERP has two independent switches: **trading enabled** (whether the decision loop consults its configured DecisionMaker and places/mock-places orders for it) and **sampling enabled** (whether the market-data loop records its price/OI/volume/spread history). Sampling runs independently of trading, so a PERP can be sampled without trading; the reverse is prevented — opening a trading session for a market automatically enables sampling for it, so no market is ever traded blind. A PERP's **decision maker** (see DecisionMaker) is a third, independent per-PERP setting, chosen when trading is enabled.
+A perpetual futures market on Hyperliquid (e.g. BTC-PERP). Each PERP has two independent switches: **trading enabled** (whether the decision loop consults its configured DecisionMaker and places/mock-places orders for it) and **sampling enabled** (whether the market-data loop records its price/OI/volume/spread history). Sampling runs independently of trading, so a PERP can be sampled without trading; the reverse is prevented — enabling trading for a market automatically enables sampling for it too, so no market is ever traded blind. A PERP's **decision maker** (see DecisionMaker) is a third, independent per-PERP setting, chosen when trading is enabled.
 
 **Jev**:
-The TypeSafe System One model that answers structured questions (Choice/Score/Noul) against a text `state`, used here to decide buy/hold/sell. Not a chat/agent loop — a single evaluation call. Reachable through more than one DecisionMaker backend (see DecisionMaker).
+The TypeSafe System One model that answers structured questions (Choice/Score/Noul) against a text `state`, used here to decide the target direction. Not a chat/agent loop — a single evaluation call. Reachable through more than one DecisionMaker backend (see DecisionMaker).
 _Avoid_: "the AI", "the model" (ambiguous with other models in the system)
 
 **DecisionMaker**:
 The interface for obtaining a trading decision. Chosen per PERP (`PerpConfig.decisionMaker` / `perpConfigs.decisionMaker`), independent of the PERP's ExecutionAdapter/mock-live axis. Three implementations:
-- `FakeDecisionMaker` — synthetic decisions, for testing without Jev access.
+- `RandomDecisionMaker` — synthetic decisions, for testing without Jev access.
 - `TypeSafeJevDecisionMaker` — calls TypeSafe's real Jev `systemOne` API directly.
 - `OpenRouterJevDecisionMaker` — calls Jev via OpenRouter (`openrouter.ai/~typesafe/jev-latest`) instead of TypeSafe directly, using `OPENROUTER_API_KEY`.
 

@@ -60,7 +60,7 @@ describe("GET /engine-mode", () => {
       .set("Cookie", authCookie());
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ mode: "mock", paperTradingOnly: false });
+    expect(res.body).toEqual({ mode: "mock", demoMode: false });
   });
 
   it("reflects a previously-set live mode", async () => {
@@ -71,7 +71,7 @@ describe("GET /engine-mode", () => {
       .set("Cookie", authCookie());
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ mode: "live", paperTradingOnly: false });
+    expect(res.body).toEqual({ mode: "live", demoMode: false });
   });
 });
 
@@ -146,30 +146,30 @@ describe("PUT /engine-mode", () => {
   });
 });
 
-describe("GET /engine-mode with PAPER_TRADING_ONLY=true", () => {
+describe("GET /engine-mode with DEMO_MODE=true", () => {
   afterEach(() => {
-    delete process.env.PAPER_TRADING_ONLY;
+    delete process.env.DEMO_MODE;
   });
 
-  it("reports paperTradingOnly and flags it", async () => {
-    process.env.PAPER_TRADING_ONLY = "true";
+  it("reports demoMode and flags it", async () => {
+    process.env.DEMO_MODE = "true";
 
     const res = await request(buildApp())
       .get("/engine-mode")
       .set("Cookie", authCookie());
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ mode: "mock", paperTradingOnly: true });
+    expect(res.body).toEqual({ mode: "mock", demoMode: true });
   });
 });
 
-describe("PUT /engine-mode with PAPER_TRADING_ONLY=true", () => {
+describe("PUT /engine-mode with DEMO_MODE=true", () => {
   afterEach(() => {
-    delete process.env.PAPER_TRADING_ONLY;
+    delete process.env.DEMO_MODE;
   });
 
   it("rejects switching to live with 403", async () => {
-    process.env.PAPER_TRADING_ONLY = "true";
+    process.env.DEMO_MODE = "true";
 
     const res = await request(buildApp())
       .put("/engine-mode")
@@ -182,7 +182,7 @@ describe("PUT /engine-mode with PAPER_TRADING_ONLY=true", () => {
   });
 
   it("still allows switching to mock", async () => {
-    process.env.PAPER_TRADING_ONLY = "true";
+    process.env.DEMO_MODE = "true";
 
     const res = await request(buildApp())
       .put("/engine-mode")
