@@ -31,6 +31,8 @@ pub use model::{
 };
 pub use openrouter_jev_decision_maker::OpenRouterJevDecisionMaker;
 pub use supervisor::{
-    desired_state, run, run_decision_cycle, PostgresSessionLifecycle, SessionLifecycle,
+    desired_state, min_confidence_to_shift_from_env, parse_min_confidence_to_shift, run,
+    run_decision_cycle, PostgresSessionLifecycle, SessionLifecycle,
+    DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
 };
 pub use typesafe_jev_decision_maker::TypeSafeJevDecisionMaker;

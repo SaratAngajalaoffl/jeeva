@@ -23,6 +23,36 @@ use crate::wallets::WalletRegistry;
 const HISTORY_WINDOW: u32 = 1000;
 const AUTO_FLATTEN_THRESHOLD: u32 = 5;
 
+/// Default minimum confidence: `0.0`, i.e. every decision is actionable.
+/// Matches pre-threshold behavior, so a deployment that never sets
+/// `MIN_CONFIDENCE_TO_SHIFT` behaves exactly as it did before.
+pub const DEFAULT_MIN_CONFIDENCE_TO_SHIFT: f64 = 0.0;
+
+/// Parses a `MIN_CONFIDENCE_TO_SHIFT` value. Unset/blank falls back to
+/// `DEFAULT_MIN_CONFIDENCE_TO_SHIFT`; a malformed or out-of-range value
+/// is an error so a bad deployment config fails fast at startup rather
+/// than silently holding (or shifting) every position. Pure so it's
+/// unit-testable without mutating the process environment.
+pub fn parse_min_confidence_to_shift(raw: Option<&str>) -> Result<f64, String> {
+    let raw = match raw {
+        Some(value) if !value.trim().is_empty() => value,
+        _ => return Ok(DEFAULT_MIN_CONFIDENCE_TO_SHIFT),
+    };
+
+    match raw.trim().parse::<f64>() {
+        Ok(min) if min.is_finite() && (0.0..=1.0).contains(&min) => Ok(min),
+        _ => Err(format!(
+            "Invalid MIN_CONFIDENCE_TO_SHIFT: {raw} (expected a number between 0.0 and 1.0)"
+        )),
+    }
+}
+
+/// The minimum confidence a decision must clear to shift a position,
+/// from the environment.
+pub fn min_confidence_to_shift_from_env() -> Result<f64, String> {
+    parse_min_confidence_to_shift(std::env::var("MIN_CONFIDENCE_TO_SHIFT").ok().as_deref())
+}
+
 /// Transitions a trading session to `closed` once the engine has
 /// finished flattening it (soft or hard close). Abstracted behind a
 /// trait so `run_decision_cycle` stays DB-free and directly testable.
@@ -78,11 +108,18 @@ fn flat_decision() -> JevDecision {
 /// to a forced Flat target), compares it to the current Position State,
 /// applies the resulting action, and always writes a decision-log row.
 /// Free of any scheduling concerns, so it's directly testable.
+///
+/// `min_confidence_to_shift` is the engine-wide floor for acting on a
+/// decision (see `MIN_CONFIDENCE_TO_SHIFT`): a decision whose winning
+/// confidence falls below it holds the current position instead of
+/// shifting. Forced flattening (soft/hard close, auto-flatten) is never
+/// gated by it — a flatten is never blocked by low confidence.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_decision_cycle(
     session_id: &str,
     symbol: &str,
     config: &TradingSessionConfig,
+    min_confidence_to_shift: f64,
     history: &dyn MarketDataHistoryReader,
     decision_maker: &dyn DecisionMaker,
     execution: &dyn ExecutionAdapter,
@@ -216,7 +253,23 @@ pub async fn run_decision_cycle(
 
     let current_direction = current_position.map(|p| p.direction);
 
-    let action = decide_action(current_direction, decision.direction);
+    // A near-tie (e.g. long 0.34 / short 0.33 / flat 0.33) picks a
+    // winning direction outright, but shouldn't be acted on: below the
+    // configured floor, hold whatever position we already have. A
+    // soft-close's forced Flat target isn't routed through here.
+    let action = if is_soft_closing || decision.confidence >= min_confidence_to_shift {
+        decide_action(current_direction, decision.direction)
+    } else {
+        tracing::info!(
+            symbol,
+            session_id,
+            confidence = decision.confidence,
+            min_confidence_to_shift,
+            direction = decision.direction.as_str(),
+            "decision below the confidence floor; holding current position"
+        );
+        super::model::PositionAction::NoOp
+    };
 
     let execution_result = apply_action(
         execution,
@@ -400,6 +453,7 @@ fn spawn_task(
     session_id: String,
     frequency_seconds: f64,
     store: SessionStore,
+    min_confidence_to_shift: f64,
     history: Arc<dyn MarketDataHistoryReader>,
     decision_makers: Arc<DecisionMakerRegistry>,
     wallets: Arc<WalletRegistry>,
@@ -426,6 +480,7 @@ fn spawn_task(
                     &session_id,
                     &config.symbol,
                     &config,
+                    min_confidence_to_shift,
                     history.as_ref(),
                     decision_maker.as_ref(),
                     execution.as_ref(),
@@ -492,6 +547,7 @@ fn resolve_execution(
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
     store: SessionStore,
+    min_confidence_to_shift: f64,
     history: Arc<dyn MarketDataHistoryReader>,
     decision_makers: Arc<DecisionMakerRegistry>,
     wallets: Arc<WalletRegistry>,
@@ -527,6 +583,7 @@ pub async fn run(
                 session_id.clone(),
                 frequency,
                 store.clone(),
+                min_confidence_to_shift,
                 history.clone(),
                 decision_makers.clone(),
                 wallets.clone(),
@@ -806,6 +863,7 @@ mod tests {
             &config.id,
             &config.symbol,
             &config,
+            DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
             &FakeHistory,
             &AlwaysFailingDecisionMaker,
             &execution,
@@ -843,6 +901,7 @@ mod tests {
             &config.id,
             &config.symbol,
             &config,
+            DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
             &FakeHistory,
             &decision_maker,
             &execution,
@@ -868,6 +927,7 @@ mod tests {
                 &config.id,
                 &config.symbol,
                 &config,
+                DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
                 &FakeHistory,
                 &AlwaysFailingDecisionMaker,
                 &execution,
@@ -906,6 +966,7 @@ mod tests {
                 &config.id,
                 &config.symbol,
                 &config,
+                DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
                 &FakeHistory,
                 &decision_maker,
                 &execution,
@@ -936,6 +997,7 @@ mod tests {
             &config.id,
             &config.symbol,
             &config,
+            DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
             &FakeHistory,
             // Even a decision maker that would pick Long must be
             // ignored while soft-closing.
@@ -971,6 +1033,7 @@ mod tests {
             &config.id,
             &config.symbol,
             &config,
+            DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
             &FakeHistory,
             &AlwaysFailingDecisionMaker,
             &execution,
@@ -983,5 +1046,97 @@ mod tests {
 
         assert_eq!(execution.close_calls.load(Ordering::SeqCst), 1);
         assert_eq!(lifecycle.closed.lock().unwrap().as_slice(), ["session-1"]);
+    }
+
+    /// The fake's Flat decision carries 0.9 confidence.
+    const FAKE_DECISION_CONFIDENCE: f64 = 0.9;
+
+    #[tokio::test]
+    async fn a_decision_below_the_confidence_floor_holds_the_current_position() {
+        let config = sample_config(TradingSessionStatus::Active, 30.0);
+        let execution = FakeExecution::with_open_position();
+        let health = InMemoryFailureTracker::new();
+
+        run_decision_cycle(
+            &config.id,
+            &config.symbol,
+            &config,
+            FAKE_DECISION_CONFIDENCE + 0.01,
+            &FakeHistory,
+            &SucceedsOnceDecisionMaker {
+                succeed_on: 1,
+                calls: AtomicUsize::new(0),
+            },
+            &execution,
+            &FakeFunding,
+            &NoopDecisionLog,
+            &health,
+            &FakeLifecycle::default(),
+        )
+        .await;
+
+        // The Flat target was below the floor, so the long is still open.
+        assert!(execution
+            .get_position(&config.id, "BTC")
+            .await
+            .unwrap()
+            .is_some());
+        assert_eq!(execution.close_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(health.count("BTC"), 0);
+    }
+
+    #[tokio::test]
+    async fn a_decision_exactly_at_the_confidence_floor_still_shifts() {
+        let config = sample_config(TradingSessionStatus::Active, 30.0);
+        let execution = FakeExecution::with_open_position();
+        let health = InMemoryFailureTracker::new();
+
+        run_decision_cycle(
+            &config.id,
+            &config.symbol,
+            &config,
+            FAKE_DECISION_CONFIDENCE,
+            &FakeHistory,
+            &SucceedsOnceDecisionMaker {
+                succeed_on: 1,
+                calls: AtomicUsize::new(0),
+            },
+            &execution,
+            &FakeFunding,
+            &NoopDecisionLog,
+            &health,
+            &FakeLifecycle::default(),
+        )
+        .await;
+
+        assert_eq!(execution.close_calls.load(Ordering::SeqCst), 1);
+        assert!(execution
+            .get_position(&config.id, "BTC")
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn min_confidence_defaults_to_zero_when_unset_or_blank() {
+        assert_eq!(parse_min_confidence_to_shift(None).unwrap(), 0.0);
+        assert_eq!(parse_min_confidence_to_shift(Some("")).unwrap(), 0.0);
+        assert_eq!(parse_min_confidence_to_shift(Some("  ")).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn min_confidence_accepts_a_value_between_zero_and_one() {
+        assert_eq!(parse_min_confidence_to_shift(Some("0.5")).unwrap(), 0.5);
+        assert_eq!(parse_min_confidence_to_shift(Some("1")).unwrap(), 1.0);
+        assert_eq!(parse_min_confidence_to_shift(Some("0")).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn min_confidence_rejects_malformed_or_out_of_range_values() {
+        assert!(parse_min_confidence_to_shift(Some("high")).is_err());
+        assert!(parse_min_confidence_to_shift(Some("1.5")).is_err());
+        assert!(parse_min_confidence_to_shift(Some("-0.1")).is_err());
+        assert!(parse_min_confidence_to_shift(Some("NaN")).is_err());
+        assert!(parse_min_confidence_to_shift(Some("inf")).is_err());
     }
 }

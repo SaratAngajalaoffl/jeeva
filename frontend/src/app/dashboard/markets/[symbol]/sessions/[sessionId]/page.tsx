@@ -297,15 +297,15 @@ export default function SessionDetailPage() {
           )}
         </Card>
 
-        <Card className="flex flex-col p-0">
-          <h2 className="p-5 pb-0 text-sm font-semibold text-text">
+        <Card className="p-5">
+          <h2 className="mb-3 text-sm font-semibold text-text">
             Decision history
           </h2>
           <div className="overflow-x-auto">
             {!decisions ? (
-              <p className="p-5 text-sm text-subtext-1">Loading...</p>
+              <p className="text-sm text-subtext-1">Loading...</p>
             ) : decisions.length === 0 ? (
-              <p className="p-5 text-sm text-subtext-1">No decisions yet.</p>
+              <p className="text-sm text-subtext-1">No decisions yet.</p>
             ) : (
               <table className="w-full min-w-[560px] border-collapse text-left text-sm text-text">
                 <thead>
@@ -341,15 +341,15 @@ export default function SessionDetailPage() {
           </div>
         </Card>
 
-        <Card className="flex flex-col p-0">
-          <h2 className="p-5 pb-0 text-sm font-semibold text-text">
+        <Card className="p-5">
+          <h2 className="mb-3 text-sm font-semibold text-text">
             Funding history
           </h2>
           <div className="overflow-x-auto">
             {!fundingPayments ? (
-              <p className="p-5 text-sm text-subtext-1">Loading...</p>
+              <p className="text-sm text-subtext-1">Loading...</p>
             ) : fundingPayments.length === 0 ? (
-              <p className="p-5 text-sm text-subtext-1">
+              <p className="text-sm text-subtext-1">
                 No funding payments yet.
               </p>
             ) : (

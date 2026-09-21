@@ -154,6 +154,7 @@ To use real Jev decisions or real Hyperliquid execution, set the corresponding e
 | `CORS_ORIGIN` | Origin(s) allowed to call the API, comma-separated for several dashboards |
 | `MARKET_DATA_TTL_DAYS` | Sampled-data retention, in days (default `7`) |
 | `MIN_SAMPLING_FREQUENCY_SECONDS` | Lowest sampling frequency the API will accept, in seconds (default `1`) |
+| `MIN_CONFIDENCE_TO_SHIFT` | Confidence a decision must clear before it moves a position; below it the engine holds. `0`–`1`, default `0` (every decision is actionable) |
 
 See [`CONTEXT.md`](./CONTEXT.md) for the project's internal glossary and naming conventions.
 

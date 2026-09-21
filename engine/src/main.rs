@@ -91,6 +91,8 @@ async fn main() {
     let database_url = require_env("DATABASE_URL");
     let market_data_ttl_days =
         market_data::ttl_days_from_env().unwrap_or_else(|error| panic!("{error}"));
+    let min_confidence_to_shift =
+        decision::min_confidence_to_shift_from_env().unwrap_or_else(|error| panic!("{error}"));
     let store = ConfigStore::new();
 
     let pool = connect_postgres_with_retry(&database_url).await;
@@ -125,7 +127,7 @@ async fn main() {
         _ = market_data::run(store.clone(), market_data_client, market_data_writer, SAMPLING_POLL_INTERVAL) => {},
         _ = wallets.clone().run(WALLET_POLL_INTERVAL) => {},
         _ = session::run(pool.clone(), session_store.clone(), SESSION_POLL_INTERVAL) => {},
-        _ = decision::run(session_store, history, decision_makers, wallets.clone(), mode_store, funding_history, decision_log, health, session_lifecycle, DECISION_POLL_INTERVAL) => {},
+        _ = decision::run(session_store, min_confidence_to_shift, history, decision_makers, wallets.clone(), mode_store, funding_history, decision_log, health, session_lifecycle, DECISION_POLL_INTERVAL) => {},
         _ = funding::run(wallets, funding_rate_source, funding_payment_writer, FUNDING_INTERVAL) => {},
         _ = market_data::run_retention(pool.clone(), market_data_ttl_days, MARKET_DATA_RETENTION_SWEEP_INTERVAL) => {},
     }
