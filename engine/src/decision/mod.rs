@@ -16,8 +16,8 @@ pub use decision_maker::{
 };
 pub use decision_maker_registry::DecisionMakerRegistry;
 pub use execution::{
-    fill_price, realized_pnl_usd, ExecutionAdapter, ExecutionError, MockExecutionAdapter,
-    OpenPosition,
+    clamp_position_size_usd, fill_price, realized_pnl_usd, ExecutionAdapter, ExecutionError,
+    MockExecutionAdapter, OpenPosition,
 };
 pub use health::{FailureTracker, InMemoryFailureTracker, PerpHealthTracker};
 pub use history::{

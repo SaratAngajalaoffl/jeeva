@@ -4,6 +4,7 @@ import express, { type Express } from "express";
 import type { Db } from "mongodb";
 import type { Pool } from "pg";
 import { authRouter } from "./auth/authRoutes.js";
+import { createBacktestsRouter } from "./backtests/routes.js";
 import {
   createHyperliquidClient,
   type HyperliquidClient,
@@ -80,6 +81,7 @@ export function createApp(deps: AppDeps = {}): Express {
     app.use("/funding", createFundingRouter(deps.pgPool));
     app.use("/perp-health", createPerpHealthRouter(deps.pgPool));
     app.use("/trades", createTradesRouter(deps.pgPool));
+    app.use(createBacktestsRouter(deps.pgPool));
   }
 
   return app;

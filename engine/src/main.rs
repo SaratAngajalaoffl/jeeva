@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use engine::backtest;
 use engine::config::{run_with_reconnect, ConfigStore};
 use engine::decision::{
     self, DecisionMaker, DecisionMakerRegistry, OpenRouterJevDecisionMaker, PerpHealthTracker,
@@ -20,6 +21,7 @@ use sqlx::PgPool;
 const SAMPLING_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const DECISION_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const SESSION_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const BACKTEST_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const WALLET_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const POSTGRES_CONNECT_RETRY_DELAY: Duration = Duration::from_secs(5);
 // Hyperliquid applies funding hourly.
@@ -121,6 +123,11 @@ async fn main() {
     let funding_history: Arc<dyn funding::FundingHistoryReader> =
         Arc::new(PostgresFundingHistoryReader::new(pool.clone()));
 
+    let backtest_decision_makers = decision_makers.clone();
+    let backtest_decision_maker_for: Arc<
+        dyn Fn(decision::DecisionMakerKind) -> Arc<dyn DecisionMaker> + Send + Sync,
+    > = Arc::new(move |kind| backtest_decision_makers.get(kind).clone());
+
     tokio::select! {
         _ = run_with_reconnect(&mongo_url, store.clone()) => {},
         _ = engine_mode::run_with_reconnect(&mongo_url, mode_store.clone()) => {},
@@ -129,6 +136,7 @@ async fn main() {
         _ = session::run(pool.clone(), session_store.clone(), SESSION_POLL_INTERVAL) => {},
         _ = decision::run(session_store, min_confidence_to_shift, history, decision_makers, wallets.clone(), mode_store, funding_history, decision_log, health, session_lifecycle, DECISION_POLL_INTERVAL) => {},
         _ = funding::run(wallets, funding_rate_source, funding_payment_writer, FUNDING_INTERVAL) => {},
+        _ = backtest::run(pool.clone(), backtest_decision_maker_for, BACKTEST_POLL_INTERVAL) => {},
         _ = market_data::run_retention(pool.clone(), market_data_ttl_days, MARKET_DATA_RETENTION_SWEEP_INTERVAL) => {},
     }
 }

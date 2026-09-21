@@ -593,3 +593,161 @@ export async function fetchDecisionMakerStatuses(): Promise<
   const body = (await res.json()) as { statuses: DecisionMakerStatus[] };
   return body.statuses;
 }
+
+export type BacktestStatus = "pending" | "running" | "completed" | "failed";
+
+export interface BacktestRun {
+  id: string;
+  symbol: string;
+  decisionMaker: DecisionMaker;
+  decisionFrequencySeconds: number;
+  leverage: number;
+  positionSizeUsd: number;
+  historyWindowSamples: number;
+  historyFormat: HistoryFormat;
+  startTime: string;
+  endTime: string;
+  initialBalanceUsd: number;
+  currentBalanceUsd: number;
+  status: BacktestStatus;
+  error: string | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface CreateBacktestInput {
+  decisionMaker: DecisionMaker;
+  decisionFrequencySeconds: number;
+  leverage: number;
+  positionSizeUsd: number;
+  historyWindowSamples?: number;
+  historyFormat?: HistoryFormat;
+  startTime: string;
+  endTime: string;
+  initialBalanceUsd: number;
+}
+
+export async function createBacktest(
+  symbol: string,
+  input: CreateBacktestInput,
+): Promise<{ ok: true; backtest: BacktestRun } | { ok: false; error: string }> {
+  const res = await fetch(
+    `${await loadApiUrl()}/perps/${encodeURIComponent(symbol)}/backtests`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(input),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    return { ok: false, error: body?.error ?? "Failed to create backtest" };
+  }
+  return { ok: true, backtest: await res.json() };
+}
+
+export async function fetchBacktestsForSymbol(
+  symbol: string,
+): Promise<BacktestRun[]> {
+  const res = await fetch(
+    `${await loadApiUrl()}/perps/${encodeURIComponent(symbol)}/backtests`,
+    { credentials: "include" },
+  );
+  if (!res.ok) {
+    throw new Error("Failed to load backtests");
+  }
+  const body = (await res.json()) as { backtests: BacktestRun[] };
+  return body.backtests;
+}
+
+export async function fetchBacktest(id: string): Promise<BacktestRun | null> {
+  const res = await fetch(`${await loadApiUrl()}/backtests/${encodeURIComponent(id)}`, {
+    credentials: "include",
+  });
+  if (res.status === 404) {
+    return null;
+  }
+  if (!res.ok) {
+    throw new Error("Failed to load backtest");
+  }
+  return res.json();
+}
+
+export interface BacktestDecisionEntry {
+  id: string;
+  simTime: string;
+  symbol: string;
+  contextSummary: string;
+  targetDirection: string | null;
+  confidence: number | null;
+  probLong: number | null;
+  probShort: number | null;
+  probFlat: number | null;
+  positionAction: string | null;
+  success: boolean;
+  error: string | null;
+  autoFlatten: boolean;
+  createdAt: string;
+}
+
+export async function fetchBacktestDecisions(
+  id: string,
+): Promise<BacktestDecisionEntry[]> {
+  const res = await fetch(
+    `${await loadApiUrl()}/backtests/${encodeURIComponent(id)}/decisions`,
+    { credentials: "include" },
+  );
+  if (!res.ok) {
+    throw new Error("Failed to load backtest decisions");
+  }
+  const body = (await res.json()) as { decisions: BacktestDecisionEntry[] };
+  return body.decisions;
+}
+
+export interface BacktestPosition {
+  backtestRunId: string;
+  symbol: string;
+  direction: string;
+  entryPrice: number;
+  notionalUsd: number;
+  openedAt: string;
+}
+
+export async function fetchBacktestPosition(
+  id: string,
+): Promise<BacktestPosition | null> {
+  const res = await fetch(
+    `${await loadApiUrl()}/backtests/${encodeURIComponent(id)}/position`,
+    { credentials: "include" },
+  );
+  if (!res.ok) {
+    throw new Error("Failed to load backtest position");
+  }
+  const body = (await res.json()) as { position: BacktestPosition | null };
+  return body.position;
+}
+
+export interface BacktestTrade {
+  id: string;
+  symbol: string;
+  direction: string;
+  entryPrice: number;
+  notionalUsd: number;
+  openedAt: string;
+  exitPrice: number;
+  pnlUsd: number;
+  closedAt: string;
+}
+
+export async function fetchBacktestTrades(id: string): Promise<BacktestTrade[]> {
+  const res = await fetch(
+    `${await loadApiUrl()}/backtests/${encodeURIComponent(id)}/trades`,
+    { credentials: "include" },
+  );
+  if (!res.ok) {
+    throw new Error("Failed to load backtest trades");
+  }
+  const body = (await res.json()) as { trades: BacktestTrade[] };
+  return body.trades;
+}
