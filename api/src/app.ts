@@ -25,12 +25,25 @@ export interface AppDeps {
   hyperliquidClient?: HyperliquidClient;
 }
 
+/**
+ * Origins allowed to make credentialed requests. CORS_ORIGIN accepts a
+ * single origin or a comma-separated list, since one deployment can
+ * serve several dashboard instances on different origins.
+ */
+function allowedOrigins(): string[] {
+  const raw = process.env.CORS_ORIGIN ?? "http://localhost:3000";
+  return raw
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+}
+
 export function createApp(deps: AppDeps = {}): Express {
   const app = express();
 
   app.use(
     cors({
-      origin: process.env.CORS_ORIGIN ?? "http://localhost:3000",
+      origin: allowedOrigins(),
       credentials: true,
     }),
   );

@@ -77,6 +77,7 @@ services:
       - TYPESAFE_BASE_URL
       - OPENROUTER_API_KEY
       - OPENROUTER_BASE_URL
+      - MIN_SAMPLING_FREQUENCY_SECONDS
     ports:
       - "4000:4000"
     volumes:
@@ -104,6 +105,7 @@ services:
       - OPENROUTER_BASE_URL
       - HYPERLIQUID_PRIVATE_KEY
       - HYPERLIQUID_TESTNET
+      - MARKET_DATA_TTL_DAYS
     volumes:
       - ./engine/src:/app/src
     depends_on:
@@ -117,7 +119,10 @@ services:
       context: .
       dockerfile: frontend/Dockerfile.dev
     environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000}
+      # The browser-facing api URL for this instance, served at runtime
+      # from /runtime-config. Not baked into the image, so several
+      # instances can share one frontend image with different backends.
+      - API_URL=${API_URL:-http://localhost:4000}
     ports:
       - "3000:3000"
     volumes:

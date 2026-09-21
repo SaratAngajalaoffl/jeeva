@@ -24,6 +24,8 @@ const WALLET_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const POSTGRES_CONNECT_RETRY_DELAY: Duration = Duration::from_secs(5);
 // Hyperliquid applies funding hourly.
 const FUNDING_INTERVAL: Duration = Duration::from_secs(60 * 60);
+// How often expired market data is pruned.
+const MARKET_DATA_RETENTION_SWEEP_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 fn require_env(name: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| panic!("Missing required environment variable: {name}"))
@@ -87,6 +89,8 @@ async fn main() {
 
     let mongo_url = require_env("MONGO_URL");
     let database_url = require_env("DATABASE_URL");
+    let market_data_ttl_days =
+        market_data::ttl_days_from_env().unwrap_or_else(|error| panic!("{error}"));
     let store = ConfigStore::new();
 
     let pool = connect_postgres_with_retry(&database_url).await;
@@ -123,5 +127,6 @@ async fn main() {
         _ = session::run(pool.clone(), session_store.clone(), SESSION_POLL_INTERVAL) => {},
         _ = decision::run(session_store, history, decision_makers, wallets.clone(), mode_store, funding_history, decision_log, health, session_lifecycle, DECISION_POLL_INTERVAL) => {},
         _ = funding::run(wallets, funding_rate_source, funding_payment_writer, FUNDING_INTERVAL) => {},
+        _ = market_data::run_retention(pool.clone(), market_data_ttl_days, MARKET_DATA_RETENTION_SWEEP_INTERVAL) => {},
     }
 }

@@ -8,7 +8,7 @@ import {
   getOldestSampleTime,
 } from "../marketData/repository.js";
 import { parseTimeRange } from "../marketData/timeRange.js";
-import { isValidFrequencySeconds } from "./frequency.js";
+import { isValidSamplingFrequencySeconds } from "./frequency.js";
 import {
   DEFAULT_PERP_CONFIG,
   getAllConfigs,
@@ -57,7 +57,7 @@ export function createPerpsRouter(
     const isValidToggle = (value: unknown) =>
       value === undefined || typeof value === "boolean";
     const isValidFrequency = (value: unknown) =>
-      value === undefined || isValidFrequencySeconds(value);
+      value === undefined || isValidSamplingFrequencySeconds(value);
 
     if (
       !isValidToggle(samplingEnabled) ||

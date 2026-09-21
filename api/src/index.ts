@@ -1,9 +1,11 @@
 import { getAuthConfig } from "./auth/config.js";
 import { createApp } from "./app.js";
 import { connectMongo } from "./db.js";
+import { getMinSamplingFrequencySeconds } from "./perps/frequency.js";
 import { connectPostgres } from "./postgres.js";
 
 getAuthConfig(); // fail fast on missing auth env vars
+getMinSamplingFrequencySeconds(); // fail fast on a malformed sampling minimum
 
 function requireEnv(name: string): string {
   const value = process.env[name];
