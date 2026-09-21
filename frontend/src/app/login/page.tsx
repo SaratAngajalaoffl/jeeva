@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { login } from "@/lib/api";
+import { fetchDemoMode, login } from "@/lib/api";
 import { Button, Card, Input, Label } from "@/components/ui";
 
 export default function LoginPage() {
@@ -11,6 +11,11 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [demoMode, setDemoMode] = useState(false);
+
+  useEffect(() => {
+    fetchDemoMode().then(setDemoMode);
+  }, []);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -58,10 +63,12 @@ export default function LoginPage() {
           <Button type="submit" disabled={submitting}>
             {submitting ? "Signing in..." : "Sign in"}
           </Button>
-          <p className="text-center text-sm text-subtext-1">
-            Demo credentials: <span className="font-medium">admin</span> /{" "}
-            <span className="font-medium">password</span>
-          </p>
+          {demoMode && (
+            <p className="text-center text-sm text-subtext-1">
+              Demo credentials: <span className="font-medium">admin</span> /{" "}
+              <span className="font-medium">password</span>
+            </p>
+          )}
         </form>
       </Card>
     </main>

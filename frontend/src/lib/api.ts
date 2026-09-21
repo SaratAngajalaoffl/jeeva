@@ -52,6 +52,14 @@ export async function checkSession(): Promise<boolean> {
   return res.ok;
 }
 
+/** True when the deployment runs with DEMO_MODE=true. */
+export async function fetchDemoMode(): Promise<boolean> {
+  const res = await fetch(`${await loadApiUrl()}/health`);
+  if (!res.ok) return false;
+  const body: { demoMode?: unknown } = await res.json();
+  return body.demoMode === true;
+}
+
 // The engine's DecisionMaker implementation for this PERP: `random`
 // (synthetic, no network), `typesafe` (calls TypeSafe's Jev API
 // directly), or `openrouter` (calls Jev via OpenRouter).
