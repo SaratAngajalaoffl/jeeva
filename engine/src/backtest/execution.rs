@@ -25,7 +25,12 @@ pub struct BacktestExecutionAdapter {
 }
 
 impl BacktestExecutionAdapter {
-    pub fn new(pool: PgPool, backtest_run_id: String, slippage_bps: f64, clock: Arc<SimClock>) -> Self {
+    pub fn new(
+        pool: PgPool,
+        backtest_run_id: String,
+        slippage_bps: f64,
+        clock: Arc<SimClock>,
+    ) -> Self {
         Self {
             pool,
             backtest_run_id,
@@ -191,7 +196,9 @@ impl ExecutionAdapter for BacktestExecutionAdapter {
                 .bind(&self.backtest_run_id)
                 .fetch_one(&self.pool)
                 .await
-                .map_err(|e| ExecutionError(format!("failed to read backtest position symbol: {e}")))?;
+                .map_err(|e| {
+                    ExecutionError(format!("failed to read backtest position symbol: {e}"))
+                })?;
                 vec![(symbol, position)]
             }
             None => vec![],

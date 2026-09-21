@@ -1,7 +1,7 @@
 use std::fmt;
 
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
 use crate::funding::FundingRecord;
@@ -143,12 +143,19 @@ fn field_stats(values: impl Iterator<Item = f64> + Clone) -> FieldStats {
 
 /// Renders the current open-position status (or its absence) and,
 /// when there's an open position, how long it's been held and its
-/// unrealized P&L against the latest mid price.
-fn position_summary(position: Option<&OpenPosition>, latest_mid_price: f64) -> String {
+/// unrealized P&L against the latest mid price. `as_of` is "now" for
+/// this purpose — the live decision loop passes the wall clock, and a
+/// backtest replay passes its simulated time, so held-duration always
+/// reflects what the decision maker would actually have seen.
+fn position_summary(
+    position: Option<&OpenPosition>,
+    latest_mid_price: f64,
+    as_of: DateTime<Utc>,
+) -> String {
     match position {
         None => "position=flat".to_string(),
         Some(position) => {
-            let held_for = Utc::now().signed_duration_since(position.opened_at);
+            let held_for = as_of.signed_duration_since(position.opened_at);
             let held_minutes = held_for.num_seconds() as f64 / 60.0;
             let unrealized_pnl_usd = realized_pnl_usd(
                 position.direction,
@@ -202,10 +209,11 @@ pub fn build_context(
     position: Option<&OpenPosition>,
     funding: Option<&FundingRecord>,
     format: HistoryFormat,
+    as_of: DateTime<Utc>,
 ) -> String {
     match format {
-        HistoryFormat::Summary => build_context_summary(symbol, samples, position, funding),
-        HistoryFormat::Raw => build_context_series(symbol, samples, position, funding),
+        HistoryFormat::Summary => build_context_summary(symbol, samples, position, funding, as_of),
+        HistoryFormat::Raw => build_context_series(symbol, samples, position, funding, as_of),
     }
 }
 
@@ -219,6 +227,7 @@ pub fn build_context_summary(
     samples: &[MarketDataSample],
     position: Option<&OpenPosition>,
     funding: Option<&FundingRecord>,
+    as_of: DateTime<Utc>,
 ) -> String {
     let Some(latest) = samples.last() else {
         return format!("{symbol}: no recent market data available");
@@ -256,7 +265,7 @@ pub fn build_context_summary(
         spread_stats.max,
         spread_stats.avg,
         latest.mid_price,
-        position_summary(position, latest.mid_price),
+        position_summary(position, latest.mid_price, as_of),
         funding_summary(funding),
     )
 }
@@ -278,6 +287,7 @@ pub fn build_context_series(
     samples: &[MarketDataSample],
     position: Option<&OpenPosition>,
     funding: Option<&FundingRecord>,
+    as_of: DateTime<Utc>,
 ) -> String {
     let Some(latest) = samples.last() else {
         return format!("{symbol}: no recent market data available");
@@ -294,7 +304,7 @@ pub fn build_context_series(
         "{symbol}: price_history=raw (oldest first, {} samples, change {:+.2}%): [{series}]; {}; {}",
         samples.len(),
         price_change_pct,
-        position_summary(position, latest.mid_price),
+        position_summary(position, latest.mid_price, as_of),
         funding_summary(funding),
     )
 }
@@ -327,13 +337,13 @@ mod tests {
 
     #[test]
     fn summarizes_no_data_explicitly() {
-        let summary = build_context_summary("BTC", &[], None, None);
+        let summary = build_context_summary("BTC", &[], None, None, Utc::now());
         assert_eq!(summary, "BTC: no recent market data available");
     }
 
     #[test]
     fn includes_latest_price_and_derived_fields() {
-        let summary = build_context_summary("BTC", &[sample(100.0)], None, None);
+        let summary = build_context_summary("BTC", &[sample(100.0)], None, None, Utc::now());
         assert!(summary.contains("price=100.00"));
         assert!(summary.contains("open_interest=100.00"));
         assert!(summary.contains("mid_price=100.25"));
@@ -341,13 +351,25 @@ mod tests {
 
     #[test]
     fn computes_percent_change_across_the_window() {
-        let summary = build_context_summary("BTC", &[sample(100.0), sample(110.0)], None, None);
+        let summary = build_context_summary(
+            "BTC",
+            &[sample(100.0), sample(110.0)],
+            None,
+            None,
+            Utc::now(),
+        );
         assert!(summary.contains("+10.00%"));
     }
 
     #[test]
     fn computes_negative_percent_change() {
-        let summary = build_context_summary("BTC", &[sample(100.0), sample(90.0)], None, None);
+        let summary = build_context_summary(
+            "BTC",
+            &[sample(100.0), sample(90.0)],
+            None,
+            None,
+            Utc::now(),
+        );
         assert!(summary.contains("-10.00%"));
     }
 
@@ -358,6 +380,7 @@ mod tests {
             &[sample(90.0), sample(100.0), sample(110.0)],
             None,
             None,
+            Utc::now(),
         );
         assert!(summary.contains("min=90.00"));
         assert!(summary.contains("max=110.00"));
@@ -366,14 +389,15 @@ mod tests {
 
     #[test]
     fn reports_flat_when_there_is_no_open_position() {
-        let summary = build_context_summary("BTC", &[sample(100.0)], None, None);
+        let summary = build_context_summary("BTC", &[sample(100.0)], None, None, Utc::now());
         assert!(summary.contains("position=flat"));
     }
 
     #[test]
     fn reports_position_status_and_unrealized_pnl() {
         let position = open_position(Direction::Long, 90.0, 42);
-        let summary = build_context_summary("BTC", &[sample(100.0)], Some(&position), None);
+        let summary =
+            build_context_summary("BTC", &[sample(100.0)], Some(&position), None, Utc::now());
         assert!(summary.contains("position=long"));
         assert!(summary.contains("held_for_minutes=42.0"));
         assert!(summary.contains("entry_price=90.00"));
@@ -382,15 +406,31 @@ mod tests {
     }
 
     #[test]
+    fn position_summary_uses_the_as_of_time_not_the_wall_clock() {
+        // opened 42 minutes before a fixed as_of far in the past — if this
+        // used Utc::now() instead, held_for_minutes would be enormous.
+        let as_of = Utc::now() - Duration::days(365);
+        let position = OpenPosition {
+            direction: Direction::Long,
+            entry_price: 90.0,
+            notional_usd: 1000.0,
+            opened_at: as_of - Duration::minutes(42),
+        };
+        let summary = build_context_summary("BTC", &[sample(100.0)], Some(&position), None, as_of);
+        assert!(summary.contains("held_for_minutes=42.0"));
+    }
+
+    #[test]
     fn reports_funding_when_absent_and_present() {
-        let none_summary = build_context_summary("BTC", &[sample(100.0)], None, None);
+        let none_summary = build_context_summary("BTC", &[sample(100.0)], None, None, Utc::now());
         assert!(none_summary.contains("funding=unknown"));
 
         let record = FundingRecord {
             rate: 0.0001,
             time: Utc::now(),
         };
-        let with_funding = build_context_summary("BTC", &[sample(100.0)], None, Some(&record));
+        let with_funding =
+            build_context_summary("BTC", &[sample(100.0)], None, Some(&record), Utc::now());
         assert!(with_funding.contains("funding_rate=0.000100"));
     }
 
@@ -401,6 +441,7 @@ mod tests {
             &[sample(90.0), sample(100.0), sample(110.0)],
             None,
             None,
+            Utc::now(),
         );
         assert!(series.contains("price_history=raw (oldest first, 3 samples, change +22.22%)"));
         let first = series.find("price=90.00").unwrap();
@@ -416,7 +457,13 @@ mod tests {
             rate: 0.0001,
             time: Utc::now(),
         };
-        let series = build_context_series("BTC", &[sample(100.0)], Some(&position), Some(&record));
+        let series = build_context_series(
+            "BTC",
+            &[sample(100.0)],
+            Some(&position),
+            Some(&record),
+            Utc::now(),
+        );
         assert!(series.contains("position=long"));
         assert!(series.contains("unrealized_pnl_usd=+113.89"));
         assert!(series.contains("funding_rate=0.000100"));
@@ -425,7 +472,7 @@ mod tests {
     #[test]
     fn raw_context_is_explicit_about_no_data() {
         assert_eq!(
-            build_context_series("BTC", &[], None, None),
+            build_context_series("BTC", &[], None, None, Utc::now()),
             "BTC: no recent market data available"
         );
     }
@@ -433,13 +480,14 @@ mod tests {
     #[test]
     fn build_context_dispatches_on_the_configured_format() {
         let samples = [sample(90.0), sample(110.0)];
+        let as_of = Utc::now();
         assert_eq!(
-            build_context("BTC", &samples, None, None, HistoryFormat::Summary),
-            build_context_summary("BTC", &samples, None, None)
+            build_context("BTC", &samples, None, None, HistoryFormat::Summary, as_of),
+            build_context_summary("BTC", &samples, None, None, as_of)
         );
         assert_eq!(
-            build_context("BTC", &samples, None, None, HistoryFormat::Raw),
-            build_context_series("BTC", &samples, None, None)
+            build_context("BTC", &samples, None, None, HistoryFormat::Raw, as_of),
+            build_context_series("BTC", &samples, None, None, as_of)
         );
     }
 

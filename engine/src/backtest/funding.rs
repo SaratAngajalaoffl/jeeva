@@ -7,7 +7,10 @@ use serde::Deserialize;
 use sqlx::PgPool;
 
 use crate::decision::Direction;
-use crate::funding::{FundingHistoryError, FundingHistoryReader, FundingRateError, FundingRateSource, FundingRecord, FundingWriteError, FundingPaymentWriter};
+use crate::funding::{
+    FundingHistoryError, FundingHistoryReader, FundingPaymentWriter, FundingRateError,
+    FundingRateSource, FundingRecord, FundingWriteError,
+};
 
 use super::clock::SimClock;
 
@@ -90,7 +93,10 @@ impl HyperliquidHistoricalFundingRateSource {
                     ))
                 })?;
                 let time = DateTime::from_timestamp_millis(entry.time).ok_or_else(|| {
-                    HistoricalFundingError(format!("invalid funding history timestamp: {}", entry.time))
+                    HistoricalFundingError(format!(
+                        "invalid funding history timestamp: {}",
+                        entry.time
+                    ))
                 })?;
                 Ok((time, rate))
             })
@@ -110,35 +116,6 @@ fn rate_at(series: &[(DateTime<Utc>, f64)], as_of: DateTime<Utc>) -> Option<f64>
         .find(|(time, _)| *time <= as_of)
         .or_else(|| series.first())
         .map(|(_, rate)| *rate)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::TimeZone;
-
-    fn t(hour: u32) -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(2026, 1, 1, hour, 0, 0).unwrap()
-    }
-
-    #[test]
-    fn rate_at_uses_the_latest_entry_at_or_before_as_of() {
-        let series = vec![(t(0), 0.0001), (t(8), 0.0002), (t(16), 0.0003)];
-        assert_eq!(rate_at(&series, t(10)), Some(0.0002));
-        assert_eq!(rate_at(&series, t(16)), Some(0.0003));
-        assert_eq!(rate_at(&series, t(23)), Some(0.0003));
-    }
-
-    #[test]
-    fn rate_at_falls_back_to_the_earliest_entry_when_as_of_predates_the_series() {
-        let series = vec![(t(8), 0.0002), (t(16), 0.0003)];
-        assert_eq!(rate_at(&series, t(0)), Some(0.0002));
-    }
-
-    #[test]
-    fn rate_at_is_none_for_an_empty_series() {
-        assert_eq!(rate_at(&[], t(0)), None);
-    }
 }
 
 /// Feeds a backtest's decision context the historical funding rate in
@@ -234,5 +211,34 @@ impl FundingPaymentWriter for BacktestFundingPaymentWriter {
         .map_err(|e| FundingWriteError(format!("failed to record backtest funding payment: {e}")))?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn t(hour: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 1, 1, hour, 0, 0).unwrap()
+    }
+
+    #[test]
+    fn rate_at_uses_the_latest_entry_at_or_before_as_of() {
+        let series = vec![(t(0), 0.0001), (t(8), 0.0002), (t(16), 0.0003)];
+        assert_eq!(rate_at(&series, t(10)), Some(0.0002));
+        assert_eq!(rate_at(&series, t(16)), Some(0.0003));
+        assert_eq!(rate_at(&series, t(23)), Some(0.0003));
+    }
+
+    #[test]
+    fn rate_at_falls_back_to_the_earliest_entry_when_as_of_predates_the_series() {
+        let series = vec![(t(8), 0.0002), (t(16), 0.0003)];
+        assert_eq!(rate_at(&series, t(0)), Some(0.0002));
+    }
+
+    #[test]
+    fn rate_at_is_none_for_an_empty_series() {
+        assert_eq!(rate_at(&[], t(0)), None);
     }
 }

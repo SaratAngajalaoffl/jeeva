@@ -351,7 +351,7 @@ mod history {
         assert_eq!(samples[0].price, 100.0);
         assert_eq!(samples[2].price, 102.0);
 
-        let summary = build_context_summary("TESTHIST1", &samples, None, None);
+        let summary = build_context_summary("TESTHIST1", &samples, None, None, chrono::Utc::now());
         assert!(summary.contains("price=102.00"));
     }
 

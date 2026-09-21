@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use tokio::task::JoinHandle;
 use tokio::time::{interval_at, Instant, MissedTickBehavior};
@@ -115,12 +116,19 @@ fn flat_decision() -> JevDecision {
 /// confidence falls below it holds the current position instead of
 /// shifting. Forced flattening (soft/hard close, auto-flatten) is never
 /// gated by it — a flatten is never blocked by low confidence.
+///
+/// `now` is "the present moment" as far as the built decision context
+/// is concerned (e.g. how long a position has been held) — the live
+/// loop passes the wall clock; a backtest replay passes its simulated
+/// time, so a replayed cycle's context reads exactly as it would have
+/// live.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_decision_cycle(
     session_id: &str,
     symbol: &str,
     config: &TradingSessionConfig,
     min_confidence_to_shift: f64,
+    now: DateTime<Utc>,
     history: &dyn MarketDataHistoryReader,
     decision_maker: &dyn DecisionMaker,
     execution: &dyn ExecutionAdapter,
@@ -154,7 +162,8 @@ pub async fn run_decision_cycle(
     };
 
     if samples.is_empty() {
-        let context_summary = build_context(symbol, &samples, None, None, config.history_format);
+        let context_summary =
+            build_context(symbol, &samples, None, None, config.history_format, now);
         tracing::warn!(
             symbol,
             session_id,
@@ -203,7 +212,7 @@ pub async fn run_decision_cycle(
         Err(error) => {
             tracing::error!(symbol, session_id, %error, "failed to read current position");
             let context_summary =
-                build_context(symbol, &samples, None, None, config.history_format);
+                build_context(symbol, &samples, None, None, config.history_format, now);
             handle_cycle_failure(
                 symbol,
                 &error.to_string(),
@@ -233,6 +242,7 @@ pub async fn run_decision_cycle(
         current_position.as_ref(),
         latest_funding.as_ref(),
         config.history_format,
+        now,
     );
 
     let is_soft_closing = config.status == TradingSessionStatus::SoftClosing;
@@ -490,6 +500,7 @@ fn spawn_task(
                     &config.symbol,
                     &config,
                     min_confidence_to_shift,
+                    Utc::now(),
                     history.as_ref(),
                     decision_maker.as_ref(),
                     execution.as_ref(),
@@ -875,6 +886,7 @@ mod tests {
             &config.symbol,
             &config,
             DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+            Utc::now(),
             &FakeHistory,
             &AlwaysFailingDecisionMaker,
             &execution,
@@ -913,6 +925,7 @@ mod tests {
             &config.symbol,
             &config,
             DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+            Utc::now(),
             &FakeHistory,
             &decision_maker,
             &execution,
@@ -939,6 +952,7 @@ mod tests {
                 &config.symbol,
                 &config,
                 DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+                Utc::now(),
                 &FakeHistory,
                 &AlwaysFailingDecisionMaker,
                 &execution,
@@ -978,6 +992,7 @@ mod tests {
                 &config.symbol,
                 &config,
                 DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+                Utc::now(),
                 &FakeHistory,
                 &decision_maker,
                 &execution,
@@ -1009,6 +1024,7 @@ mod tests {
             &config.symbol,
             &config,
             DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+            Utc::now(),
             &FakeHistory,
             // Even a decision maker that would pick Long must be
             // ignored while soft-closing.
@@ -1045,6 +1061,7 @@ mod tests {
             &config.symbol,
             &config,
             DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+            Utc::now(),
             &FakeHistory,
             &AlwaysFailingDecisionMaker,
             &execution,
@@ -1073,6 +1090,7 @@ mod tests {
             &config.symbol,
             &config,
             FAKE_DECISION_CONFIDENCE + 0.01,
+            Utc::now(),
             &FakeHistory,
             &SucceedsOnceDecisionMaker {
                 succeed_on: 1,
@@ -1107,6 +1125,7 @@ mod tests {
             &config.symbol,
             &config,
             FAKE_DECISION_CONFIDENCE,
+            Utc::now(),
             &FakeHistory,
             &SucceedsOnceDecisionMaker {
                 succeed_on: 1,

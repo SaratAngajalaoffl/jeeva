@@ -83,11 +83,7 @@ async fn mark_status(pool: &PgPool, run_id: &str, status: &str, error: Option<&s
 /// see `ReplayMarketDataHistoryReader`), applying funding on an hourly
 /// simulated cadence, and finally force-flattening any open position at
 /// `end_time`.
-pub async fn run_backtest(
-    pool: PgPool,
-    run: BacktestRun,
-    decision_maker: Arc<dyn DecisionMaker>,
-) {
+pub async fn run_backtest(pool: PgPool, run: BacktestRun, decision_maker: Arc<dyn DecisionMaker>) {
     mark_status(&pool, &run.id, "running", None).await;
 
     let funding_source = HyperliquidHistoricalFundingRateSource::default();
@@ -139,6 +135,7 @@ pub async fn run_backtest(
             &run.symbol,
             &config,
             0.0,
+            sim_time,
             &history,
             decision_maker.as_ref(),
             &execution,
@@ -162,7 +159,10 @@ pub async fn run_backtest(
     clock.set(run.end_time);
     if let Ok(samples) = history.recent_samples(&run.symbol, 1).await {
         if let Some(latest) = samples.last() {
-            if let Err(error) = execution.close(&run.id, &run.symbol, latest.mid_price).await {
+            if let Err(error) = execution
+                .close(&run.id, &run.symbol, latest.mid_price)
+                .await
+            {
                 tracing::error!(run_id = %run.id, %error, "failed to flatten backtest position at end of range");
             }
         }
@@ -185,18 +185,21 @@ struct PendingBacktestRow {
 }
 
 async fn claim_next_pending(pool: &PgPool) -> Option<PendingBacktestRow> {
-    let row = sqlx::query_as::<_, (
-        String,
-        String,
-        String,
-        f64,
-        f64,
-        f64,
-        i32,
-        String,
-        DateTime<Utc>,
-        DateTime<Utc>,
-    )>(
+    let row = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            String,
+            f64,
+            f64,
+            f64,
+            i32,
+            String,
+            DateTime<Utc>,
+            DateTime<Utc>,
+        ),
+    >(
         r#"
         UPDATE backtest_runs SET status = 'running'
         WHERE id = (
