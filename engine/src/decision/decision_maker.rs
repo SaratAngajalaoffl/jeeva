@@ -6,12 +6,38 @@ use serde::{Deserialize, Serialize};
 
 use super::model::{JevDecision, Probabilities, TargetDirection};
 
+/// A decision cycle's failure. `raw_request`/`raw_response` carry
+/// whatever of the network exchange with Jev was captured before the
+/// failure (e.g. a malformed-response error still has the request that
+/// produced it, but a connection failure has neither) — `None` for
+/// non-network decision makers. Only persisted to the decision log when
+/// a session's `store_decision_payloads` config is enabled.
 #[derive(Debug)]
-pub struct DecisionError(pub String);
+pub struct DecisionError {
+    pub message: String,
+    pub raw_request: Option<String>,
+    pub raw_response: Option<String>,
+}
+
+impl DecisionError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            raw_request: None,
+            raw_response: None,
+        }
+    }
+
+    pub fn with_raw(mut self, raw_request: Option<String>, raw_response: Option<String>) -> Self {
+        self.raw_request = raw_request;
+        self.raw_response = raw_response;
+        self
+    }
+}
 
 impl fmt::Display for DecisionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{}", self.message)
     }
 }
 
@@ -37,7 +63,7 @@ pub(crate) fn parse_direction(choice: &str) -> Result<TargetDirection, DecisionE
         "long" => Ok(TargetDirection::Long),
         "short" => Ok(TargetDirection::Short),
         "flat" => Ok(TargetDirection::Flat),
-        other => Err(DecisionError(format!(
+        other => Err(DecisionError::new(format!(
             "Jev returned an unrecognized choice: {other}"
         ))),
     }
@@ -103,6 +129,8 @@ fn decision_for(direction: TargetDirection) -> JevDecision {
         direction,
         confidence: 0.7,
         probabilities,
+        raw_request: None,
+        raw_response: None,
     }
 }
 
@@ -159,7 +187,7 @@ pub struct UnconfiguredDecisionMaker {
 #[async_trait]
 impl DecisionMaker for UnconfiguredDecisionMaker {
     async fn decide(&self, _symbol: &str, _state: &str) -> Result<JevDecision, DecisionError> {
-        Err(DecisionError(format!(
+        Err(DecisionError::new(format!(
             "{} decision maker is not configured on this engine",
             self.name
         )))
@@ -227,13 +255,13 @@ mod tests {
         assert_eq!(parse_direction("short").unwrap(), TargetDirection::Short);
         assert_eq!(parse_direction("flat").unwrap(), TargetDirection::Flat);
         let error = parse_direction("sideways").unwrap_err();
-        assert!(error.0.contains("unrecognized choice"));
+        assert!(error.message.contains("unrecognized choice"));
     }
 
     #[tokio::test]
     async fn unconfigured_decision_maker_always_fails() {
         let dm = UnconfiguredDecisionMaker { name: "typesafe" };
         let error = dm.decide("BTC", "state").await.unwrap_err();
-        assert!(error.0.contains("typesafe"));
+        assert!(error.message.contains("typesafe"));
     }
 }

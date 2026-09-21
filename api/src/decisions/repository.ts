@@ -15,6 +15,8 @@ export interface DecisionLogEntry {
   positionAction: "no_op" | "opened" | "closed" | "closed_and_opened" | null;
   success: boolean;
   error: string | null;
+  rawRequest: unknown | null;
+  rawResponse: unknown | null;
 }
 
 export interface DecisionHistoryFilter {
@@ -58,9 +60,12 @@ export async function getDecisionHistory(
     position_action: "no_op" | "opened" | "closed" | "closed_and_opened" | null;
     success: boolean;
     error: string | null;
+    raw_request: unknown | null;
+    raw_response: unknown | null;
   }>(
     `SELECT time, session_id, symbol, context_summary, target_direction, confidence,
-            prob_long, prob_short, prob_flat, position_action, success, error
+            prob_long, prob_short, prob_flat, position_action, success, error,
+            raw_request, raw_response
      FROM decisions
      WHERE ${conditions.join(" AND ")}
      ORDER BY time DESC
@@ -88,5 +93,7 @@ export async function getDecisionHistory(
     positionAction: row.position_action,
     success: row.success,
     error: row.error,
+    rawRequest: row.raw_request,
+    rawResponse: row.raw_response,
   }));
 }

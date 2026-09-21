@@ -43,4 +43,10 @@ pub struct TradingSessionConfig {
     pub history_format: HistoryFormat,
     pub wallet_id: Option<String>,
     pub status: TradingSessionStatus,
+    /// When enabled, every decision cycle's exact request/response
+    /// exchange with Jev is persisted to the decision log (`decisions`/
+    /// `backtest_decisions`), not just the parsed direction/confidence/
+    /// probabilities. Off by default: raw payloads can be large and
+    /// most sessions don't need them for debugging or auditing.
+    pub store_decision_payloads: bool,
 }

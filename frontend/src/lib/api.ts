@@ -305,6 +305,8 @@ export interface TradingSession {
   historyWindowSamples: number;
   /** Whether that window reaches the decision maker raw, or averaged into a min/max/avg summary. */
   historyFormat: HistoryFormat;
+  /** Whether every decision cycle's raw Jev request/response is persisted, not just the parsed fields. */
+  storeDecisionPayloads: boolean;
   walletId: string | null;
   status: TradingSessionStatus;
   createdAt: string;
@@ -345,6 +347,8 @@ export interface CreateTradingSessionInput {
   historyWindowSamples?: number;
   /** Omit to accept the API default ("summary"). */
   historyFormat?: HistoryFormat;
+  /** Omit to accept the API default (false). */
+  storeDecisionPayloads?: boolean;
   walletId?: string | null;
 }
 
@@ -446,6 +450,9 @@ export interface DecisionLogEntry {
   positionAction: "no_op" | "opened" | "closed" | "closed_and_opened" | null;
   success: boolean;
   error: string | null;
+  /** The exact request/response JSON exchanged with Jev, when the session had `storeDecisionPayloads` enabled. */
+  rawRequest: unknown | null;
+  rawResponse: unknown | null;
 }
 
 export async function fetchDecisions(
@@ -605,6 +612,7 @@ export interface BacktestRun {
   positionSizeUsd: number;
   historyWindowSamples: number;
   historyFormat: HistoryFormat;
+  storeDecisionPayloads: boolean;
   startTime: string;
   endTime: string;
   initialBalanceUsd: number;
@@ -622,6 +630,7 @@ export interface CreateBacktestInput {
   positionSizeUsd: number;
   historyWindowSamples?: number;
   historyFormat?: HistoryFormat;
+  storeDecisionPayloads?: boolean;
   startTime: string;
   endTime: string;
   initialBalanceUsd: number;
@@ -688,6 +697,8 @@ export interface BacktestDecisionEntry {
   success: boolean;
   error: string | null;
   autoFlatten: boolean;
+  rawRequest: unknown | null;
+  rawResponse: unknown | null;
   createdAt: string;
 }
 

@@ -59,6 +59,7 @@ mod tests {
             history_format: HistoryFormat::Raw,
             wallet_id: None,
             status: TradingSessionStatus::Active,
+            store_decision_payloads: false,
         }
     }
 

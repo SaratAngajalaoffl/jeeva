@@ -42,6 +42,9 @@ function session(overrides: Partial<TradingSession> = {}): TradingSession {
     decisionFrequencySeconds: 300,
     leverage: 1,
     positionSizeUsd: 100,
+    historyWindowSamples: 1000,
+    historyFormat: "summary",
+    storeDecisionPayloads: false,
     walletId: "w1",
     status: "active",
     createdAt: "2026-09-20T09:00:00.000Z",
@@ -74,6 +77,8 @@ function decision(overrides: Partial<DecisionLogEntry> = {}): DecisionLogEntry {
     positionAction: "opened",
     success: true,
     error: null,
+    rawRequest: null,
+    rawResponse: null,
     ...overrides,
   };
 }

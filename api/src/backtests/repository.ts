@@ -13,6 +13,7 @@ export interface BacktestRun {
   positionSizeUsd: number;
   historyWindowSamples: number;
   historyFormat: HistoryFormat;
+  storeDecisionPayloads: boolean;
   startTime: string;
   endTime: string;
   initialBalanceUsd: number;
@@ -32,6 +33,7 @@ interface BacktestRunRow {
   position_size_usd: string;
   history_window_samples: number;
   history_format: HistoryFormat;
+  store_decision_payloads: boolean;
   start_time: Date;
   end_time: Date;
   initial_balance_usd: string;
@@ -52,6 +54,7 @@ function toBacktestRun(row: BacktestRunRow): BacktestRun {
     positionSizeUsd: Number(row.position_size_usd),
     historyWindowSamples: row.history_window_samples,
     historyFormat: row.history_format,
+    storeDecisionPayloads: row.store_decision_payloads,
     startTime: row.start_time.toISOString(),
     endTime: row.end_time.toISOString(),
     initialBalanceUsd: Number(row.initial_balance_usd),
@@ -65,8 +68,8 @@ function toBacktestRun(row: BacktestRunRow): BacktestRun {
 
 const COLUMNS =
   "id, symbol, decision_maker, decision_frequency_seconds, leverage, position_size_usd, " +
-  "history_window_samples, history_format, start_time, end_time, initial_balance_usd, " +
-  "current_balance_usd, status, error, created_at, completed_at";
+  "history_window_samples, history_format, store_decision_payloads, start_time, end_time, " +
+  "initial_balance_usd, current_balance_usd, status, error, created_at, completed_at";
 
 export interface CreateBacktestRunInput {
   symbol: string;
@@ -76,6 +79,7 @@ export interface CreateBacktestRunInput {
   positionSizeUsd: number;
   historyWindowSamples: number;
   historyFormat: HistoryFormat;
+  storeDecisionPayloads?: boolean;
   startTime: string;
   endTime: string;
   initialBalanceUsd: number;
@@ -88,9 +92,9 @@ export async function createBacktestRun(
   const result = await pool.query<BacktestRunRow>(
     `INSERT INTO backtest_runs
        (symbol, decision_maker, decision_frequency_seconds, leverage, position_size_usd,
-        history_window_samples, history_format, start_time, end_time,
+        history_window_samples, history_format, store_decision_payloads, start_time, end_time,
         initial_balance_usd, current_balance_usd, status)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, 'pending')
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, 'pending')
      RETURNING ${COLUMNS}`,
     [
       input.symbol,
@@ -100,6 +104,7 @@ export async function createBacktestRun(
       input.positionSizeUsd,
       input.historyWindowSamples,
       input.historyFormat,
+      input.storeDecisionPayloads ?? false,
       input.startTime,
       input.endTime,
       input.initialBalanceUsd,
@@ -164,6 +169,8 @@ export interface BacktestDecisionEntry {
   success: boolean;
   error: string | null;
   autoFlatten: boolean;
+  rawRequest: unknown | null;
+  rawResponse: unknown | null;
   createdAt: string;
 }
 
@@ -181,6 +188,8 @@ interface BacktestDecisionRow {
   success: boolean;
   error: string | null;
   auto_flatten: boolean;
+  raw_request: unknown | null;
+  raw_response: unknown | null;
   created_at: Date;
 }
 
@@ -199,6 +208,8 @@ function toBacktestDecision(row: BacktestDecisionRow): BacktestDecisionEntry {
     success: row.success,
     error: row.error,
     autoFlatten: row.auto_flatten,
+    rawRequest: row.raw_request,
+    rawResponse: row.raw_response,
     createdAt: row.created_at.toISOString(),
   };
 }
@@ -210,7 +221,7 @@ export async function listBacktestDecisions(
   const result = await pool.query<BacktestDecisionRow>(
     `SELECT id, sim_time, symbol, context_summary, target_direction, confidence,
             prob_long, prob_short, prob_flat, position_action, success, error,
-            auto_flatten, created_at
+            auto_flatten, raw_request, raw_response, created_at
      FROM backtest_decisions
      WHERE backtest_run_id = $1
      ORDER BY sim_time`,

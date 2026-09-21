@@ -99,6 +99,8 @@ fn flat_decision() -> JevDecision {
             short: 0.0,
             flat: 1.0,
         },
+        raw_request: None,
+        raw_response: None,
     }
 }
 
@@ -155,6 +157,8 @@ pub async fn run_decision_cycle(
                     position_action: None,
                     error: Some(&error.to_string()),
                     auto_flatten: false,
+                    raw_request: None,
+                    raw_response: None,
                 })
                 .await;
             return;
@@ -177,6 +181,8 @@ pub async fn run_decision_cycle(
                 position_action: None,
                 error: Some("no market data available yet"),
                 auto_flatten: false,
+                raw_request: None,
+                raw_response: None,
             })
             .await;
         return;
@@ -195,6 +201,8 @@ pub async fn run_decision_cycle(
                 position_action: Some(super::model::PositionAction::Close),
                 error: error.as_deref(),
                 auto_flatten: false,
+                raw_request: None,
+                raw_response: None,
             })
             .await;
 
@@ -222,6 +230,8 @@ pub async fn run_decision_cycle(
                 execution,
                 decision_log,
                 health,
+                None,
+                None,
             )
             .await;
             return;
@@ -254,6 +264,11 @@ pub async fn run_decision_cycle(
             Ok(decision) => decision,
             Err(error) => {
                 tracing::error!(symbol, session_id, %error, "decision maker failed");
+                let (raw_request, raw_response) = if config.store_decision_payloads {
+                    (error.raw_request.as_deref(), error.raw_response.as_deref())
+                } else {
+                    (None, None)
+                };
                 handle_cycle_failure(
                     symbol,
                     &error.to_string(),
@@ -263,6 +278,8 @@ pub async fn run_decision_cycle(
                     execution,
                     decision_log,
                     health,
+                    raw_request,
+                    raw_response,
                 )
                 .await;
                 return;
@@ -319,6 +336,14 @@ pub async fn run_decision_cycle(
                     position_action: Some(action),
                     error: None,
                     auto_flatten: false,
+                    raw_request: config
+                        .store_decision_payloads
+                        .then_some(decision.raw_request.as_deref())
+                        .flatten(),
+                    raw_response: config
+                        .store_decision_payloads
+                        .then_some(decision.raw_response.as_deref())
+                        .flatten(),
                 })
                 .await;
 
@@ -337,6 +362,14 @@ pub async fn run_decision_cycle(
                     position_action: Some(action),
                     error: Some(&error),
                     auto_flatten: false,
+                    raw_request: config
+                        .store_decision_payloads
+                        .then_some(decision.raw_request.as_deref())
+                        .flatten(),
+                    raw_response: config
+                        .store_decision_payloads
+                        .then_some(decision.raw_response.as_deref())
+                        .flatten(),
                 })
                 .await;
             if count >= AUTO_FLATTEN_THRESHOLD {
@@ -368,6 +401,8 @@ async fn handle_cycle_failure(
     execution: &dyn ExecutionAdapter,
     decision_log: &dyn DecisionLogWriter,
     health: &dyn FailureTracker,
+    raw_request: Option<&str>,
+    raw_response: Option<&str>,
 ) {
     let count = health.record_failure(symbol, reason).await;
     let _ = decision_log
@@ -378,6 +413,8 @@ async fn handle_cycle_failure(
             position_action: None,
             error: Some(reason),
             auto_flatten: false,
+            raw_request,
+            raw_response,
         })
         .await;
 
@@ -412,6 +449,8 @@ async fn auto_flatten(
             position_action: Some(super::model::PositionAction::Close),
             error: result.err().map(|e| e.to_string()).as_deref(),
             auto_flatten: true,
+            raw_request: None,
+            raw_response: None,
         })
         .await;
 }
@@ -650,6 +689,7 @@ mod tests {
             history_format: HistoryFormat::Summary,
             wallet_id: Some("test-wallet".to_string()),
             status,
+            store_decision_payloads: false,
         }
     }
 
@@ -761,7 +801,7 @@ mod tests {
     #[async_trait]
     impl DecisionMaker for AlwaysFailingDecisionMaker {
         async fn decide(&self, _symbol: &str, _state: &str) -> Result<JevDecision, DecisionError> {
-            Err(DecisionError("decision maker unavailable".to_string()))
+            Err(DecisionError::new("decision maker unavailable"))
         }
     }
 
@@ -786,9 +826,11 @@ mod tests {
                         short: 0.05,
                         flat: 0.9,
                     },
+                    raw_request: None,
+                    raw_response: None,
                 })
             } else {
-                Err(DecisionError("decision maker unavailable".to_string()))
+                Err(DecisionError::new("decision maker unavailable"))
             }
         }
     }

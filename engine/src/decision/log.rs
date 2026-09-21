@@ -37,6 +37,12 @@ pub struct DecisionLogEntry<'a> {
     /// consecutive failures — kept distinct from a normal Jev-driven
     /// position change.
     pub auto_flatten: bool,
+    /// The exact request/response JSON exchanged with Jev for this
+    /// cycle, when the session has `store_decision_payloads` enabled —
+    /// `None` otherwise, and always `None` for cycles that never
+    /// reached a network decision maker (e.g. missing market data).
+    pub raw_request: Option<&'a str>,
+    pub raw_response: Option<&'a str>,
 }
 
 /// Persists one row per decision cycle — including cycles that
@@ -73,9 +79,10 @@ impl DecisionLogWriter for PostgresDecisionLogWriter {
             r#"
             INSERT INTO decisions (
                 time, symbol, context_summary, target_direction, confidence,
-                prob_long, prob_short, prob_flat, position_action, success, error, auto_flatten
+                prob_long, prob_short, prob_flat, position_action, success, error, auto_flatten,
+                raw_request, raw_response
             )
-            VALUES (now(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            VALUES (now(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb)
             "#,
         )
         .bind(entry.symbol)
@@ -89,6 +96,8 @@ impl DecisionLogWriter for PostgresDecisionLogWriter {
         .bind(success)
         .bind(entry.error)
         .bind(entry.auto_flatten)
+        .bind(entry.raw_request)
+        .bind(entry.raw_response)
         .execute(&self.pool)
         .await
         .map_err(|e| LogError(format!("failed to write decision log entry: {e}")))?;

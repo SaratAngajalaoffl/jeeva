@@ -57,6 +57,7 @@ fn to_session_config(run: &BacktestRun) -> TradingSessionConfig {
         // Always Active: HardClosing/SoftClosing are session-level
         // lifecycle states, irrelevant to a one-shot replay.
         status: TradingSessionStatus::Active,
+        store_decision_payloads: run.store_decision_payloads,
     }
 }
 
@@ -182,6 +183,7 @@ struct PendingBacktestRow {
     history_format: String,
     start_time: DateTime<Utc>,
     end_time: DateTime<Utc>,
+    store_decision_payloads: bool,
 }
 
 async fn claim_next_pending(pool: &PgPool) -> Option<PendingBacktestRow> {
@@ -198,6 +200,7 @@ async fn claim_next_pending(pool: &PgPool) -> Option<PendingBacktestRow> {
             String,
             DateTime<Utc>,
             DateTime<Utc>,
+            bool,
         ),
     >(
         r#"
@@ -207,7 +210,8 @@ async fn claim_next_pending(pool: &PgPool) -> Option<PendingBacktestRow> {
             FOR UPDATE SKIP LOCKED
         )
         RETURNING id::text, symbol, decision_maker, decision_frequency_seconds, leverage,
-                  position_size_usd, history_window_samples, history_format, start_time, end_time
+                  position_size_usd, history_window_samples, history_format, start_time, end_time,
+                  store_decision_payloads
         "#,
     )
     .fetch_optional(pool)
@@ -227,6 +231,7 @@ async fn claim_next_pending(pool: &PgPool) -> Option<PendingBacktestRow> {
             history_format,
             start_time,
             end_time,
+            store_decision_payloads,
         )| PendingBacktestRow {
             id,
             symbol,
@@ -238,6 +243,7 @@ async fn claim_next_pending(pool: &PgPool) -> Option<PendingBacktestRow> {
             history_format,
             start_time,
             end_time,
+            store_decision_payloads,
         },
     )
 }
@@ -277,6 +283,7 @@ pub async fn run(
                     history_format,
                     start_time: row.start_time,
                     end_time: row.end_time,
+                    store_decision_payloads: row.store_decision_payloads,
                 };
 
                 let decision_maker = decision_maker_for(decision_maker_kind);

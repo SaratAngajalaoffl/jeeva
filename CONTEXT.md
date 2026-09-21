@@ -43,3 +43,6 @@ _Avoid_: lookback, timeframe — this counts samples, not wall-clock time.
 **History Format**:
 How that History Window is rendered into the DecisionMaker's `state`: `summary` (per-field min/max/average across the window — the compact default) or `raw` (every sample as its own data point, oldest first). A property of the session (`trading_sessions.history_format`), independent of the window's size, so any window can be sent either way. A raw window costs roughly 40 tokens per sample.
 _Avoid_: "full history" — the window is always bounded; `raw` changes the rendering, not the amount read.
+
+**Decision Payload Storage**:
+An opt-in, per-session setting (`trading_sessions.store_decision_payloads` / `backtest_runs.store_decision_payloads`) that, when enabled, persists the exact request and response JSON exchanged with Jev for every decision cycle — including failed cycles, whatever of the exchange was captured before the failure — to `decisions.raw_request`/`raw_response` (or `backtest_decisions` for a backtest). Off by default: most sessions only need the parsed direction/confidence/probabilities already stored on every row.

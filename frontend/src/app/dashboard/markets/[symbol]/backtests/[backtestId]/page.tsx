@@ -247,6 +247,7 @@ export default function BacktestDetailPage() {
                     <th className={TH}>Confidence</th>
                     <th className={TH}>Action</th>
                     <th className={TH}>Status</th>
+                    <th className={TH}>Payload</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -265,6 +266,24 @@ export default function BacktestDetailPage() {
                           <span className="text-emerald-400">ok</span>
                         ) : (
                           <span className="text-destructive">error</span>
+                        )}
+                      </td>
+                      <td className={TD}>
+                        {d.rawRequest || d.rawResponse ? (
+                          <details>
+                            <summary className="cursor-pointer text-subtext-0">
+                              view
+                            </summary>
+                            <pre className="mt-1 max-w-xs overflow-x-auto whitespace-pre-wrap text-xs text-subtext-1">
+                              {JSON.stringify(
+                                { request: d.rawRequest, response: d.rawResponse },
+                                null,
+                                2,
+                              )}
+                            </pre>
+                          </details>
+                        ) : (
+                          "-"
                         )}
                       </td>
                     </tr>

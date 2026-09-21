@@ -61,6 +61,7 @@ export function createBacktestsRouter(pgPool: Pool): Router {
       positionSizeUsd,
       historyWindowSamples,
       historyFormat,
+      storeDecisionPayloads,
       startTime,
       endTime,
       initialBalanceUsd,
@@ -74,6 +75,8 @@ export function createBacktestsRouter(pgPool: Pool): Router {
       (historyWindowSamples !== undefined &&
         !isValidHistoryWindowSamples(historyWindowSamples)) ||
       (historyFormat !== undefined && !isValidHistoryFormat(historyFormat)) ||
+      (storeDecisionPayloads !== undefined &&
+        typeof storeDecisionPayloads !== "boolean") ||
       !isValidIsoDate(startTime) ||
       !isValidIsoDate(endTime) ||
       !isValidInitialBalance(initialBalanceUsd)
@@ -113,6 +116,7 @@ export function createBacktestsRouter(pgPool: Pool): Router {
       positionSizeUsd,
       historyWindowSamples: historyWindowSamples ?? DEFAULT_HISTORY_WINDOW_SAMPLES,
       historyFormat: historyFormat ?? DEFAULT_HISTORY_FORMAT,
+      storeDecisionPayloads,
       startTime,
       endTime,
       initialBalanceUsd,

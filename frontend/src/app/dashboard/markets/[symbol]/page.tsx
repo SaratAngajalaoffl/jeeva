@@ -839,6 +839,7 @@ function NewSessionForm({
   const [positionSizeUsd, setPositionSizeUsd] = useState("100");
   const [historyWindowSamples, setHistoryWindowSamples] = useState("1000");
   const [historyFormat, setHistoryFormat] = useState<HistoryFormat>("summary");
+  const [storeDecisionPayloads, setStoreDecisionPayloads] = useState(false);
   const [walletId, setWalletId] = useState("");
   const [wallets, setWallets] = useState<Wallet[] | null>(null);
   const [startTime, setStartTime] = useState("");
@@ -914,6 +915,7 @@ function NewSessionForm({
             positionSizeUsd: size,
             historyWindowSamples: history,
             historyFormat,
+            storeDecisionPayloads,
             startTime: new Date(startTime).toISOString(),
             endTime: new Date(endTime).toISOString(),
             initialBalanceUsd: balance,
@@ -936,6 +938,7 @@ function NewSessionForm({
           positionSizeUsd: size,
           historyWindowSamples: history,
           historyFormat,
+          storeDecisionPayloads,
           walletId: walletId || null,
         });
         setSubmitting(false);
@@ -1019,6 +1022,16 @@ function NewSessionForm({
           <option value="summary">summary (averaged)</option>
           <option value="raw">raw (every sample)</option>
         </Select>
+      </label>
+      <label className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={storeDecisionPayloads}
+          onChange={(e) => setStoreDecisionPayloads(e.target.checked)}
+        />
+        <span className="text-sm">
+          Store raw Jev request/response for every decision
+        </span>
       </label>
       {sessionType === "live" ? (
         <label className="flex flex-col gap-1">

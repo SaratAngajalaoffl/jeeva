@@ -51,6 +51,16 @@ pub struct JevDecision {
     pub direction: TargetDirection,
     pub confidence: f64,
     pub probabilities: Probabilities,
+    /// The exact request body sent to Jev (TypeSafe's `systemOne`, or
+    /// the OpenRouter equivalent), as JSON text — `None` for
+    /// non-network decision makers (`RandomDecisionMaker`). Only
+    /// persisted when a session's `store_decision_payloads` config is
+    /// enabled; carried on every decision regardless of that flag so
+    /// the flag can be a pure logging toggle, not a network-shape one.
+    pub raw_request: Option<String>,
+    /// The exact response body Jev returned, as JSON text. See
+    /// `raw_request`.
+    pub raw_response: Option<String>,
 }
 
 /// What the engine should do to a PERP's position given its current

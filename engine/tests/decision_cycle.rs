@@ -183,6 +183,8 @@ impl engine::decision::DecisionMaker for CapturingDecisionMaker {
                 short: 0.1,
                 flat: 0.8,
             },
+            raw_request: None,
+            raw_response: None,
         })
     }
 }
@@ -199,6 +201,7 @@ fn config() -> TradingSessionConfig {
         history_format: engine::decision::HistoryFormat::Summary,
         wallet_id: None,
         status: TradingSessionStatus::Active,
+        store_decision_payloads: false,
     }
 }
 

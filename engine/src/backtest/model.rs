@@ -18,4 +18,5 @@ pub struct BacktestRun {
     pub history_format: HistoryFormat,
     pub start_time: DateTime<Utc>,
     pub end_time: DateTime<Utc>,
+    pub store_decision_payloads: bool,
 }

@@ -60,6 +60,7 @@ export function createTradingSessionsRouter(
       positionSizeUsd,
       historyWindowSamples,
       historyFormat,
+      storeDecisionPayloads,
       walletId,
     } = req.body ?? {};
 
@@ -71,6 +72,8 @@ export function createTradingSessionsRouter(
       (historyWindowSamples !== undefined &&
         !isValidHistoryWindowSamples(historyWindowSamples)) ||
       (historyFormat !== undefined && !isValidHistoryFormat(historyFormat)) ||
+      (storeDecisionPayloads !== undefined &&
+        typeof storeDecisionPayloads !== "boolean") ||
       (walletId !== undefined &&
         walletId !== null &&
         typeof walletId !== "string")
@@ -106,6 +109,7 @@ export function createTradingSessionsRouter(
         positionSizeUsd,
         historyWindowSamples,
         historyFormat,
+        storeDecisionPayloads,
         walletId: resolvedWalletId,
       });
       // A market can't be traded blind: enabling trading for it (by
@@ -140,6 +144,7 @@ export function createTradingSessionsRouter(
       positionSizeUsd,
       historyWindowSamples,
       historyFormat,
+      storeDecisionPayloads,
     } = req.body ?? {};
 
     if (
@@ -151,7 +156,9 @@ export function createTradingSessionsRouter(
         !isValidPositionSizeUsd(positionSizeUsd)) ||
       (historyWindowSamples !== undefined &&
         !isValidHistoryWindowSamples(historyWindowSamples)) ||
-      (historyFormat !== undefined && !isValidHistoryFormat(historyFormat))
+      (historyFormat !== undefined && !isValidHistoryFormat(historyFormat)) ||
+      (storeDecisionPayloads !== undefined &&
+        typeof storeDecisionPayloads !== "boolean")
     ) {
       res.status(400).json({ error: "invalid request" });
       return;
@@ -164,6 +171,7 @@ export function createTradingSessionsRouter(
       positionSizeUsd,
       historyWindowSamples,
       historyFormat,
+      storeDecisionPayloads,
     });
     if (!session) {
       res.status(404).json({ error: "trading session not found" });

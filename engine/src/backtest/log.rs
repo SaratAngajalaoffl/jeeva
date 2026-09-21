@@ -51,9 +51,10 @@ impl DecisionLogWriter for BacktestDecisionLogWriter {
             r#"
             INSERT INTO backtest_decisions (
                 backtest_run_id, sim_time, symbol, context_summary, target_direction, confidence,
-                prob_long, prob_short, prob_flat, position_action, success, error, auto_flatten
+                prob_long, prob_short, prob_flat, position_action, success, error, auto_flatten,
+                raw_request, raw_response
             )
-            VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb)
             "#,
         )
         .bind(&self.backtest_run_id)
@@ -69,6 +70,8 @@ impl DecisionLogWriter for BacktestDecisionLogWriter {
         .bind(success)
         .bind(entry.error)
         .bind(entry.auto_flatten)
+        .bind(entry.raw_request)
+        .bind(entry.raw_response)
         .execute(&self.pool)
         .await
         .map_err(|e| LogError(format!("failed to write backtest decision log entry: {e}")))?;

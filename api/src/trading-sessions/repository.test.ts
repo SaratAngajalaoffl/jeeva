@@ -14,6 +14,7 @@ function session(overrides: Partial<TradingSession> = {}): TradingSession {
     positionSizeUsd: 100,
     historyWindowSamples: 1000,
     historyFormat: "summary",
+    storeDecisionPayloads: false,
     walletId: null,
     status: "active",
     createdAt: "2026-01-01T00:00:00.000Z",
@@ -32,6 +33,7 @@ describe("mergeTradingSessionConfig", () => {
       positionSizeUsd: 100,
       historyWindowSamples: 40,
       historyFormat: "raw",
+      storeDecisionPayloads: false,
     });
   });
 
@@ -44,6 +46,7 @@ describe("mergeTradingSessionConfig", () => {
       positionSizeUsd: 100,
       historyWindowSamples: 40,
       historyFormat: "raw",
+      storeDecisionPayloads: false,
     });
   });
 
@@ -67,6 +70,7 @@ describe("mergeTradingSessionConfig", () => {
       positionSizeUsd: 250,
       historyWindowSamples: 60,
       historyFormat: "raw",
+      storeDecisionPayloads: true,
     });
 
     expect(merged).toEqual({
@@ -76,6 +80,7 @@ describe("mergeTradingSessionConfig", () => {
       positionSizeUsd: 250,
       historyWindowSamples: 60,
       historyFormat: "raw",
+      storeDecisionPayloads: true,
     });
   });
 

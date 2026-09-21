@@ -105,38 +105,53 @@ impl OpenRouterJevDecisionMaker {
 impl DecisionMaker for OpenRouterJevDecisionMaker {
     async fn decide(&self, symbol: &str, state: &str) -> Result<JevDecision, DecisionError> {
         let url = format!("{}/decisions", self.base_url);
+        let request_body = DecisionRequest {
+            model: MODEL,
+            state,
+            questions: questions(),
+        };
+        // Best-effort: if this ever fails to serialize, the raw request
+        // is just omitted from the log rather than the cycle failing.
+        let raw_request = serde_json::to_string(&request_body).ok();
 
         let response = self
             .http
             .post(&url)
             .bearer_auth(&self.api_key)
-            .json(&DecisionRequest {
-                model: MODEL,
-                state,
-                questions: questions(),
-            })
+            .json(&request_body)
             .send()
             .await
-            .map_err(|e| DecisionError(format!("OpenRouter request failed for {symbol}: {e}")))?;
+            .map_err(|e| {
+                DecisionError::new(format!("OpenRouter request failed for {symbol}: {e}"))
+                    .with_raw(raw_request.clone(), None)
+            })?;
 
         let response = response.error_for_status().map_err(|e| {
-            DecisionError(format!(
+            DecisionError::new(format!(
                 "OpenRouter returned an error status for {symbol}: {e}"
             ))
+            .with_raw(raw_request.clone(), None)
         })?;
 
-        let mut body: DecisionResponse = response
-            .json()
-            .await
-            .map_err(|e| DecisionError(format!("OpenRouter response invalid for {symbol}: {e}")))?;
+        let raw_response = response.text().await.map_err(|e| {
+            DecisionError::new(format!("OpenRouter response invalid for {symbol}: {e}"))
+                .with_raw(raw_request.clone(), None)
+        })?;
+
+        let mut body: DecisionResponse = serde_json::from_str(&raw_response).map_err(|e| {
+            DecisionError::new(format!("OpenRouter response invalid for {symbol}: {e}"))
+                .with_raw(raw_request.clone(), Some(raw_response.clone()))
+        })?;
 
         let answer = body.answers.remove(QUESTION_ID).ok_or_else(|| {
-            DecisionError(format!(
+            DecisionError::new(format!(
                 "OpenRouter response contained no '{QUESTION_ID}' answer for {symbol}"
             ))
+            .with_raw(raw_request.clone(), Some(raw_response.clone()))
         })?;
 
-        let direction = parse_direction(&answer.choice)?;
+        let direction = parse_direction(&answer.choice)
+            .map_err(|e| e.with_raw(raw_request.clone(), Some(raw_response.clone())))?;
 
         Ok(JevDecision {
             direction,
@@ -146,6 +161,8 @@ impl DecisionMaker for OpenRouterJevDecisionMaker {
                 short: answer.probabilities.short,
                 flat: answer.probabilities.flat,
             },
+            raw_request,
+            raw_response: Some(raw_response),
         })
     }
 }
@@ -227,7 +244,7 @@ mod tests {
 
         let dm = adapter_against(&server);
         let error = dm.decide("BTC", "state").await.unwrap_err();
-        assert!(error.0.contains("error status"));
+        assert!(error.message.contains("error status"));
     }
 
     #[tokio::test]
@@ -242,7 +259,7 @@ mod tests {
 
         let dm = adapter_against(&server);
         let error = dm.decide("BTC", "state").await.unwrap_err();
-        assert!(error.0.contains("invalid"));
+        assert!(error.message.contains("invalid"));
     }
 
     #[tokio::test]
@@ -263,7 +280,7 @@ mod tests {
 
         let dm = adapter_against(&server);
         let error = dm.decide("BTC", "state").await.unwrap_err();
-        assert!(error.0.contains("no 'direction' answer"));
+        assert!(error.message.contains("no 'direction' answer"));
     }
 
     #[tokio::test]
@@ -282,7 +299,7 @@ mod tests {
 
         let dm = adapter_against(&server);
         let error = dm.decide("BTC", "state").await.unwrap_err();
-        assert!(error.0.contains("unrecognized choice"));
+        assert!(error.message.contains("unrecognized choice"));
     }
 
     #[tokio::test]
@@ -305,6 +322,6 @@ mod tests {
         };
 
         let error = dm.decide("BTC", "state").await.unwrap_err();
-        assert!(error.0.contains("request failed"));
+        assert!(error.message.contains("request failed"));
     }
 }

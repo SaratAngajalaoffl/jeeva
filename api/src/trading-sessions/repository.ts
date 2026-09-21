@@ -24,6 +24,8 @@ export interface TradingSession {
   historyWindowSamples: number;
   /** Whether that window reaches the decision maker raw, or averaged into a min/max/avg summary. */
   historyFormat: HistoryFormat;
+  /** Whether every decision cycle's raw Jev request/response JSON is persisted, not just the parsed fields. */
+  storeDecisionPayloads: boolean;
   walletId: string | null;
   status: TradingSessionStatus;
   createdAt: string;
@@ -55,6 +57,7 @@ interface TradingSessionRow {
   position_size_usd: string;
   history_window_samples: number;
   history_format: HistoryFormat;
+  store_decision_payloads: boolean;
   wallet_id: string | null;
   status: TradingSessionStatus;
   created_at: Date;
@@ -71,6 +74,7 @@ function toTradingSession(row: TradingSessionRow): TradingSession {
     positionSizeUsd: Number(row.position_size_usd),
     historyWindowSamples: row.history_window_samples,
     historyFormat: row.history_format,
+    storeDecisionPayloads: row.store_decision_payloads,
     walletId: row.wallet_id,
     status: row.status,
     createdAt: row.created_at.toISOString(),
@@ -79,7 +83,7 @@ function toTradingSession(row: TradingSessionRow): TradingSession {
 }
 
 const COLUMNS =
-  "id, symbol, decision_maker, decision_frequency_seconds, leverage, position_size_usd, history_window_samples, history_format, wallet_id, status, created_at, closed_at";
+  "id, symbol, decision_maker, decision_frequency_seconds, leverage, position_size_usd, history_window_samples, history_format, store_decision_payloads, wallet_id, status, created_at, closed_at";
 
 export async function listTradingSessions(
   pool: Pool,
@@ -119,6 +123,7 @@ export interface CreateTradingSessionInput {
   positionSizeUsd: number;
   historyWindowSamples?: number;
   historyFormat?: HistoryFormat;
+  storeDecisionPayloads?: boolean;
   walletId: string | null;
 }
 
@@ -146,8 +151,8 @@ export async function createTradingSession(
     const result = await pool.query<TradingSessionRow>(
       `INSERT INTO trading_sessions
          (symbol, decision_maker, decision_frequency_seconds, leverage, position_size_usd,
-          history_window_samples, history_format, wallet_id, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active')
+          history_window_samples, history_format, store_decision_payloads, wallet_id, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active')
        RETURNING ${COLUMNS}`,
       [
         input.symbol,
@@ -157,6 +162,7 @@ export async function createTradingSession(
         input.positionSizeUsd,
         input.historyWindowSamples ?? DEFAULT_HISTORY_WINDOW_SAMPLES,
         input.historyFormat ?? DEFAULT_HISTORY_FORMAT,
+        input.storeDecisionPayloads ?? false,
         input.walletId,
       ],
     );
@@ -173,6 +179,7 @@ export type TradingSessionConfigPatch = Partial<
     | "positionSizeUsd"
     | "historyWindowSamples"
     | "historyFormat"
+    | "storeDecisionPayloads"
   >
 >;
 
@@ -191,6 +198,7 @@ export function mergeTradingSessionConfig(
   positionSizeUsd: number;
   historyWindowSamples: number;
   historyFormat: HistoryFormat;
+  storeDecisionPayloads: boolean;
 } {
   return {
     decisionMaker: patch.decisionMaker ?? existing.decisionMaker,
@@ -201,6 +209,8 @@ export function mergeTradingSessionConfig(
     historyWindowSamples:
       patch.historyWindowSamples ?? existing.historyWindowSamples,
     historyFormat: patch.historyFormat ?? existing.historyFormat,
+    storeDecisionPayloads:
+      patch.storeDecisionPayloads ?? existing.storeDecisionPayloads,
   };
 }
 
@@ -222,7 +232,8 @@ export async function updateTradingSessionConfig(
          leverage = $4,
          position_size_usd = $5,
          history_window_samples = $6,
-         history_format = $7
+         history_format = $7,
+         store_decision_payloads = $8
      WHERE id = $1
      RETURNING ${COLUMNS}`,
     [
@@ -233,6 +244,7 @@ export async function updateTradingSessionConfig(
       merged.positionSizeUsd,
       merged.historyWindowSamples,
       merged.historyFormat,
+      merged.storeDecisionPayloads,
     ],
   );
   return toTradingSession(result.rows[0]);

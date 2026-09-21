@@ -19,6 +19,7 @@ type SessionRow = (
     String,
     Option<String>,
     String,
+    bool,
 );
 
 fn row_to_session(row: SessionRow) -> Option<TradingSessionConfig> {
@@ -33,6 +34,7 @@ fn row_to_session(row: SessionRow) -> Option<TradingSessionConfig> {
         history_format,
         wallet_id,
         status,
+        store_decision_payloads,
     ) = row;
 
     let Some(decision_maker) = DecisionMakerKind::from_db(&decision_maker) else {
@@ -62,6 +64,7 @@ fn row_to_session(row: SessionRow) -> Option<TradingSessionConfig> {
         history_format,
         wallet_id,
         status,
+        store_decision_payloads,
     })
 }
 
@@ -74,7 +77,7 @@ async fn refresh(pool: &PgPool, store: &SessionStore) {
         r#"
         SELECT id::text, symbol, decision_maker, decision_frequency_seconds,
                leverage, position_size_usd, history_window_samples,
-               history_format, wallet_id::text, status
+               history_format, wallet_id::text, status, store_decision_payloads
         FROM trading_sessions
         WHERE status <> 'closed'
         "#,
@@ -143,6 +146,7 @@ mod tests {
             "summary".to_string(),
             None,
             "active".to_string(),
+            false,
         );
         assert!(row_to_session(row).is_none());
     }
@@ -160,6 +164,7 @@ mod tests {
             "summary".to_string(),
             None,
             "not-a-real-status".to_string(),
+            false,
         );
         assert!(row_to_session(row).is_none());
     }
@@ -177,6 +182,7 @@ mod tests {
             "everything".to_string(),
             None,
             "active".to_string(),
+            false,
         );
         assert!(row_to_session(row).is_none());
     }
@@ -194,6 +200,7 @@ mod tests {
             "raw".to_string(),
             Some("w1".to_string()),
             "soft_closing".to_string(),
+            true,
         );
         let session = row_to_session(row).unwrap();
         assert_eq!(session.id, "s1");
@@ -202,6 +209,7 @@ mod tests {
         assert_eq!(session.history_window_samples, 500);
         assert_eq!(session.history_format, HistoryFormat::Raw);
         assert_eq!(session.wallet_id.as_deref(), Some("w1"));
+        assert!(session.store_decision_payloads);
     }
 
     #[test]
@@ -217,6 +225,7 @@ mod tests {
             "summary".to_string(),
             None,
             "active".to_string(),
+            false,
         );
         // The column's CHECK constraint makes 0 unreachable in practice;
         // the engine still degrades to the smallest readable window
