@@ -10,11 +10,10 @@ COPY frontend/package.json frontend/package.json
 RUN npm ci --workspace=frontend --include-workspace-root \
  || npm ci --workspace=frontend --include-workspace-root
 COPY frontend ./frontend
-# NEXT_PUBLIC_* vars are inlined into the client bundle at build time, so
-# the publicly reachable api URL must be supplied here, not at container
-# runtime.
-ARG NEXT_PUBLIC_API_URL
-ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+# No build-time API URL: the URL is supplied at container start via
+# API_URL and served to the browser from /runtime-config, so the same
+# built image can be reused across instances pointing at different
+# API backends.
 RUN npm run build --workspace=frontend
 
 FROM node:20-slim
@@ -25,4 +24,6 @@ COPY --from=builder /repo/frontend/package.json ./package.json
 COPY --from=builder /repo/node_modules ../node_modules
 COPY --from=builder /repo/frontend/node_modules ./node_modules
 EXPOSE 3000
+# Publicly reachable API URL for this instance, read at request time.
+ENV API_URL=
 CMD ["npm", "run", "start"]

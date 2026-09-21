@@ -1,10 +1,31 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+/**
+ * The API base URL is resolved at runtime, not inlined at build time.
+ * The container serves its configured API_URL from /runtime-config, so
+ * the same built image can be reused across instances pointing at
+ * different backends. The first request resolves and memoizes it.
+ */
+const FALLBACK_API_URL = "http://localhost:4000";
+
+let apiUrlPromise: Promise<string> | null = null;
+
+function loadApiUrl(): Promise<string> {
+  if (!apiUrlPromise) {
+    apiUrlPromise = fetch("/runtime-config", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body: { apiUrl?: unknown } | null) => {
+        const url = typeof body?.apiUrl === "string" ? body.apiUrl.trim() : "";
+        return url || FALLBACK_API_URL;
+      })
+      .catch(() => FALLBACK_API_URL);
+  }
+  return apiUrlPromise;
+}
 
 export async function login(
   username: string,
   password: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const res = await fetch(`${API_URL}/auth/login`, {
+  const res = await fetch(`${await loadApiUrl()}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -18,14 +39,14 @@ export async function login(
 }
 
 export async function logout(): Promise<void> {
-  await fetch(`${API_URL}/auth/logout`, {
+  await fetch(`${await loadApiUrl()}/auth/logout`, {
     method: "POST",
     credentials: "include",
   });
 }
 
 export async function checkSession(): Promise<boolean> {
-  const res = await fetch(`${API_URL}/auth/session`, {
+  const res = await fetch(`${await loadApiUrl()}/auth/session`, {
     credentials: "include",
   });
   return res.ok;
@@ -43,7 +64,9 @@ export interface Perp {
 }
 
 export async function fetchPerps(): Promise<Perp[]> {
-  const res = await fetch(`${API_URL}/perps`, { credentials: "include" });
+  const res = await fetch(`${await loadApiUrl()}/perps`, {
+    credentials: "include",
+  });
   if (!res.ok) {
     throw new Error("Failed to load markets");
   }
@@ -60,7 +83,9 @@ export interface PerpStats {
 }
 
 export async function fetchPerpStats(): Promise<PerpStats[]> {
-  const res = await fetch(`${API_URL}/perps/stats`, { credentials: "include" });
+  const res = await fetch(`${await loadApiUrl()}/perps/stats`, {
+    credentials: "include",
+  });
   if (!res.ok) {
     throw new Error("Failed to load market stats");
   }
@@ -72,12 +97,15 @@ export async function updatePerpConfig(
   symbol: string,
   patch: Partial<Omit<Perp, "symbol">>,
 ): Promise<Perp> {
-  const res = await fetch(`${API_URL}/perps/${encodeURIComponent(symbol)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify(patch),
-  });
+  const res = await fetch(
+    `${await loadApiUrl()}/perps/${encodeURIComponent(symbol)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(patch),
+    },
+  );
   if (!res.ok) {
     throw new Error("Failed to update market");
   }
@@ -123,7 +151,7 @@ export async function fetchMarketData(
 ): Promise<MarketDataHistory> {
   const params = historyParams(query);
   const res = await fetch(
-    `${API_URL}/perps/${encodeURIComponent(symbol)}/market-data${
+    `${await loadApiUrl()}/perps/${encodeURIComponent(symbol)}/market-data${
       params ? `?${params}` : ""
     }`,
     { credentials: "include" },
@@ -146,7 +174,7 @@ export interface OrderBook {
 
 export async function fetchOrderBook(symbol: string): Promise<OrderBook> {
   const res = await fetch(
-    `${API_URL}/perps/${encodeURIComponent(symbol)}/orderbook`,
+    `${await loadApiUrl()}/perps/${encodeURIComponent(symbol)}/orderbook`,
     { credentials: "include" },
   );
   if (!res.ok) {
@@ -164,7 +192,7 @@ export interface Trade {
 
 export async function fetchRecentTrades(symbol: string): Promise<Trade[]> {
   const res = await fetch(
-    `${API_URL}/perps/${encodeURIComponent(symbol)}/trades`,
+    `${await loadApiUrl()}/perps/${encodeURIComponent(symbol)}/trades`,
     { credentials: "include" },
   );
   if (!res.ok) {
@@ -189,7 +217,9 @@ export interface Wallet {
 }
 
 export async function fetchWallets(): Promise<Wallet[]> {
-  const res = await fetch(`${API_URL}/wallets`, { credentials: "include" });
+  const res = await fetch(`${await loadApiUrl()}/wallets`, {
+    credentials: "include",
+  });
   if (!res.ok) {
     throw new Error("Failed to load wallets");
   }
@@ -202,7 +232,7 @@ export async function fetchSelectableWallets(
   sizeUsd: number,
 ): Promise<Wallet[]> {
   const res = await fetch(
-    `${API_URL}/wallets/selectable?symbol=${encodeURIComponent(
+    `${await loadApiUrl()}/wallets/selectable?symbol=${encodeURIComponent(
       symbol,
     )}&sizeUsd=${encodeURIComponent(sizeUsd)}`,
     { credentials: "include" },
@@ -221,7 +251,7 @@ export type CreateWalletInput =
 export async function createWallet(
   input: CreateWalletInput,
 ): Promise<{ ok: true; wallet: Wallet } | { ok: false; error: string }> {
-  const res = await fetch(`${API_URL}/wallets`, {
+  const res = await fetch(`${await loadApiUrl()}/wallets`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -237,10 +267,13 @@ export async function createWallet(
 export async function deleteWallet(
   id: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const res = await fetch(`${API_URL}/wallets/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-    credentials: "include",
-  });
+  const res = await fetch(
+    `${await loadApiUrl()}/wallets/${encodeURIComponent(id)}`,
+    {
+      method: "DELETE",
+      credentials: "include",
+    },
+  );
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     return { ok: false, error: body?.error ?? "Failed to delete wallet" };
@@ -249,10 +282,7 @@ export async function deleteWallet(
 }
 
 export type TradingSessionStatus =
-  | "active"
-  | "soft_closing"
-  | "hard_closing"
-  | "closed";
+  "active" | "soft_closing" | "hard_closing" | "closed";
 
 export interface TradingSession {
   id: string;
@@ -271,7 +301,7 @@ export async function fetchTradingSessions(
   symbol: string,
 ): Promise<TradingSession[]> {
   const res = await fetch(
-    `${API_URL}/perps/${encodeURIComponent(symbol)}/trading-sessions`,
+    `${await loadApiUrl()}/perps/${encodeURIComponent(symbol)}/trading-sessions`,
     { credentials: "include" },
   );
   if (!res.ok) {
@@ -282,7 +312,7 @@ export async function fetchTradingSessions(
 }
 
 export async function fetchAllTradingSessions(): Promise<TradingSession[]> {
-  const res = await fetch(`${API_URL}/trading-sessions`, {
+  const res = await fetch(`${await loadApiUrl()}/trading-sessions`, {
     credentials: "include",
   });
   if (!res.ok) {
@@ -303,9 +333,11 @@ export interface CreateTradingSessionInput {
 export async function createTradingSession(
   symbol: string,
   input: CreateTradingSessionInput,
-): Promise<{ ok: true; session: TradingSession } | { ok: false; error: string }> {
+): Promise<
+  { ok: true; session: TradingSession } | { ok: false; error: string }
+> {
   const res = await fetch(
-    `${API_URL}/perps/${encodeURIComponent(symbol)}/trading-sessions`,
+    `${await loadApiUrl()}/perps/${encodeURIComponent(symbol)}/trading-sessions`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -327,9 +359,11 @@ async function postTradingSessionAction(
   id: string,
   action: "attach-wallet" | "detach-wallet" | "soft-close" | "hard-close",
   body?: unknown,
-): Promise<{ ok: true; session: TradingSession } | { ok: false; error: string }> {
+): Promise<
+  { ok: true; session: TradingSession } | { ok: false; error: string }
+> {
   const res = await fetch(
-    `${API_URL}/trading-sessions/${encodeURIComponent(id)}/${action}`,
+    `${await loadApiUrl()}/trading-sessions/${encodeURIComponent(id)}/${action}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -339,7 +373,10 @@ async function postTradingSessionAction(
   );
   if (!res.ok) {
     const resBody = await res.json().catch(() => null);
-    return { ok: false, error: resBody?.error ?? `Failed to ${action} session` };
+    return {
+      ok: false,
+      error: resBody?.error ?? `Failed to ${action} session`,
+    };
   }
   return { ok: true, session: await res.json() };
 }
@@ -370,7 +407,9 @@ export interface Position {
 }
 
 export async function fetchPositions(): Promise<Position[]> {
-  const res = await fetch(`${API_URL}/positions`, { credentials: "include" });
+  const res = await fetch(`${await loadApiUrl()}/positions`, {
+    credentials: "include",
+  });
   if (!res.ok) {
     throw new Error("Failed to load positions");
   }
@@ -398,7 +437,7 @@ export async function fetchDecisions(
   if (filter.symbol) params.set("symbol", filter.symbol);
   if (filter.sessionId) params.set("sessionId", filter.sessionId);
   const query = params.toString() ? `?${params.toString()}` : "";
-  const res = await fetch(`${API_URL}/decisions${query}`, {
+  const res = await fetch(`${await loadApiUrl()}/decisions${query}`, {
     credentials: "include",
   });
   if (!res.ok) {
@@ -422,9 +461,12 @@ export async function fetchFundingPayments(
   query: HistoryQuery = {},
 ): Promise<FundingPayment[]> {
   const params = historyParams(query);
-  const res = await fetch(`${API_URL}/funding${params ? `?${params}` : ""}`, {
-    credentials: "include",
-  });
+  const res = await fetch(
+    `${await loadApiUrl()}/funding${params ? `?${params}` : ""}`,
+    {
+      credentials: "include",
+    },
+  );
   if (!res.ok) {
     throw new Error("Failed to load funding payments");
   }
@@ -451,7 +493,7 @@ export async function fetchTradeHistory(
   if (filter.symbol) params.set("symbol", filter.symbol);
   if (filter.sessionId) params.set("sessionId", filter.sessionId);
   const query = params.toString() ? `?${params.toString()}` : "";
-  const res = await fetch(`${API_URL}/trades/history${query}`, {
+  const res = await fetch(`${await loadApiUrl()}/trades/history${query}`, {
     credentials: "include",
   });
   if (!res.ok) {
@@ -469,7 +511,7 @@ export interface PerpHealth {
 }
 
 export async function fetchPerpHealth(): Promise<PerpHealth[]> {
-  const res = await fetch(`${API_URL}/perp-health`, {
+  const res = await fetch(`${await loadApiUrl()}/perp-health`, {
     credentials: "include",
   });
   if (!res.ok) {
@@ -488,7 +530,7 @@ export interface EngineModeStatus {
 }
 
 export async function fetchEngineMode(): Promise<EngineModeStatus> {
-  const res = await fetch(`${API_URL}/engine-mode`, {
+  const res = await fetch(`${await loadApiUrl()}/engine-mode`, {
     credentials: "include",
   });
   if (!res.ok) {
@@ -500,7 +542,7 @@ export async function fetchEngineMode(): Promise<EngineModeStatus> {
 export async function setEngineMode(
   mode: EngineMode,
 ): Promise<{ ok: true; mode: EngineMode } | { ok: false; error: string }> {
-  const res = await fetch(`${API_URL}/engine-mode`, {
+  const res = await fetch(`${await loadApiUrl()}/engine-mode`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -524,7 +566,7 @@ export interface DecisionMakerStatus {
 export async function fetchDecisionMakerStatuses(): Promise<
   DecisionMakerStatus[]
 > {
-  const res = await fetch(`${API_URL}/decision-makers/status`, {
+  const res = await fetch(`${await loadApiUrl()}/decision-makers/status`, {
     credentials: "include",
   });
   if (!res.ok) {

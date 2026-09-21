@@ -16,7 +16,7 @@ A dashboard lets you turn markets on/off, tune how often and how aggressively ea
 
 ## What it does
 
-- **Tracks markets.** For every Hyperliquid PERP you enable sampling on, Jeeva continuously records price, open interest, volume, and spread.
+- **Tracks markets.** For every Hyperliquid PERP you enable sampling on, Jeeva continuously records price, open interest, volume, and spread. Samples older than the market-data TTL (7 days by default, `MARKET_DATA_TTL_DAYS`) are pruned automatically, so history doesn't grow unbounded.
 - **Makes trading decisions.** For every PERP you enable trading on, Jeeva periodically builds a summary of recent market conditions and asks a **DecisionMaker** for a target direction: `long`, `short`, or `flat`.
 - **Executes the decision.** If the target direction differs from the current position, Jeeva closes/opens the position accordingly. Nothing happens if the target direction is unchanged (no re-buying, no pyramiding).
 - **Trades safely by default.** New markets and a fresh deployment always start in **mock** mode against a simulated wallet. Real Hyperliquid orders only happen once you explicitly flip a market-wide switch to **live** *and* the engine has real wallet credentials configured.
@@ -62,7 +62,7 @@ flowchart LR
     SUP -->|decision log, health| PG
 ```
 
-**frontend/** — the operator dashboard (Next.js). Lists markets, shows live price/positions/health, and is where you enable trading/sampling per PERP, pick a PERP's decision maker, and flip the engine between mock and live execution.
+**frontend/** — the operator dashboard (Next.js). Lists markets, shows live price/positions/health, and is where you enable trading/sampling per PERP, pick a PERP's decision maker, and flip the engine between mock and live execution. Its API URL is resolved at runtime from the container's `API_URL` (served to the browser from `/runtime-config`), so one built image can be reused across instances pointing at different API backends.
 
 **api/** — a small Express service that mediates between the dashboard and the shared state: PERP configuration and engine mode live in MongoDB; market data, decisions, positions, and funding history live in TimescaleDB (used as plain Postgres).
 
@@ -125,7 +125,8 @@ Execution mode is engine-wide (not per PERP) and stored in MongoDB, so switching
 ## Safety mechanisms
 
 - Fresh deployments and fresh PERPs default to mock execution and the Fake decision maker — nothing trades for real until you explicitly opt in.
-- Enabling trading on a PERP automatically enables sampling for it too (you can't trade blind); disabling sampling automatically disables trading.
+- Opening a trading session for a market automatically enables sampling for it too (you can't trade blind); disabling sampling automatically disables trading.
+- Deployments can enforce a floor on how fast markets may be sampled (`MIN_SAMPLING_FREQUENCY_SECONDS`) and a ceiling on how much history is kept (`MARKET_DATA_TTL_DAYS`).
 - 5 consecutive decision-cycle failures auto-flattens that PERP's position.
 - Every decision cycle — successful or failed — is written to an audit log visible in the dashboard.
 
@@ -146,6 +147,10 @@ To use real Jev decisions or real Hyperliquid execution, set the corresponding e
 |---|---|
 | `TYPESAFE_API_KEY` (+ optional `TYPESAFE_BASE_URL`) | TypeSafe Jev decision maker |
 | `HYPERLIQUID_PRIVATE_KEY` (+ optional `HYPERLIQUID_TESTNET`) | Live execution |
+| `API_URL` | Dashboard → API base URL, read at container start (multi-instance deploys) |
+| `CORS_ORIGIN` | Origin(s) allowed to call the API, comma-separated for several dashboards |
+| `MARKET_DATA_TTL_DAYS` | Sampled-data retention, in days (default `7`) |
+| `MIN_SAMPLING_FREQUENCY_SECONDS` | Lowest sampling frequency the API will accept, in seconds (default `1`) |
 
 See [`CONTEXT.md`](./CONTEXT.md) for the project's internal glossary and naming conventions.
 

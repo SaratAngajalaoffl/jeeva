@@ -19,7 +19,10 @@ interface EngineModeDoc {
 
 const client = new MongoClient(MONGO_URL);
 await client.connect();
-const db: Db = client.db();
+// Its own database: these tests wipe `perpConfigs` and `engineConfig`
+// wholesale in setup while other suites manage the same collections,
+// and the suites run in parallel.
+const db: Db = client.db("jeeva_test_engine_mode");
 const engineConfig = () => db.collection<EngineModeDoc>("engineConfig");
 const perpConfigs = () => db.collection("perpConfigs");
 const pgPool = new Pool({ connectionString: DATABASE_URL });

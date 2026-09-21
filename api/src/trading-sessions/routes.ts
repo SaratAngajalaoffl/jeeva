@@ -4,6 +4,7 @@ import type { Pool } from "pg";
 import { requireAuth } from "../auth/requireAuth.js";
 import type { HyperliquidClient } from "../hyperliquid/client.js";
 import { isValidFrequencySeconds } from "../perps/frequency.js";
+import { updatePerpConfig } from "../perps/repository.js";
 import { isValidLeverage, isValidPositionSizeUsd } from "../perps/sizing.js";
 import { isWalletEligible } from "../wallets/eligibility.js";
 import {
@@ -96,6 +97,10 @@ export function createTradingSessionsRouter(
         positionSizeUsd,
         walletId: resolvedWalletId,
       });
+      // A market can't be traded blind: enabling trading for it (by
+      // opening a session) must also turn sampling on, so price history
+      // is being collected for every market with an active session.
+      await updatePerpConfig(db, symbol, { samplingEnabled: true });
       res.status(201).json(session);
     } catch (error) {
       if (error instanceof WalletInUseError) {

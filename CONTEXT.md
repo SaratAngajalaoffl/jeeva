@@ -5,7 +5,7 @@ An AI-assisted trading application that uses a DecisionMaker backed by Jev (a Ty
 ## Language
 
 **PERP**:
-A perpetual futures market on Hyperliquid (e.g. BTC-PERP). Each PERP has two independent switches: **trading enabled** (whether the decision loop consults its configured DecisionMaker and places/mock-places orders for it) and **sampling enabled** (whether the market-data loop records its price/OI/volume/spread history). A PERP can be sampled without trading, or (less usefully) traded without a sampling history. A PERP's **decision maker** (see DecisionMaker) is a third, independent per-PERP setting, chosen when trading is enabled.
+A perpetual futures market on Hyperliquid (e.g. BTC-PERP). Each PERP has two independent switches: **trading enabled** (whether the decision loop consults its configured DecisionMaker and places/mock-places orders for it) and **sampling enabled** (whether the market-data loop records its price/OI/volume/spread history). Sampling runs independently of trading, so a PERP can be sampled without trading; the reverse is prevented — opening a trading session for a market automatically enables sampling for it, so no market is ever traded blind. A PERP's **decision maker** (see DecisionMaker) is a third, independent per-PERP setting, chosen when trading is enabled.
 
 **Jev**:
 The TypeSafe System One model that answers structured questions (Choice/Score/Noul) against a text `state`, used here to decide buy/hold/sell. Not a chat/agent loop — a single evaluation call. Reachable through more than one DecisionMaker backend (see DecisionMaker).
