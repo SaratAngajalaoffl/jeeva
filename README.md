@@ -14,6 +14,8 @@ A modular trading engine, initially built to test trading with Jev. But turned o
 
 A dashboard lets you turn markets on/off, tune how often and how aggressively each one trades, choose which decision engine drives it, and watch the resulting decisions, positions, and P&L in real time.
 
+![Dashboard overview](./docs/assets/dashboard-overview.png)
+
 ## What it does
 
 - **Tracks markets.** For every Hyperliquid PERP you enable sampling on, Jeeva continuously records price, open interest, volume, and spread. Samples older than the market-data TTL (7 days by default, `MARKET_DATA_TTL_DAYS`) are pruned automatically, so history doesn't grow unbounded.
