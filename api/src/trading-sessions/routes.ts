@@ -8,6 +8,10 @@ import { updatePerpConfig } from "../perps/repository.js";
 import { isValidLeverage, isValidPositionSizeUsd } from "../perps/sizing.js";
 import { isWalletEligible } from "../wallets/eligibility.js";
 import {
+  isValidHistoryFormat,
+  isValidHistoryWindowSamples,
+} from "./historyWindow.js";
+import {
   createTradingSession,
   getTradingSession,
   hardCloseTradingSession,
@@ -54,6 +58,8 @@ export function createTradingSessionsRouter(
       decisionFrequencySeconds,
       leverage,
       positionSizeUsd,
+      historyWindowSamples,
+      historyFormat,
       walletId,
     } = req.body ?? {};
 
@@ -62,6 +68,9 @@ export function createTradingSessionsRouter(
       !isValidFrequencySeconds(decisionFrequencySeconds) ||
       !isValidLeverage(leverage) ||
       !isValidPositionSizeUsd(positionSizeUsd) ||
+      (historyWindowSamples !== undefined &&
+        !isValidHistoryWindowSamples(historyWindowSamples)) ||
+      (historyFormat !== undefined && !isValidHistoryFormat(historyFormat)) ||
       (walletId !== undefined &&
         walletId !== null &&
         typeof walletId !== "string")
@@ -95,6 +104,8 @@ export function createTradingSessionsRouter(
         decisionFrequencySeconds,
         leverage,
         positionSizeUsd,
+        historyWindowSamples,
+        historyFormat,
         walletId: resolvedWalletId,
       });
       // A market can't be traded blind: enabling trading for it (by
@@ -127,6 +138,8 @@ export function createTradingSessionsRouter(
       decisionFrequencySeconds,
       leverage,
       positionSizeUsd,
+      historyWindowSamples,
+      historyFormat,
     } = req.body ?? {};
 
     if (
@@ -135,7 +148,10 @@ export function createTradingSessionsRouter(
         !isValidFrequencySeconds(decisionFrequencySeconds)) ||
       (leverage !== undefined && !isValidLeverage(leverage)) ||
       (positionSizeUsd !== undefined &&
-        !isValidPositionSizeUsd(positionSizeUsd))
+        !isValidPositionSizeUsd(positionSizeUsd)) ||
+      (historyWindowSamples !== undefined &&
+        !isValidHistoryWindowSamples(historyWindowSamples)) ||
+      (historyFormat !== undefined && !isValidHistoryFormat(historyFormat))
     ) {
       res.status(400).json({ error: "invalid request" });
       return;
@@ -146,6 +162,8 @@ export function createTradingSessionsRouter(
       decisionFrequencySeconds,
       leverage,
       positionSizeUsd,
+      historyWindowSamples,
+      historyFormat,
     });
     if (!session) {
       res.status(404).json({ error: "trading session not found" });

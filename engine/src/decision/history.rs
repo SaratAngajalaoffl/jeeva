@@ -20,6 +20,46 @@ impl fmt::Display for HistoryError {
 
 impl std::error::Error for HistoryError {}
 
+/// Upper bound on how much price history a session may request, and
+/// therefore on how large the raw series handed to a decision maker can
+/// get. Mirrors the API's `MAX_HISTORY_WINDOW_SAMPLES`, which rejects
+/// out-of-range configs at the edge; this is the engine-side backstop.
+pub const MAX_HISTORY_WINDOW_SAMPLES: u32 = 1000;
+
+/// How a session's history window is rendered into the decision
+/// maker's context. Mirrors `trading_sessions.history_format`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryFormat {
+    /// Per-field min/max/average across the window.
+    Summary,
+    /// Every raw sample in the window, oldest first.
+    Raw,
+}
+
+impl HistoryFormat {
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "summary" => Some(Self::Summary),
+            "raw" => Some(Self::Raw),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Summary => "summary",
+            Self::Raw => "raw",
+        }
+    }
+}
+
+/// Clamps a configured window into the range the engine will actually
+/// read, so a hand-edited or out-of-range row can't ask for an unbounded
+/// history. Mirrors `trading_sessions.history_window_samples`'s CHECK.
+pub fn effective_history_window(samples: u32) -> u32 {
+    samples.clamp(1, MAX_HISTORY_WINDOW_SAMPLES)
+}
+
 /// Reads recent market-data history for a PERP to build Jev's decision
 /// context. The real implementation reads the TimescaleDB hypertable
 /// the sampling loop (#8) writes to; tests use a fake implementation.
@@ -142,11 +182,38 @@ fn funding_summary(funding: Option<&FundingRecord>) -> String {
     }
 }
 
-/// Builds Jev's `state` context: a summary of the whole market-data
-/// window (not just the latest sample) plus the current position
-/// status and the most recent real funding rate, so the decision
-/// source has as much signal as possible without being handed a raw
-/// dump of every row. Pure so it's directly testable.
+/// Percentage change from the first sample in the window to the latest.
+fn price_change_pct(samples: &[MarketDataSample]) -> f64 {
+    let first_price = samples.first().unwrap().price;
+    if first_price == 0.0 {
+        return 0.0;
+    }
+    let latest = samples.last().unwrap().price;
+    (latest - first_price) / first_price * 100.0
+}
+
+/// Builds Jev's `state` context in whichever form the session is
+/// configured for. Pure so it's directly testable; `Summary` is the
+/// original min/max/average rendering, `Raw` hands over the whole
+/// configured window as individual data points.
+pub fn build_context(
+    symbol: &str,
+    samples: &[MarketDataSample],
+    position: Option<&OpenPosition>,
+    funding: Option<&FundingRecord>,
+    format: HistoryFormat,
+) -> String {
+    match format {
+        HistoryFormat::Summary => build_context_summary(symbol, samples, position, funding),
+        HistoryFormat::Raw => build_context_series(symbol, samples, position, funding),
+    }
+}
+
+/// Renders the whole window as one line per field: min, max and average
+/// across every sample (not just the latest), plus the current position
+/// status and the most recent real funding rate. The compact default —
+/// as much signal as possible without handing over a raw dump of every
+/// row (see `build_context_series` for that).
 pub fn build_context_summary(
     symbol: &str,
     samples: &[MarketDataSample],
@@ -157,12 +224,7 @@ pub fn build_context_summary(
         return format!("{symbol}: no recent market data available");
     };
 
-    let first_price = samples.first().unwrap().price;
-    let price_change_pct = if first_price != 0.0 {
-        (latest.price - first_price) / first_price * 100.0
-    } else {
-        0.0
-    };
+    let price_change_pct = price_change_pct(samples);
 
     let price_stats = field_stats(samples.iter().map(|s| s.price));
     let oi_stats = field_stats(samples.iter().map(|s| s.open_interest));
@@ -194,6 +256,44 @@ pub fn build_context_summary(
         spread_stats.max,
         spread_stats.avg,
         latest.mid_price,
+        position_summary(position, latest.mid_price),
+        funding_summary(funding),
+    )
+}
+
+fn series_point(sample: &MarketDataSample) -> String {
+    format!(
+        "price={:.2},mid_price={:.2},open_interest={:.2},volume={:.2},spread={:.4}",
+        sample.price, sample.mid_price, sample.open_interest, sample.volume, sample.spread,
+    )
+}
+
+/// Renders every sample in the window as a raw data point, oldest
+/// first. Averaging the window away (see `build_context_summary`) is
+/// cheap but discards shape — trend, spikes, order of moves — that the
+/// decision maker may be able to reason over. Size is bounded by the
+/// session's configured window (`MAX_HISTORY_WINDOW_SAMPLES`).
+pub fn build_context_series(
+    symbol: &str,
+    samples: &[MarketDataSample],
+    position: Option<&OpenPosition>,
+    funding: Option<&FundingRecord>,
+) -> String {
+    let Some(latest) = samples.last() else {
+        return format!("{symbol}: no recent market data available");
+    };
+
+    let price_change_pct = price_change_pct(samples);
+    let series = samples
+        .iter()
+        .map(series_point)
+        .collect::<Vec<_>>()
+        .join("; ");
+
+    format!(
+        "{symbol}: price_history=raw (oldest first, {} samples, change {:+.2}%): [{series}]; {}; {}",
+        samples.len(),
+        price_change_pct,
         position_summary(position, latest.mid_price),
         funding_summary(funding),
     )
@@ -292,5 +392,75 @@ mod tests {
         };
         let with_funding = build_context_summary("BTC", &[sample(100.0)], None, Some(&record));
         assert!(with_funding.contains("funding_rate=0.000100"));
+    }
+
+    #[test]
+    fn raw_context_includes_every_sample_oldest_first() {
+        let series = build_context_series(
+            "BTC",
+            &[sample(90.0), sample(100.0), sample(110.0)],
+            None,
+            None,
+        );
+        assert!(series.contains("price_history=raw (oldest first, 3 samples, change +22.22%)"));
+        let first = series.find("price=90.00").unwrap();
+        let second = series.find("price=100.00").unwrap();
+        let third = series.find("price=110.00").unwrap();
+        assert!(first < second && second < third);
+    }
+
+    #[test]
+    fn raw_context_keeps_position_and_funding() {
+        let position = open_position(Direction::Long, 90.0, 42);
+        let record = FundingRecord {
+            rate: 0.0001,
+            time: Utc::now(),
+        };
+        let series = build_context_series("BTC", &[sample(100.0)], Some(&position), Some(&record));
+        assert!(series.contains("position=long"));
+        assert!(series.contains("unrealized_pnl_usd=+113.89"));
+        assert!(series.contains("funding_rate=0.000100"));
+    }
+
+    #[test]
+    fn raw_context_is_explicit_about_no_data() {
+        assert_eq!(
+            build_context_series("BTC", &[], None, None),
+            "BTC: no recent market data available"
+        );
+    }
+
+    #[test]
+    fn build_context_dispatches_on_the_configured_format() {
+        let samples = [sample(90.0), sample(110.0)];
+        assert_eq!(
+            build_context("BTC", &samples, None, None, HistoryFormat::Summary),
+            build_context_summary("BTC", &samples, None, None)
+        );
+        assert_eq!(
+            build_context("BTC", &samples, None, None, HistoryFormat::Raw),
+            build_context_series("BTC", &samples, None, None)
+        );
+    }
+
+    #[test]
+    fn history_format_round_trips_its_database_spelling() {
+        assert_eq!(
+            HistoryFormat::from_db("summary"),
+            Some(HistoryFormat::Summary)
+        );
+        assert_eq!(HistoryFormat::from_db("raw"), Some(HistoryFormat::Raw));
+        assert_eq!(HistoryFormat::from_db("everything"), None);
+        assert_eq!(HistoryFormat::Summary.as_str(), "summary");
+        assert_eq!(HistoryFormat::Raw.as_str(), "raw");
+    }
+
+    #[test]
+    fn effective_history_window_clamps_to_the_readable_range() {
+        assert_eq!(effective_history_window(0), 1);
+        assert_eq!(effective_history_window(1), 1);
+        assert_eq!(effective_history_window(250), 250);
+        assert_eq!(effective_history_window(MAX_HISTORY_WINDOW_SAMPLES), 1000);
+        assert_eq!(effective_history_window(u32::MAX), 1000);
     }
 }

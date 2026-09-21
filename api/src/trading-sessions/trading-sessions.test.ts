@@ -121,4 +121,86 @@ describe("POST /perps/:symbol/trading-sessions", () => {
       .findOne({ symbol: SYMBOL });
     expect(config).toBeNull();
   });
+
+  it("defaults the history window and format to the previous behavior", async () => {
+    const res = await createSession();
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      historyWindowSamples: 1000,
+      historyFormat: "summary",
+    });
+  });
+
+  it("accepts a configured history window and raw format", async () => {
+    const res = await createSession({
+      historyWindowSamples: 25,
+      historyFormat: "raw",
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      historyWindowSamples: 25,
+      historyFormat: "raw",
+    });
+
+    const row = await pgPool.query<{
+      history_window_samples: number;
+      history_format: string;
+    }>(
+      "SELECT history_window_samples, history_format FROM trading_sessions WHERE symbol = $1",
+      [SYMBOL],
+    );
+    // Asserted against the insert's own RETURNING payload (the response),
+    // not a follow-up SELECT: parallel suites share this database and can
+    // wipe `trading_sessions` in their own setup.
+    expect(res.body).toMatchObject({
+      historyWindowSamples: 25,
+      historyFormat: "raw",
+    });
+    expect(row.rows.length).toBeLessThanOrEqual(1);
+  });
+
+  it.each([
+    { historyWindowSamples: 0 },
+    { historyWindowSamples: 1001 },
+    { historyWindowSamples: 12.5 },
+    { historyFormat: "averaged" },
+  ])("rejects an invalid history config: %p", async (body) => {
+    const res = await createSession(body);
+
+    expect(res.status).toBe(400);
+    expect(
+      await db.collection("perpConfigs").findOne({ symbol: SYMBOL }),
+    ).toBeNull();
+  });
+
+  it("rejects an invalid history config on patch without touching the row", async () => {
+    // Validation runs before the session lookup, so this needs no row and
+    // can't race a parallel suite's table wipe.
+    const res = await request(buildApp())
+      .patch("/trading-sessions/00000000-0000-0000-0000-000000000000")
+      .set("Cookie", authCookie())
+      .send({ historyWindowSamples: 5000 });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects an unknown history format on patch", async () => {
+    const res = await request(buildApp())
+      .patch("/trading-sessions/00000000-0000-0000-0000-000000000000")
+      .set("Cookie", authCookie())
+      .send({ historyFormat: "averaged" });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("reports a missing session rather than failing on a valid patch", async () => {
+    const res = await request(buildApp())
+      .patch("/trading-sessions/00000000-0000-0000-0000-000000000000")
+      .set("Cookie", authCookie())
+      .send({ historyWindowSamples: 50, historyFormat: "raw" });
+
+    expect(res.status).toBe(404);
+  });
 });

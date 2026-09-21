@@ -35,3 +35,11 @@ A PERP's current position, one of `flat | long | short`. Driven purely by the la
 **Mock Wallet**:
 A persistent virtual account used in mock mode, configured once with an initial balance when created. Shared across all trading-enabled PERPs (one margin pool), and simply accumulates decision/position/P&L history over time — there is no "session" start/stop concept; enabling trading on a PERP just adds it to the ongoing history.
 _Avoid_: session, mock session — trading is enabled/disabled per PERP, not started/stopped as a session.
+
+**History Window**:
+How much sampled market data a Trading Session reads and hands to its DecisionMaker each cycle, as a number of most-recent samples (1–1000, `trading_sessions.history_window_samples`). Per-session, not per-PERP, so two sessions on the same PERP can reason over different amounts of history.
+_Avoid_: lookback, timeframe — this counts samples, not wall-clock time.
+
+**History Format**:
+How that History Window is rendered into the DecisionMaker's `state`: `summary` (per-field min/max/average across the window — the compact default) or `raw` (every sample as its own data point, oldest first). A property of the session (`trading_sessions.history_format`), independent of the window's size, so any window can be sent either way. A raw window costs roughly 40 tokens per sample.
+_Avoid_: "full history" — the window is always bounded; `raw` changes the rendering, not the amount read.

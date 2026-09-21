@@ -11,7 +11,7 @@ use super::decision_maker::DecisionMaker;
 use super::decision_maker_registry::DecisionMakerRegistry;
 use super::execution::ExecutionAdapter;
 use super::health::FailureTracker;
-use super::history::{build_context_summary, MarketDataHistoryReader};
+use super::history::{build_context, effective_history_window, MarketDataHistoryReader};
 use super::log::{DecisionLogEntry, DecisionLogWriter};
 use super::model::{decide_action, JevDecision, Probabilities, TargetDirection};
 use crate::funding::FundingHistoryReader;
@@ -20,7 +20,6 @@ use crate::scheduler::{delay_until_next_boundary, reconcile};
 use crate::session::{SessionStore, TradingSessionConfig, TradingSessionStatus};
 use crate::wallets::WalletRegistry;
 
-const HISTORY_WINDOW: u32 = 1000;
 const AUTO_FLATTEN_THRESHOLD: u32 = 5;
 
 /// Default minimum confidence: `0.0`, i.e. every decision is actionable.
@@ -103,11 +102,13 @@ fn flat_decision() -> JevDecision {
 }
 
 /// Runs a single decision cycle for one trading session: builds context
-/// from recent market history, asks its configured `DecisionMaker` for
-/// a Target Direction (or, when the session is closing, skips straight
-/// to a forced Flat target), compares it to the current Position State,
-/// applies the resulting action, and always writes a decision-log row.
-/// Free of any scheduling concerns, so it's directly testable.
+/// from recent market history (reading this session's configured window
+/// and rendering it in this session's configured format), asks its
+/// configured `DecisionMaker` for a Target Direction (or, when the
+/// session is closing, skips straight to a forced Flat target), compares
+/// it to the current Position State, applies the resulting action, and
+/// always writes a decision-log row. Free of any scheduling concerns,
+/// so it's directly testable.
 ///
 /// `min_confidence_to_shift` is the engine-wide floor for acting on a
 /// decision (see `MIN_CONFIDENCE_TO_SHIFT`): a decision whose winning
@@ -128,7 +129,13 @@ pub async fn run_decision_cycle(
     health: &dyn FailureTracker,
     lifecycle: &dyn SessionLifecycle,
 ) {
-    let samples = match history.recent_samples(symbol, HISTORY_WINDOW).await {
+    let samples = match history
+        .recent_samples(
+            symbol,
+            effective_history_window(config.history_window_samples),
+        )
+        .await
+    {
         Ok(samples) => samples,
         Err(error) => {
             tracing::error!(symbol, session_id, %error, "failed to read market data history");
@@ -147,7 +154,7 @@ pub async fn run_decision_cycle(
     };
 
     if samples.is_empty() {
-        let context_summary = build_context_summary(symbol, &samples, None, None);
+        let context_summary = build_context(symbol, &samples, None, None, config.history_format);
         tracing::warn!(
             symbol,
             session_id,
@@ -195,7 +202,8 @@ pub async fn run_decision_cycle(
         Ok(position) => position,
         Err(error) => {
             tracing::error!(symbol, session_id, %error, "failed to read current position");
-            let context_summary = build_context_summary(symbol, &samples, None, None);
+            let context_summary =
+                build_context(symbol, &samples, None, None, config.history_format);
             handle_cycle_failure(
                 symbol,
                 &error.to_string(),
@@ -219,11 +227,12 @@ pub async fn run_decision_cycle(
         }
     };
 
-    let context_summary = build_context_summary(
+    let context_summary = build_context(
         symbol,
         &samples,
         current_position.as_ref(),
         latest_funding.as_ref(),
+        config.history_format,
     );
 
     let is_soft_closing = config.status == TradingSessionStatus::SoftClosing;
@@ -610,7 +619,7 @@ mod tests {
     use super::super::decision_maker::DecisionError;
     use super::super::execution::{ExecutionError, OpenPosition};
     use super::super::health::InMemoryFailureTracker;
-    use super::super::history::HistoryError;
+    use super::super::history::{HistoryError, HistoryFormat};
     use super::super::log::LogError;
     use super::super::model::{Direction, JevDecision, Probabilities, TargetDirection};
     use super::*;
@@ -626,6 +635,8 @@ mod tests {
             decision_frequency_seconds: frequency,
             leverage: 1.0,
             position_size_usd: 100.0,
+            history_window_samples: 250,
+            history_format: HistoryFormat::Summary,
             wallet_id: Some("test-wallet".to_string()),
             status,
         }

@@ -30,6 +30,7 @@ import {
   type ClosedTrade,
   type DecisionLogEntry,
   type DecisionMaker,
+  type HistoryFormat,
   type FundingPayment,
   type MarketDataPoint,
   type OrderBook,
@@ -833,6 +834,8 @@ function NewSessionForm({
   const [decisionFrequencySeconds, setDecisionFrequencySeconds] = useState("300");
   const [leverage, setLeverage] = useState("1");
   const [positionSizeUsd, setPositionSizeUsd] = useState("100");
+  const [historyWindowSamples, setHistoryWindowSamples] = useState("1000");
+  const [historyFormat, setHistoryFormat] = useState<HistoryFormat>("summary");
   const [walletId, setWalletId] = useState("");
   const [wallets, setWallets] = useState<Wallet[] | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -871,13 +874,17 @@ function NewSessionForm({
         const decision = Number(decisionFrequencySeconds);
         const lev = Number(leverage);
         const size = Number(positionSizeUsd);
+        const history = Number(historyWindowSamples);
         if (
           !Number.isFinite(decision) ||
           decision <= 0 ||
           !Number.isFinite(lev) ||
           lev <= 0 ||
           !Number.isFinite(size) ||
-          size <= 0
+          size <= 0 ||
+          !Number.isInteger(history) ||
+          history < 1 ||
+          history > 1000
         ) {
           return;
         }
@@ -888,6 +895,8 @@ function NewSessionForm({
           decisionFrequencySeconds: decision,
           leverage: lev,
           positionSizeUsd: size,
+          historyWindowSamples: history,
+          historyFormat,
           walletId: walletId || null,
         });
         setSubmitting(false);
@@ -941,6 +950,26 @@ function NewSessionForm({
           value={positionSizeUsd}
           onChange={(e) => setPositionSizeUsd(e.target.value)}
         />
+      </label>
+      <label className="flex flex-col gap-1">
+        <Label>Price history window (samples)</Label>
+        <Input
+          type="number"
+          min={1}
+          max={1000}
+          value={historyWindowSamples}
+          onChange={(e) => setHistoryWindowSamples(e.target.value)}
+        />
+      </label>
+      <label className="flex flex-col gap-1">
+        <Label>Price history format</Label>
+        <Select
+          value={historyFormat}
+          onChange={(e) => setHistoryFormat(e.target.value as HistoryFormat)}
+        >
+          <option value="summary">summary (averaged)</option>
+          <option value="raw">raw (every sample)</option>
+        </Select>
       </label>
       <label className="flex flex-col gap-1">
         <Label>Wallet (optional — can attach later)</Label>

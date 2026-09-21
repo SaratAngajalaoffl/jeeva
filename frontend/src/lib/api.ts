@@ -292,6 +292,8 @@ export async function deleteWallet(
 export type TradingSessionStatus =
   "active" | "soft_closing" | "hard_closing" | "closed";
 
+export type HistoryFormat = "summary" | "raw";
+
 export interface TradingSession {
   id: string;
   symbol: string;
@@ -299,6 +301,10 @@ export interface TradingSession {
   decisionFrequencySeconds: number;
   leverage: number;
   positionSizeUsd: number;
+  /** How many recent market-data samples the engine reads for this session's decision context. */
+  historyWindowSamples: number;
+  /** Whether that window reaches the decision maker raw, or averaged into a min/max/avg summary. */
+  historyFormat: HistoryFormat;
   walletId: string | null;
   status: TradingSessionStatus;
   createdAt: string;
@@ -335,6 +341,10 @@ export interface CreateTradingSessionInput {
   decisionFrequencySeconds: number;
   leverage: number;
   positionSizeUsd: number;
+  /** Omit to accept the API default (the maximum window). */
+  historyWindowSamples?: number;
+  /** Omit to accept the API default ("summary"). */
+  historyFormat?: HistoryFormat;
   walletId?: string | null;
 }
 

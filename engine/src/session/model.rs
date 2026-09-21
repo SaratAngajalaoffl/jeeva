@@ -1,4 +1,4 @@
-use crate::decision::DecisionMakerKind;
+use crate::decision::{DecisionMakerKind, HistoryFormat};
 
 /// Mirrors `trading_sessions.status` in Postgres (see
 /// api/migrations/1789848053000_create-trading-sessions.ts).
@@ -37,6 +37,10 @@ pub struct TradingSessionConfig {
     pub decision_frequency_seconds: f64,
     pub leverage: f64,
     pub position_size_usd: f64,
+    /// How many recent market-data samples to read for this session's
+    /// decision context, and in what form (see `HistoryFormat`).
+    pub history_window_samples: u32,
+    pub history_format: HistoryFormat,
     pub wallet_id: Option<String>,
     pub status: TradingSessionStatus,
 }

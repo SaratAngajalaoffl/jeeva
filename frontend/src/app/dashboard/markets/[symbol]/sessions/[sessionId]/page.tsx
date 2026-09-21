@@ -211,6 +211,15 @@ export default function SessionDetailPage() {
             </div>
             <div className="flex flex-col gap-0.5">
               <span className="text-[11px] uppercase tracking-wide text-subtext-0">
+                History window
+              </span>
+              <span className="text-sm font-medium text-text">
+                {session.historyWindowSamples} samples (
+                {session.historyFormat})
+              </span>
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[11px] uppercase tracking-wide text-subtext-0">
                 Wallet
               </span>
               <span className="text-sm font-medium text-text">
