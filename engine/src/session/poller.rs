@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use sqlx::PgPool;
 
-use crate::decision::DecisionMakerKind;
+use crate::decision::{effective_history_window, DecisionMakerKind, HistoryFormat};
 
 use super::model::{TradingSessionConfig, TradingSessionStatus};
 use super::store::SessionStore;
@@ -15,8 +15,11 @@ type SessionRow = (
     f64,
     f64,
     f64,
+    i32,
+    String,
     Option<String>,
     String,
+    bool,
 );
 
 fn row_to_session(row: SessionRow) -> Option<TradingSessionConfig> {
@@ -27,8 +30,11 @@ fn row_to_session(row: SessionRow) -> Option<TradingSessionConfig> {
         decision_frequency_seconds,
         leverage,
         position_size_usd,
+        history_window_samples,
+        history_format,
         wallet_id,
         status,
+        store_decision_payloads,
     ) = row;
 
     let Some(decision_maker) = DecisionMakerKind::from_db(&decision_maker) else {
@@ -39,6 +45,10 @@ fn row_to_session(row: SessionRow) -> Option<TradingSessionConfig> {
         tracing::error!(session_id = %id, status, "unknown trading session status; skipping session");
         return None;
     };
+    let Some(history_format) = HistoryFormat::from_db(&history_format) else {
+        tracing::error!(session_id = %id, history_format, "unknown history format; skipping session");
+        return None;
+    };
 
     Some(TradingSessionConfig {
         id,
@@ -47,8 +57,14 @@ fn row_to_session(row: SessionRow) -> Option<TradingSessionConfig> {
         decision_frequency_seconds,
         leverage,
         position_size_usd,
+        // Clamped rather than rejected: a window outside the readable
+        // range is a config mistake, not a reason to stop trading a
+        // session entirely.
+        history_window_samples: effective_history_window(history_window_samples.max(0) as u32),
+        history_format,
         wallet_id,
         status,
+        store_decision_payloads,
     })
 }
 
@@ -60,7 +76,8 @@ async fn refresh(pool: &PgPool, store: &SessionStore) {
     let rows = match sqlx::query_as::<_, SessionRow>(
         r#"
         SELECT id::text, symbol, decision_maker, decision_frequency_seconds,
-               leverage, position_size_usd, wallet_id::text, status
+               leverage, position_size_usd, history_window_samples,
+               history_format, wallet_id::text, status, store_decision_payloads
         FROM trading_sessions
         WHERE status <> 'closed'
         "#,
@@ -125,8 +142,11 @@ mod tests {
             300.0,
             1.0,
             100.0,
+            250,
+            "summary".to_string(),
             None,
             "active".to_string(),
+            false,
         );
         assert!(row_to_session(row).is_none());
     }
@@ -140,8 +160,29 @@ mod tests {
             300.0,
             1.0,
             100.0,
+            250,
+            "summary".to_string(),
             None,
             "not-a-real-status".to_string(),
+            false,
+        );
+        assert!(row_to_session(row).is_none());
+    }
+
+    #[test]
+    fn row_to_session_rejects_an_unknown_history_format() {
+        let row: SessionRow = (
+            "s1".to_string(),
+            "BTC".to_string(),
+            "random".to_string(),
+            300.0,
+            1.0,
+            100.0,
+            250,
+            "everything".to_string(),
+            None,
+            "active".to_string(),
+            false,
         );
         assert!(row_to_session(row).is_none());
     }
@@ -155,13 +196,40 @@ mod tests {
             30.0,
             5.0,
             250.0,
+            500,
+            "raw".to_string(),
             Some("w1".to_string()),
             "soft_closing".to_string(),
+            true,
         );
         let session = row_to_session(row).unwrap();
         assert_eq!(session.id, "s1");
         assert_eq!(session.decision_maker, DecisionMakerKind::OpenRouter);
         assert_eq!(session.status, TradingSessionStatus::SoftClosing);
+        assert_eq!(session.history_window_samples, 500);
+        assert_eq!(session.history_format, HistoryFormat::Raw);
         assert_eq!(session.wallet_id.as_deref(), Some("w1"));
+        assert!(session.store_decision_payloads);
+    }
+
+    #[test]
+    fn row_to_session_clamps_an_out_of_range_history_window() {
+        let row: SessionRow = (
+            "s1".to_string(),
+            "BTC".to_string(),
+            "random".to_string(),
+            300.0,
+            1.0,
+            100.0,
+            0,
+            "summary".to_string(),
+            None,
+            "active".to_string(),
+            false,
+        );
+        // The column's CHECK constraint makes 0 unreachable in practice;
+        // the engine still degrades to the smallest readable window
+        // rather than refusing to run the session.
+        assert_eq!(row_to_session(row).unwrap().history_window_samples, 1);
     }
 }

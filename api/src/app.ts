@@ -4,12 +4,14 @@ import express, { type Express } from "express";
 import type { Db } from "mongodb";
 import type { Pool } from "pg";
 import { authRouter } from "./auth/authRoutes.js";
+import { createBacktestsRouter } from "./backtests/routes.js";
 import {
   createHyperliquidClient,
   type HyperliquidClient,
 } from "./hyperliquid/client.js";
 import { createDecisionMakersRouter } from "./decisionMakers/routes.js";
 import { createDecisionsRouter } from "./decisions/routes.js";
+import { isDemoMode } from "./engineMode/demoMode.js";
 import { createEngineModeRouter } from "./engineMode/routes.js";
 import { createFundingRouter } from "./funding/routes.js";
 import { createPerpHealthRouter } from "./health/routes.js";
@@ -51,7 +53,7 @@ export function createApp(deps: AppDeps = {}): Express {
   app.use(cookieParser());
 
   app.get("/health", (_req, res) => {
-    res.status(200).json({ status: "ok" });
+    res.status(200).json({ status: "ok", demoMode: isDemoMode() });
   });
 
   app.use("/auth", authRouter);
@@ -79,6 +81,7 @@ export function createApp(deps: AppDeps = {}): Express {
     app.use("/funding", createFundingRouter(deps.pgPool));
     app.use("/perp-health", createPerpHealthRouter(deps.pgPool));
     app.use("/trades", createTradesRouter(deps.pgPool));
+    app.use(createBacktestsRouter(deps.pgPool));
   }
 
   return app;

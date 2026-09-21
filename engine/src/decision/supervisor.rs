@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use tokio::task::JoinHandle;
 use tokio::time::{interval_at, Instant, MissedTickBehavior};
@@ -11,7 +12,7 @@ use super::decision_maker::DecisionMaker;
 use super::decision_maker_registry::DecisionMakerRegistry;
 use super::execution::ExecutionAdapter;
 use super::health::FailureTracker;
-use super::history::{build_context_summary, MarketDataHistoryReader};
+use super::history::{build_context, effective_history_window, MarketDataHistoryReader};
 use super::log::{DecisionLogEntry, DecisionLogWriter};
 use super::model::{decide_action, JevDecision, Probabilities, TargetDirection};
 use crate::funding::FundingHistoryReader;
@@ -20,8 +21,37 @@ use crate::scheduler::{delay_until_next_boundary, reconcile};
 use crate::session::{SessionStore, TradingSessionConfig, TradingSessionStatus};
 use crate::wallets::WalletRegistry;
 
-const HISTORY_WINDOW: u32 = 1000;
 const AUTO_FLATTEN_THRESHOLD: u32 = 5;
+
+/// Default minimum confidence: `0.0`, i.e. every decision is actionable.
+/// Matches pre-threshold behavior, so a deployment that never sets
+/// `MIN_CONFIDENCE_TO_SHIFT` behaves exactly as it did before.
+pub const DEFAULT_MIN_CONFIDENCE_TO_SHIFT: f64 = 0.0;
+
+/// Parses a `MIN_CONFIDENCE_TO_SHIFT` value. Unset/blank falls back to
+/// `DEFAULT_MIN_CONFIDENCE_TO_SHIFT`; a malformed or out-of-range value
+/// is an error so a bad deployment config fails fast at startup rather
+/// than silently holding (or shifting) every position. Pure so it's
+/// unit-testable without mutating the process environment.
+pub fn parse_min_confidence_to_shift(raw: Option<&str>) -> Result<f64, String> {
+    let raw = match raw {
+        Some(value) if !value.trim().is_empty() => value,
+        _ => return Ok(DEFAULT_MIN_CONFIDENCE_TO_SHIFT),
+    };
+
+    match raw.trim().parse::<f64>() {
+        Ok(min) if min.is_finite() && (0.0..=1.0).contains(&min) => Ok(min),
+        _ => Err(format!(
+            "Invalid MIN_CONFIDENCE_TO_SHIFT: {raw} (expected a number between 0.0 and 1.0)"
+        )),
+    }
+}
+
+/// The minimum confidence a decision must clear to shift a position,
+/// from the environment.
+pub fn min_confidence_to_shift_from_env() -> Result<f64, String> {
+    parse_min_confidence_to_shift(std::env::var("MIN_CONFIDENCE_TO_SHIFT").ok().as_deref())
+}
 
 /// Transitions a trading session to `closed` once the engine has
 /// finished flattening it (soft or hard close). Abstracted behind a
@@ -69,20 +99,38 @@ fn flat_decision() -> JevDecision {
             short: 0.0,
             flat: 1.0,
         },
+        raw_request: None,
+        raw_response: None,
     }
 }
 
 /// Runs a single decision cycle for one trading session: builds context
-/// from recent market history, asks its configured `DecisionMaker` for
-/// a Target Direction (or, when the session is closing, skips straight
-/// to a forced Flat target), compares it to the current Position State,
-/// applies the resulting action, and always writes a decision-log row.
-/// Free of any scheduling concerns, so it's directly testable.
+/// from recent market history (reading this session's configured window
+/// and rendering it in this session's configured format), asks its
+/// configured `DecisionMaker` for a Target Direction (or, when the
+/// session is closing, skips straight to a forced Flat target), compares
+/// it to the current Position State, applies the resulting action, and
+/// always writes a decision-log row. Free of any scheduling concerns,
+/// so it's directly testable.
+///
+/// `min_confidence_to_shift` is the engine-wide floor for acting on a
+/// decision (see `MIN_CONFIDENCE_TO_SHIFT`): a decision whose winning
+/// confidence falls below it holds the current position instead of
+/// shifting. Forced flattening (soft/hard close, auto-flatten) is never
+/// gated by it — a flatten is never blocked by low confidence.
+///
+/// `now` is "the present moment" as far as the built decision context
+/// is concerned (e.g. how long a position has been held) — the live
+/// loop passes the wall clock; a backtest replay passes its simulated
+/// time, so a replayed cycle's context reads exactly as it would have
+/// live.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_decision_cycle(
     session_id: &str,
     symbol: &str,
     config: &TradingSessionConfig,
+    min_confidence_to_shift: f64,
+    now: DateTime<Utc>,
     history: &dyn MarketDataHistoryReader,
     decision_maker: &dyn DecisionMaker,
     execution: &dyn ExecutionAdapter,
@@ -91,7 +139,13 @@ pub async fn run_decision_cycle(
     health: &dyn FailureTracker,
     lifecycle: &dyn SessionLifecycle,
 ) {
-    let samples = match history.recent_samples(symbol, HISTORY_WINDOW).await {
+    let samples = match history
+        .recent_samples(
+            symbol,
+            effective_history_window(config.history_window_samples),
+        )
+        .await
+    {
         Ok(samples) => samples,
         Err(error) => {
             tracing::error!(symbol, session_id, %error, "failed to read market data history");
@@ -103,6 +157,8 @@ pub async fn run_decision_cycle(
                     position_action: None,
                     error: Some(&error.to_string()),
                     auto_flatten: false,
+                    raw_request: None,
+                    raw_response: None,
                 })
                 .await;
             return;
@@ -110,7 +166,8 @@ pub async fn run_decision_cycle(
     };
 
     if samples.is_empty() {
-        let context_summary = build_context_summary(symbol, &samples, None, None);
+        let context_summary =
+            build_context(symbol, &samples, None, None, config.history_format, now);
         tracing::warn!(
             symbol,
             session_id,
@@ -124,6 +181,8 @@ pub async fn run_decision_cycle(
                 position_action: None,
                 error: Some("no market data available yet"),
                 auto_flatten: false,
+                raw_request: None,
+                raw_response: None,
             })
             .await;
         return;
@@ -142,6 +201,8 @@ pub async fn run_decision_cycle(
                 position_action: Some(super::model::PositionAction::Close),
                 error: error.as_deref(),
                 auto_flatten: false,
+                raw_request: None,
+                raw_response: None,
             })
             .await;
 
@@ -158,7 +219,8 @@ pub async fn run_decision_cycle(
         Ok(position) => position,
         Err(error) => {
             tracing::error!(symbol, session_id, %error, "failed to read current position");
-            let context_summary = build_context_summary(symbol, &samples, None, None);
+            let context_summary =
+                build_context(symbol, &samples, None, None, config.history_format, now);
             handle_cycle_failure(
                 symbol,
                 &error.to_string(),
@@ -168,6 +230,8 @@ pub async fn run_decision_cycle(
                 execution,
                 decision_log,
                 health,
+                None,
+                None,
             )
             .await;
             return;
@@ -182,11 +246,13 @@ pub async fn run_decision_cycle(
         }
     };
 
-    let context_summary = build_context_summary(
+    let context_summary = build_context(
         symbol,
         &samples,
         current_position.as_ref(),
         latest_funding.as_ref(),
+        config.history_format,
+        now,
     );
 
     let is_soft_closing = config.status == TradingSessionStatus::SoftClosing;
@@ -198,6 +264,11 @@ pub async fn run_decision_cycle(
             Ok(decision) => decision,
             Err(error) => {
                 tracing::error!(symbol, session_id, %error, "decision maker failed");
+                let (raw_request, raw_response) = if config.store_decision_payloads {
+                    (error.raw_request.as_deref(), error.raw_response.as_deref())
+                } else {
+                    (None, None)
+                };
                 handle_cycle_failure(
                     symbol,
                     &error.to_string(),
@@ -207,6 +278,8 @@ pub async fn run_decision_cycle(
                     execution,
                     decision_log,
                     health,
+                    raw_request,
+                    raw_response,
                 )
                 .await;
                 return;
@@ -216,7 +289,23 @@ pub async fn run_decision_cycle(
 
     let current_direction = current_position.map(|p| p.direction);
 
-    let action = decide_action(current_direction, decision.direction);
+    // A near-tie (e.g. long 0.34 / short 0.33 / flat 0.33) picks a
+    // winning direction outright, but shouldn't be acted on: below the
+    // configured floor, hold whatever position we already have. A
+    // soft-close's forced Flat target isn't routed through here.
+    let action = if is_soft_closing || decision.confidence >= min_confidence_to_shift {
+        decide_action(current_direction, decision.direction)
+    } else {
+        tracing::info!(
+            symbol,
+            session_id,
+            confidence = decision.confidence,
+            min_confidence_to_shift,
+            direction = decision.direction.as_str(),
+            "decision below the confidence floor; holding current position"
+        );
+        super::model::PositionAction::NoOp
+    };
 
     let execution_result = apply_action(
         execution,
@@ -247,6 +336,14 @@ pub async fn run_decision_cycle(
                     position_action: Some(action),
                     error: None,
                     auto_flatten: false,
+                    raw_request: config
+                        .store_decision_payloads
+                        .then_some(decision.raw_request.as_deref())
+                        .flatten(),
+                    raw_response: config
+                        .store_decision_payloads
+                        .then_some(decision.raw_response.as_deref())
+                        .flatten(),
                 })
                 .await;
 
@@ -265,6 +362,14 @@ pub async fn run_decision_cycle(
                     position_action: Some(action),
                     error: Some(&error),
                     auto_flatten: false,
+                    raw_request: config
+                        .store_decision_payloads
+                        .then_some(decision.raw_request.as_deref())
+                        .flatten(),
+                    raw_response: config
+                        .store_decision_payloads
+                        .then_some(decision.raw_response.as_deref())
+                        .flatten(),
                 })
                 .await;
             if count >= AUTO_FLATTEN_THRESHOLD {
@@ -296,6 +401,8 @@ async fn handle_cycle_failure(
     execution: &dyn ExecutionAdapter,
     decision_log: &dyn DecisionLogWriter,
     health: &dyn FailureTracker,
+    raw_request: Option<&str>,
+    raw_response: Option<&str>,
 ) {
     let count = health.record_failure(symbol, reason).await;
     let _ = decision_log
@@ -306,6 +413,8 @@ async fn handle_cycle_failure(
             position_action: None,
             error: Some(reason),
             auto_flatten: false,
+            raw_request,
+            raw_response,
         })
         .await;
 
@@ -340,6 +449,8 @@ async fn auto_flatten(
             position_action: Some(super::model::PositionAction::Close),
             error: result.err().map(|e| e.to_string()).as_deref(),
             auto_flatten: true,
+            raw_request: None,
+            raw_response: None,
         })
         .await;
 }
@@ -400,6 +511,7 @@ fn spawn_task(
     session_id: String,
     frequency_seconds: f64,
     store: SessionStore,
+    min_confidence_to_shift: f64,
     history: Arc<dyn MarketDataHistoryReader>,
     decision_makers: Arc<DecisionMakerRegistry>,
     wallets: Arc<WalletRegistry>,
@@ -426,6 +538,8 @@ fn spawn_task(
                     &session_id,
                     &config.symbol,
                     &config,
+                    min_confidence_to_shift,
+                    Utc::now(),
                     history.as_ref(),
                     decision_maker.as_ref(),
                     execution.as_ref(),
@@ -492,6 +606,7 @@ fn resolve_execution(
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
     store: SessionStore,
+    min_confidence_to_shift: f64,
     history: Arc<dyn MarketDataHistoryReader>,
     decision_makers: Arc<DecisionMakerRegistry>,
     wallets: Arc<WalletRegistry>,
@@ -527,6 +642,7 @@ pub async fn run(
                 session_id.clone(),
                 frequency,
                 store.clone(),
+                min_confidence_to_shift,
                 history.clone(),
                 decision_makers.clone(),
                 wallets.clone(),
@@ -553,7 +669,7 @@ mod tests {
     use super::super::decision_maker::DecisionError;
     use super::super::execution::{ExecutionError, OpenPosition};
     use super::super::health::InMemoryFailureTracker;
-    use super::super::history::HistoryError;
+    use super::super::history::{HistoryError, HistoryFormat};
     use super::super::log::LogError;
     use super::super::model::{Direction, JevDecision, Probabilities, TargetDirection};
     use super::*;
@@ -569,8 +685,11 @@ mod tests {
             decision_frequency_seconds: frequency,
             leverage: 1.0,
             position_size_usd: 100.0,
+            history_window_samples: 250,
+            history_format: HistoryFormat::Summary,
             wallet_id: Some("test-wallet".to_string()),
             status,
+            store_decision_payloads: false,
         }
     }
 
@@ -682,7 +801,7 @@ mod tests {
     #[async_trait]
     impl DecisionMaker for AlwaysFailingDecisionMaker {
         async fn decide(&self, _symbol: &str, _state: &str) -> Result<JevDecision, DecisionError> {
-            Err(DecisionError("decision maker unavailable".to_string()))
+            Err(DecisionError::new("decision maker unavailable"))
         }
     }
 
@@ -707,9 +826,11 @@ mod tests {
                         short: 0.05,
                         flat: 0.9,
                     },
+                    raw_request: None,
+                    raw_response: None,
                 })
             } else {
-                Err(DecisionError("decision maker unavailable".to_string()))
+                Err(DecisionError::new("decision maker unavailable"))
             }
         }
     }
@@ -806,6 +927,8 @@ mod tests {
             &config.id,
             &config.symbol,
             &config,
+            DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+            Utc::now(),
             &FakeHistory,
             &AlwaysFailingDecisionMaker,
             &execution,
@@ -843,6 +966,8 @@ mod tests {
             &config.id,
             &config.symbol,
             &config,
+            DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+            Utc::now(),
             &FakeHistory,
             &decision_maker,
             &execution,
@@ -868,6 +993,8 @@ mod tests {
                 &config.id,
                 &config.symbol,
                 &config,
+                DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+                Utc::now(),
                 &FakeHistory,
                 &AlwaysFailingDecisionMaker,
                 &execution,
@@ -906,6 +1033,8 @@ mod tests {
                 &config.id,
                 &config.symbol,
                 &config,
+                DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+                Utc::now(),
                 &FakeHistory,
                 &decision_maker,
                 &execution,
@@ -936,6 +1065,8 @@ mod tests {
             &config.id,
             &config.symbol,
             &config,
+            DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+            Utc::now(),
             &FakeHistory,
             // Even a decision maker that would pick Long must be
             // ignored while soft-closing.
@@ -971,6 +1102,8 @@ mod tests {
             &config.id,
             &config.symbol,
             &config,
+            DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+            Utc::now(),
             &FakeHistory,
             &AlwaysFailingDecisionMaker,
             &execution,
@@ -983,5 +1116,99 @@ mod tests {
 
         assert_eq!(execution.close_calls.load(Ordering::SeqCst), 1);
         assert_eq!(lifecycle.closed.lock().unwrap().as_slice(), ["session-1"]);
+    }
+
+    /// The fake's Flat decision carries 0.9 confidence.
+    const FAKE_DECISION_CONFIDENCE: f64 = 0.9;
+
+    #[tokio::test]
+    async fn a_decision_below_the_confidence_floor_holds_the_current_position() {
+        let config = sample_config(TradingSessionStatus::Active, 30.0);
+        let execution = FakeExecution::with_open_position();
+        let health = InMemoryFailureTracker::new();
+
+        run_decision_cycle(
+            &config.id,
+            &config.symbol,
+            &config,
+            FAKE_DECISION_CONFIDENCE + 0.01,
+            Utc::now(),
+            &FakeHistory,
+            &SucceedsOnceDecisionMaker {
+                succeed_on: 1,
+                calls: AtomicUsize::new(0),
+            },
+            &execution,
+            &FakeFunding,
+            &NoopDecisionLog,
+            &health,
+            &FakeLifecycle::default(),
+        )
+        .await;
+
+        // The Flat target was below the floor, so the long is still open.
+        assert!(execution
+            .get_position(&config.id, "BTC")
+            .await
+            .unwrap()
+            .is_some());
+        assert_eq!(execution.close_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(health.count("BTC"), 0);
+    }
+
+    #[tokio::test]
+    async fn a_decision_exactly_at_the_confidence_floor_still_shifts() {
+        let config = sample_config(TradingSessionStatus::Active, 30.0);
+        let execution = FakeExecution::with_open_position();
+        let health = InMemoryFailureTracker::new();
+
+        run_decision_cycle(
+            &config.id,
+            &config.symbol,
+            &config,
+            FAKE_DECISION_CONFIDENCE,
+            Utc::now(),
+            &FakeHistory,
+            &SucceedsOnceDecisionMaker {
+                succeed_on: 1,
+                calls: AtomicUsize::new(0),
+            },
+            &execution,
+            &FakeFunding,
+            &NoopDecisionLog,
+            &health,
+            &FakeLifecycle::default(),
+        )
+        .await;
+
+        assert_eq!(execution.close_calls.load(Ordering::SeqCst), 1);
+        assert!(execution
+            .get_position(&config.id, "BTC")
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn min_confidence_defaults_to_zero_when_unset_or_blank() {
+        assert_eq!(parse_min_confidence_to_shift(None).unwrap(), 0.0);
+        assert_eq!(parse_min_confidence_to_shift(Some("")).unwrap(), 0.0);
+        assert_eq!(parse_min_confidence_to_shift(Some("  ")).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn min_confidence_accepts_a_value_between_zero_and_one() {
+        assert_eq!(parse_min_confidence_to_shift(Some("0.5")).unwrap(), 0.5);
+        assert_eq!(parse_min_confidence_to_shift(Some("1")).unwrap(), 1.0);
+        assert_eq!(parse_min_confidence_to_shift(Some("0")).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn min_confidence_rejects_malformed_or_out_of_range_values() {
+        assert!(parse_min_confidence_to_shift(Some("high")).is_err());
+        assert!(parse_min_confidence_to_shift(Some("1.5")).is_err());
+        assert!(parse_min_confidence_to_shift(Some("-0.1")).is_err());
+        assert!(parse_min_confidence_to_shift(Some("NaN")).is_err());
+        assert!(parse_min_confidence_to_shift(Some("inf")).is_err());
     }
 }

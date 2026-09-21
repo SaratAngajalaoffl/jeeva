@@ -1,3 +1,4 @@
+pub mod backtest;
 pub mod config;
 pub mod decision;
 pub mod funding;

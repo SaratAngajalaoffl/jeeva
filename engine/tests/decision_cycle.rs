@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use engine::decision::{
     run_decision_cycle, DecisionLogEntry, DecisionLogWriter, Direction, ExecutionAdapter,
     ExecutionError, HistoryError, InMemoryFailureTracker, MarketDataHistoryReader, OpenPosition,
-    RandomDecisionMaker, SessionLifecycle, TargetDirection,
+    RandomDecisionMaker, SessionLifecycle, TargetDirection, DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
 };
 use engine::funding::{FundingHistoryError, FundingHistoryReader, FundingRecord};
 use engine::market_data::MarketDataSample;
@@ -21,6 +21,18 @@ impl FundingHistoryReader for EmptyFunding {
 
 struct FakeHistory {
     samples: Vec<MarketDataSample>,
+    /// Every `limit` the cycle asked for, so tests can assert the
+    /// session's configured window actually reaches the reader.
+    requested_limits: Mutex<Vec<u32>>,
+}
+
+impl FakeHistory {
+    fn new(samples: Vec<MarketDataSample>) -> Self {
+        Self {
+            samples,
+            requested_limits: Mutex::new(Vec::new()),
+        }
+    }
 }
 
 #[async_trait]
@@ -28,8 +40,9 @@ impl MarketDataHistoryReader for FakeHistory {
     async fn recent_samples(
         &self,
         _symbol: &str,
-        _limit: u32,
+        limit: u32,
     ) -> Result<Vec<MarketDataSample>, HistoryError> {
+        self.requested_limits.lock().unwrap().push(limit);
         Ok(self.samples.clone())
     }
 }
@@ -149,6 +162,33 @@ fn sample(price: f64) -> MarketDataSample {
     }
 }
 
+#[derive(Default)]
+struct CapturingDecisionMaker {
+    states: Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl engine::decision::DecisionMaker for CapturingDecisionMaker {
+    async fn decide(
+        &self,
+        _symbol: &str,
+        state: &str,
+    ) -> Result<engine::decision::JevDecision, engine::decision::DecisionError> {
+        self.states.lock().unwrap().push(state.to_string());
+        Ok(engine::decision::JevDecision {
+            direction: TargetDirection::Flat,
+            confidence: 1.0,
+            probabilities: engine::decision::Probabilities {
+                long: 0.1,
+                short: 0.1,
+                flat: 0.8,
+            },
+            raw_request: None,
+            raw_response: None,
+        })
+    }
+}
+
 fn config() -> TradingSessionConfig {
     TradingSessionConfig {
         id: "session-1".to_string(),
@@ -157,8 +197,11 @@ fn config() -> TradingSessionConfig {
         decision_frequency_seconds: 60.0,
         leverage: 2.0,
         position_size_usd: 500.0,
+        history_window_samples: 250,
+        history_format: engine::decision::HistoryFormat::Summary,
         wallet_id: None,
         status: TradingSessionStatus::Active,
+        store_decision_payloads: false,
     }
 }
 
@@ -171,9 +214,7 @@ impl SessionLifecycle for NoopLifecycle {
 
 #[tokio::test]
 async fn opens_a_position_from_flat_when_jev_says_long() {
-    let history = FakeHistory {
-        samples: vec![sample(100.0)],
-    };
+    let history = FakeHistory::new(vec![sample(100.0)]);
     let decision_maker = RandomDecisionMaker::with_sequence(vec![TargetDirection::Long]);
     let execution = FakeExecution::default();
     let log = FakeDecisionLog::default();
@@ -182,6 +223,8 @@ async fn opens_a_position_from_flat_when_jev_says_long() {
         "session-1",
         "BTC",
         &config(),
+        DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+        chrono::Utc::now(),
         &history,
         &decision_maker,
         &execution,
@@ -205,9 +248,7 @@ async fn opens_a_position_from_flat_when_jev_says_long() {
 
 #[tokio::test]
 async fn repeating_the_same_direction_is_a_no_op() {
-    let history = FakeHistory {
-        samples: vec![sample(100.0)],
-    };
+    let history = FakeHistory::new(vec![sample(100.0)]);
     let decision_maker = RandomDecisionMaker::with_sequence(vec![TargetDirection::Long]);
     let execution = FakeExecution::default();
     let log = FakeDecisionLog::default();
@@ -216,6 +257,8 @@ async fn repeating_the_same_direction_is_a_no_op() {
         "session-1",
         "BTC",
         &config(),
+        DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+        chrono::Utc::now(),
         &history,
         &decision_maker,
         &execution,
@@ -229,6 +272,8 @@ async fn repeating_the_same_direction_is_a_no_op() {
         "session-1",
         "BTC",
         &config(),
+        DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+        chrono::Utc::now(),
         &history,
         &decision_maker,
         &execution,
@@ -247,9 +292,7 @@ async fn repeating_the_same_direction_is_a_no_op() {
 
 #[tokio::test]
 async fn flipping_direction_closes_then_opens() {
-    let history = FakeHistory {
-        samples: vec![sample(100.0)],
-    };
+    let history = FakeHistory::new(vec![sample(100.0)]);
     let decision_maker =
         RandomDecisionMaker::with_sequence(vec![TargetDirection::Long, TargetDirection::Short]);
     let execution = FakeExecution::default();
@@ -259,6 +302,8 @@ async fn flipping_direction_closes_then_opens() {
         "session-1",
         "BTC",
         &config(),
+        DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+        chrono::Utc::now(),
         &history,
         &decision_maker,
         &execution,
@@ -272,6 +317,8 @@ async fn flipping_direction_closes_then_opens() {
         "session-1",
         "BTC",
         &config(),
+        DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+        chrono::Utc::now(),
         &history,
         &decision_maker,
         &execution,
@@ -290,9 +337,7 @@ async fn flipping_direction_closes_then_opens() {
 
 #[tokio::test]
 async fn going_flat_closes_the_position() {
-    let history = FakeHistory {
-        samples: vec![sample(100.0)],
-    };
+    let history = FakeHistory::new(vec![sample(100.0)]);
     let decision_maker =
         RandomDecisionMaker::with_sequence(vec![TargetDirection::Long, TargetDirection::Flat]);
     let execution = FakeExecution::default();
@@ -302,6 +347,8 @@ async fn going_flat_closes_the_position() {
         "session-1",
         "BTC",
         &config(),
+        DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+        chrono::Utc::now(),
         &history,
         &decision_maker,
         &execution,
@@ -315,6 +362,8 @@ async fn going_flat_closes_the_position() {
         "session-1",
         "BTC",
         &config(),
+        DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+        chrono::Utc::now(),
         &history,
         &decision_maker,
         &execution,
@@ -331,9 +380,7 @@ async fn going_flat_closes_the_position() {
 
 #[tokio::test]
 async fn staying_flat_while_already_flat_is_a_no_op() {
-    let history = FakeHistory {
-        samples: vec![sample(100.0)],
-    };
+    let history = FakeHistory::new(vec![sample(100.0)]);
     let decision_maker = RandomDecisionMaker::with_sequence(vec![TargetDirection::Flat]);
     let execution = FakeExecution::default();
     let log = FakeDecisionLog::default();
@@ -342,6 +389,8 @@ async fn staying_flat_while_already_flat_is_a_no_op() {
         "session-1",
         "BTC",
         &config(),
+        DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+        chrono::Utc::now(),
         &history,
         &decision_maker,
         &execution,
@@ -370,6 +419,8 @@ async fn writes_a_decision_log_entry_even_with_no_market_data() {
         "session-1",
         "BTC",
         &config(),
+        DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+        chrono::Utc::now(),
         &history,
         &decision_maker,
         &execution,
@@ -393,9 +444,7 @@ async fn writes_a_decision_log_entry_even_with_no_market_data() {
 
 #[tokio::test]
 async fn every_cycle_writes_exactly_one_log_entry_across_a_full_state_machine_walk() {
-    let history = FakeHistory {
-        samples: vec![sample(100.0)],
-    };
+    let history = FakeHistory::new(vec![sample(100.0)]);
     // flat -> long -> short -> flat -> flat (repeat, no-op)
     let decision_maker = RandomDecisionMaker::with_sequence(vec![
         TargetDirection::Flat,
@@ -412,6 +461,8 @@ async fn every_cycle_writes_exactly_one_log_entry_across_a_full_state_machine_wa
             "session-1",
             "BTC",
             &config(),
+            DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+            chrono::Utc::now(),
             &history,
             &decision_maker,
             &execution,
@@ -426,4 +477,131 @@ async fn every_cycle_writes_exactly_one_log_entry_across_a_full_state_machine_wa
     assert_eq!(log.entries.lock().unwrap().len(), 5);
     assert_eq!(execution.open_calls.lock().unwrap().len(), 2); // long, then short
     assert_eq!(execution.close_calls.lock().unwrap().len(), 2); // long->short, short->flat
+}
+
+#[tokio::test]
+async fn reads_the_sessions_configured_history_window() {
+    let history = FakeHistory::new(vec![sample(100.0)]);
+    let decision_maker = RandomDecisionMaker::with_sequence(vec![TargetDirection::Flat]);
+    let execution = FakeExecution::default();
+    let log = FakeDecisionLog::default();
+
+    let config = TradingSessionConfig {
+        history_window_samples: 42,
+        ..config()
+    };
+
+    run_decision_cycle(
+        "session-1",
+        "BTC",
+        &config,
+        DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+        chrono::Utc::now(),
+        &history,
+        &decision_maker,
+        &execution,
+        &EmptyFunding,
+        &log,
+        &InMemoryFailureTracker::new(),
+        &NoopLifecycle,
+    )
+    .await;
+
+    assert_eq!(*history.requested_limits.lock().unwrap(), vec![42]);
+}
+
+#[tokio::test]
+async fn clamps_an_out_of_range_history_window_before_reading() {
+    let history = FakeHistory::new(vec![sample(100.0)]);
+    let decision_maker = RandomDecisionMaker::with_sequence(vec![TargetDirection::Flat]);
+    let execution = FakeExecution::default();
+    let log = FakeDecisionLog::default();
+
+    let config = TradingSessionConfig {
+        history_window_samples: 0,
+        ..config()
+    };
+
+    run_decision_cycle(
+        "session-1",
+        "BTC",
+        &config,
+        DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+        chrono::Utc::now(),
+        &history,
+        &decision_maker,
+        &execution,
+        &EmptyFunding,
+        &log,
+        &InMemoryFailureTracker::new(),
+        &NoopLifecycle,
+    )
+    .await;
+
+    assert_eq!(*history.requested_limits.lock().unwrap(), vec![1]);
+}
+
+#[tokio::test]
+async fn raw_history_format_sends_every_sample_to_the_decision_maker() {
+    let history = FakeHistory::new(vec![sample(90.0), sample(100.0), sample(110.0)]);
+    let decision_maker = CapturingDecisionMaker::default();
+    let execution = FakeExecution::default();
+    let log = FakeDecisionLog::default();
+
+    let config = TradingSessionConfig {
+        history_format: engine::decision::HistoryFormat::Raw,
+        ..config()
+    };
+
+    run_decision_cycle(
+        "session-1",
+        "BTC",
+        &config,
+        DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+        chrono::Utc::now(),
+        &history,
+        &decision_maker,
+        &execution,
+        &EmptyFunding,
+        &log,
+        &InMemoryFailureTracker::new(),
+        &NoopLifecycle,
+    )
+    .await;
+
+    let states = decision_maker.states.lock().unwrap();
+    assert_eq!(states.len(), 1);
+    assert!(states[0].contains("price_history=raw (oldest first, 3 samples"));
+    assert!(states[0].contains("price=90.00"));
+    assert!(states[0].contains("price=100.00"));
+    assert!(states[0].contains("price=110.00"));
+}
+
+#[tokio::test]
+async fn summary_history_format_sends_the_averaged_rendering() {
+    let history = FakeHistory::new(vec![sample(90.0), sample(110.0)]);
+    let decision_maker = CapturingDecisionMaker::default();
+    let execution = FakeExecution::default();
+    let log = FakeDecisionLog::default();
+
+    run_decision_cycle(
+        "session-1",
+        "BTC",
+        &config(),
+        DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+        chrono::Utc::now(),
+        &history,
+        &decision_maker,
+        &execution,
+        &EmptyFunding,
+        &log,
+        &InMemoryFailureTracker::new(),
+        &NoopLifecycle,
+    )
+    .await;
+
+    let states = decision_maker.states.lock().unwrap();
+    assert_eq!(states.len(), 1);
+    assert!(states[0].contains("avg=100.00"));
+    assert!(!states[0].contains("price_history=raw"));
 }

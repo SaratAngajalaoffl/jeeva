@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import PriceVolumeChart, {
   chartRangeMs,
@@ -12,6 +12,7 @@ import Modal from "@/components/Modal";
 import { SamplingIcon } from "@/components/icons";
 import {
   attachSessionWallet,
+  createBacktest,
   createTradingSession,
   fetchDecisions,
   fetchFundingPayments,
@@ -30,6 +31,7 @@ import {
   type ClosedTrade,
   type DecisionLogEntry,
   type DecisionMaker,
+  type HistoryFormat,
   type FundingPayment,
   type MarketDataPoint,
   type OrderBook,
@@ -829,12 +831,20 @@ function NewSessionForm({
   onCancel: () => void;
   onCreated: () => void;
 }) {
+  const router = useRouter();
+  const [sessionType, setSessionType] = useState<"live" | "backtest">("live");
   const [decisionMaker, setDecisionMaker] = useState<DecisionMaker>("random");
   const [decisionFrequencySeconds, setDecisionFrequencySeconds] = useState("300");
   const [leverage, setLeverage] = useState("1");
   const [positionSizeUsd, setPositionSizeUsd] = useState("100");
+  const [historyWindowSamples, setHistoryWindowSamples] = useState("1000");
+  const [historyFormat, setHistoryFormat] = useState<HistoryFormat>("summary");
+  const [storeDecisionPayloads, setStoreDecisionPayloads] = useState(false);
   const [walletId, setWalletId] = useState("");
   const [wallets, setWallets] = useState<Wallet[] | null>(null);
+  const [startTime, setStartTime] = useState("");
+  const [endTime, setEndTime] = useState("");
+  const [initialBalanceUsd, setInitialBalanceUsd] = useState("10000");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -871,16 +881,54 @@ function NewSessionForm({
         const decision = Number(decisionFrequencySeconds);
         const lev = Number(leverage);
         const size = Number(positionSizeUsd);
+        const history = Number(historyWindowSamples);
         if (
           !Number.isFinite(decision) ||
           decision <= 0 ||
           !Number.isFinite(lev) ||
           lev <= 0 ||
           !Number.isFinite(size) ||
-          size <= 0
+          size <= 0 ||
+          !Number.isInteger(history) ||
+          history < 1 ||
+          history > 1000
         ) {
           return;
         }
+
+        if (sessionType === "backtest") {
+          const balance = Number(initialBalanceUsd);
+          if (
+            !startTime ||
+            !endTime ||
+            !Number.isFinite(balance) ||
+            balance <= 0
+          ) {
+            return;
+          }
+          setSubmitting(true);
+          setError(null);
+          const result = await createBacktest(symbol, {
+            decisionMaker,
+            decisionFrequencySeconds: decision,
+            leverage: lev,
+            positionSizeUsd: size,
+            historyWindowSamples: history,
+            historyFormat,
+            storeDecisionPayloads,
+            startTime: new Date(startTime).toISOString(),
+            endTime: new Date(endTime).toISOString(),
+            initialBalanceUsd: balance,
+          });
+          setSubmitting(false);
+          if (!result.ok) {
+            setError(result.error);
+            return;
+          }
+          router.push(`/dashboard/markets/${symbol}/backtests/${result.backtest.id}`);
+          return;
+        }
+
         setSubmitting(true);
         setError(null);
         const result = await createTradingSession(symbol, {
@@ -888,6 +936,9 @@ function NewSessionForm({
           decisionFrequencySeconds: decision,
           leverage: lev,
           positionSizeUsd: size,
+          historyWindowSamples: history,
+          historyFormat,
+          storeDecisionPayloads,
           walletId: walletId || null,
         });
         setSubmitting(false);
@@ -902,6 +953,16 @@ function NewSessionForm({
       }}
     >
       {error && <p className="text-sm text-destructive">{error}</p>}
+      <label className="flex flex-col gap-1">
+        <Label>Session type</Label>
+        <Select
+          value={sessionType}
+          onChange={(e) => setSessionType(e.target.value as "live" | "backtest")}
+        >
+          <option value="live">Live (paper/real trading)</option>
+          <option value="backtest">Backtest (replay historical data)</option>
+        </Select>
+      </label>
       <label className="flex flex-col gap-1">
         <Label>Decision maker</Label>
         <Select
@@ -943,26 +1004,90 @@ function NewSessionForm({
         />
       </label>
       <label className="flex flex-col gap-1">
-        <Label>Wallet (optional — can attach later)</Label>
-        <Select value={walletId} onChange={(e) => setWalletId(e.target.value)}>
-          <option value="">No wallet</option>
-          {wallets?.map((w) => (
-            <option key={w.id} value={w.id}>
-              {w.label} ({w.kind}
-              {w.currentBalanceUsd !== null
-                ? `, $${w.currentBalanceUsd.toLocaleString()}`
-                : ""}
-              )
-            </option>
-          ))}
+        <Label>Price history window (samples)</Label>
+        <Input
+          type="number"
+          min={1}
+          max={1000}
+          value={historyWindowSamples}
+          onChange={(e) => setHistoryWindowSamples(e.target.value)}
+        />
+      </label>
+      <label className="flex flex-col gap-1">
+        <Label>Price history format</Label>
+        <Select
+          value={historyFormat}
+          onChange={(e) => setHistoryFormat(e.target.value as HistoryFormat)}
+        >
+          <option value="summary">summary (averaged)</option>
+          <option value="raw">raw (every sample)</option>
         </Select>
       </label>
+      <label className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={storeDecisionPayloads}
+          onChange={(e) => setStoreDecisionPayloads(e.target.checked)}
+        />
+        <span className="text-sm">
+          Store raw Jev request/response for every decision
+        </span>
+      </label>
+      {sessionType === "live" ? (
+        <label className="flex flex-col gap-1">
+          <Label>Wallet (optional — can attach later)</Label>
+          <Select value={walletId} onChange={(e) => setWalletId(e.target.value)}>
+            <option value="">No wallet</option>
+            {wallets?.map((w) => (
+              <option key={w.id} value={w.id}>
+                {w.label} ({w.kind}
+                {w.currentBalanceUsd !== null
+                  ? `, $${w.currentBalanceUsd.toLocaleString()}`
+                  : ""}
+                )
+              </option>
+            ))}
+          </Select>
+        </label>
+      ) : (
+        <>
+          <label className="flex flex-col gap-1">
+            <Label>Start</Label>
+            <Input
+              type="datetime-local"
+              value={startTime}
+              onChange={(e) => setStartTime(e.target.value)}
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <Label>End</Label>
+            <Input
+              type="datetime-local"
+              value={endTime}
+              onChange={(e) => setEndTime(e.target.value)}
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <Label>Initial balance (USD)</Label>
+            <Input
+              type="number"
+              min={1}
+              value={initialBalanceUsd}
+              onChange={(e) => setInitialBalanceUsd(e.target.value)}
+            />
+          </label>
+        </>
+      )}
       <div className="mt-1 flex justify-end gap-2">
         <Button type="button" variant="ghost" onClick={onCancel}>
           Cancel
         </Button>
         <Button type="submit" disabled={submitting}>
-          {submitting ? "Creating..." : "Create session"}
+          {submitting
+            ? "Creating..."
+            : sessionType === "backtest"
+              ? "Run backtest"
+              : "Create session"}
         </Button>
       </div>
     </form>

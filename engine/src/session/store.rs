@@ -44,7 +44,7 @@ impl SessionStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::decision::DecisionMakerKind;
+    use crate::decision::{DecisionMakerKind, HistoryFormat};
     use crate::session::model::TradingSessionStatus;
 
     fn sample(id: &str, symbol: &str) -> TradingSessionConfig {
@@ -55,8 +55,11 @@ mod tests {
             decision_frequency_seconds: 300.0,
             leverage: 1.0,
             position_size_usd: 100.0,
+            history_window_samples: 500,
+            history_format: HistoryFormat::Raw,
             wallet_id: None,
             status: TradingSessionStatus::Active,
+            store_decision_payloads: false,
         }
     }
 

@@ -106,6 +106,7 @@ services:
       - HYPERLIQUID_PRIVATE_KEY
       - HYPERLIQUID_TESTNET
       - MARKET_DATA_TTL_DAYS
+      - MIN_CONFIDENCE_TO_SHIFT
     volumes:
       - ./engine/src:/app/src
     depends_on:

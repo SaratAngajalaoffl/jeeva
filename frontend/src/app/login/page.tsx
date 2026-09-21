@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { login } from "@/lib/api";
+import { fetchDemoMode, login } from "@/lib/api";
+import Logo from "@/components/Logo";
 import { Button, Card, Input, Label } from "@/components/ui";
 
 export default function LoginPage() {
@@ -11,6 +13,11 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [demoMode, setDemoMode] = useState(false);
+
+  useEffect(() => {
+    fetchDemoMode().then(setDemoMode);
+  }, []);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -29,6 +36,13 @@ export default function LoginPage() {
   return (
     <main className="flex min-h-screen items-center justify-center px-4">
       <Card className="w-full max-w-sm">
+        <Link
+          href="/"
+          aria-label="Jeeva home"
+          className="mb-6 flex items-center justify-center"
+        >
+          <Logo height={22} />
+        </Link>
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <h1 className="text-xl font-semibold tracking-tight text-text">
             Sign in
@@ -58,10 +72,12 @@ export default function LoginPage() {
           <Button type="submit" disabled={submitting}>
             {submitting ? "Signing in..." : "Sign in"}
           </Button>
-          <p className="text-center text-sm text-subtext-1">
-            Demo credentials: <span className="font-medium">admin</span> /{" "}
-            <span className="font-medium">password</span>
-          </p>
+          {demoMode && (
+            <p className="text-center text-sm text-subtext-1">
+              Demo credentials: <span className="font-medium">admin</span> /{" "}
+              <span className="font-medium">password</span>
+            </p>
+          )}
         </form>
       </Card>
     </main>

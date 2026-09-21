@@ -74,7 +74,7 @@ flowchart LR
 
 Each tick of a trading-enabled PERP's loop does the following, in order:
 
-1. **Read recent market history** for that PERP (up to the last 1000 samples) from TimescaleDB.
+1. **Read recent market history** for that PERP (up to the session's configured history window — 1000 samples by default, tunable per session from the dashboard) from TimescaleDB.
 2. **Read the current position** (flat/long/short) from the configured `ExecutionAdapter`.
 3. **Summarize state and ask the DecisionMaker** for a target direction (see [What Jev sees](#what-jev-sees) below).
 4. **Diff target vs. current position**:
@@ -91,7 +91,7 @@ A run of 5 consecutive failures on any step (market data, decision maker, or exe
 
 ## What Jev sees
 
-Jev never sees raw database rows — the engine builds a compact text summary of everything relevant and asks a single structured **Choice** question (`long` / `short` / `flat`). For example, the `state` text sent looks like:
+Jev never sees raw database rows by default — the engine builds a compact text summary of everything relevant and asks a single structured **Choice** question (`long` / `short` / `flat`). For example, the `state` text sent looks like:
 
 ```
 BTC: price=64213.50 (change over last 1000 samples: +1.84%, min=62900.10, max=64580.00, avg=63750.22),
@@ -104,6 +104,18 @@ funding_rate=0.000031 (as_of=2026-09-19T18:00:00Z)
 ```
 
 That's: the latest price plus min/max/average over the whole sampled window, the same stats for open interest/volume/spread, the current position (or `flat`) with how long it's been held and its unrealized P&L, and the most recent real funding rate. Jev responds with a choice (`long`/`short`/`flat`), a confidence, and a probability for each of the three outcomes — all of which get written to the decision log.
+
+Averaging the window away is compact but discards its shape — trend, spikes, the order moves happened in. Sessions can instead be configured with a **history format** of `raw`, which sends every sample in the window as its own data point (oldest first), alongside the same position and funding lines:
+
+```
+BTC: price_history=raw (oldest first, 3 samples, change +10.09%):
+[price=64200.00,mid_price=64200.50,open_interest=182100.00,volume=940000.00,spread=0.0120;
+ price=64213.50,mid_price=64214.00,open_interest=182340.00,volume=942310.00,spread=0.0119;
+ price=70680.00,mid_price=70680.10,open_interest=183000.00,volume=980000.00,spread=0.0140];
+position=long (...); funding_rate=0.000031 (as_of=...)
+```
+
+Both the window size (1–1000 samples) and the format (`summary` or `raw`) are set per session when it's created, and can be changed afterwards; unset, they default to `1000` and `summary`, which is exactly the behavior above. A raw window costs roughly 40 tokens per sample, so a 1000-sample raw window is a large prompt — dial the window down when using `raw`.
 
 ## DecisionMaker: three ways to reach Jev (or not)
 
@@ -154,6 +166,7 @@ To use real Jev decisions or real Hyperliquid execution, set the corresponding e
 | `CORS_ORIGIN` | Origin(s) allowed to call the API, comma-separated for several dashboards |
 | `MARKET_DATA_TTL_DAYS` | Sampled-data retention, in days (default `7`) |
 | `MIN_SAMPLING_FREQUENCY_SECONDS` | Lowest sampling frequency the API will accept, in seconds (default `1`) |
+| `MIN_CONFIDENCE_TO_SHIFT` | Confidence a decision must clear before it moves a position; below it the engine holds. `0`–`1`, default `0` (every decision is actionable) |
 
 See [`CONTEXT.md`](./CONTEXT.md) for the project's internal glossary and naming conventions.
 

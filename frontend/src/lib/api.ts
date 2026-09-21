@@ -52,6 +52,14 @@ export async function checkSession(): Promise<boolean> {
   return res.ok;
 }
 
+/** True when the deployment runs with DEMO_MODE=true. */
+export async function fetchDemoMode(): Promise<boolean> {
+  const res = await fetch(`${await loadApiUrl()}/health`);
+  if (!res.ok) return false;
+  const body: { demoMode?: unknown } = await res.json();
+  return body.demoMode === true;
+}
+
 // The engine's DecisionMaker implementation for this PERP: `random`
 // (synthetic, no network), `typesafe` (calls TypeSafe's Jev API
 // directly), or `openrouter` (calls Jev via OpenRouter).
@@ -284,6 +292,8 @@ export async function deleteWallet(
 export type TradingSessionStatus =
   "active" | "soft_closing" | "hard_closing" | "closed";
 
+export type HistoryFormat = "summary" | "raw";
+
 export interface TradingSession {
   id: string;
   symbol: string;
@@ -291,6 +301,12 @@ export interface TradingSession {
   decisionFrequencySeconds: number;
   leverage: number;
   positionSizeUsd: number;
+  /** How many recent market-data samples the engine reads for this session's decision context. */
+  historyWindowSamples: number;
+  /** Whether that window reaches the decision maker raw, or averaged into a min/max/avg summary. */
+  historyFormat: HistoryFormat;
+  /** Whether every decision cycle's raw Jev request/response is persisted, not just the parsed fields. */
+  storeDecisionPayloads: boolean;
   walletId: string | null;
   status: TradingSessionStatus;
   createdAt: string;
@@ -327,6 +343,12 @@ export interface CreateTradingSessionInput {
   decisionFrequencySeconds: number;
   leverage: number;
   positionSizeUsd: number;
+  /** Omit to accept the API default (the maximum window). */
+  historyWindowSamples?: number;
+  /** Omit to accept the API default ("summary"). */
+  historyFormat?: HistoryFormat;
+  /** Omit to accept the API default (false). */
+  storeDecisionPayloads?: boolean;
   walletId?: string | null;
 }
 
@@ -428,6 +450,9 @@ export interface DecisionLogEntry {
   positionAction: "no_op" | "opened" | "closed" | "closed_and_opened" | null;
   success: boolean;
   error: string | null;
+  /** The exact request/response JSON exchanged with Jev, when the session had `storeDecisionPayloads` enabled. */
+  rawRequest: unknown | null;
+  rawResponse: unknown | null;
 }
 
 export async function fetchDecisions(
@@ -574,4 +599,166 @@ export async function fetchDecisionMakerStatuses(): Promise<
   }
   const body = (await res.json()) as { statuses: DecisionMakerStatus[] };
   return body.statuses;
+}
+
+export type BacktestStatus = "pending" | "running" | "completed" | "failed";
+
+export interface BacktestRun {
+  id: string;
+  symbol: string;
+  decisionMaker: DecisionMaker;
+  decisionFrequencySeconds: number;
+  leverage: number;
+  positionSizeUsd: number;
+  historyWindowSamples: number;
+  historyFormat: HistoryFormat;
+  storeDecisionPayloads: boolean;
+  startTime: string;
+  endTime: string;
+  initialBalanceUsd: number;
+  currentBalanceUsd: number;
+  status: BacktestStatus;
+  error: string | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface CreateBacktestInput {
+  decisionMaker: DecisionMaker;
+  decisionFrequencySeconds: number;
+  leverage: number;
+  positionSizeUsd: number;
+  historyWindowSamples?: number;
+  historyFormat?: HistoryFormat;
+  storeDecisionPayloads?: boolean;
+  startTime: string;
+  endTime: string;
+  initialBalanceUsd: number;
+}
+
+export async function createBacktest(
+  symbol: string,
+  input: CreateBacktestInput,
+): Promise<{ ok: true; backtest: BacktestRun } | { ok: false; error: string }> {
+  const res = await fetch(
+    `${await loadApiUrl()}/perps/${encodeURIComponent(symbol)}/backtests`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(input),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    return { ok: false, error: body?.error ?? "Failed to create backtest" };
+  }
+  return { ok: true, backtest: await res.json() };
+}
+
+export async function fetchBacktestsForSymbol(
+  symbol: string,
+): Promise<BacktestRun[]> {
+  const res = await fetch(
+    `${await loadApiUrl()}/perps/${encodeURIComponent(symbol)}/backtests`,
+    { credentials: "include" },
+  );
+  if (!res.ok) {
+    throw new Error("Failed to load backtests");
+  }
+  const body = (await res.json()) as { backtests: BacktestRun[] };
+  return body.backtests;
+}
+
+export async function fetchBacktest(id: string): Promise<BacktestRun | null> {
+  const res = await fetch(`${await loadApiUrl()}/backtests/${encodeURIComponent(id)}`, {
+    credentials: "include",
+  });
+  if (res.status === 404) {
+    return null;
+  }
+  if (!res.ok) {
+    throw new Error("Failed to load backtest");
+  }
+  return res.json();
+}
+
+export interface BacktestDecisionEntry {
+  id: string;
+  simTime: string;
+  symbol: string;
+  contextSummary: string;
+  targetDirection: string | null;
+  confidence: number | null;
+  probLong: number | null;
+  probShort: number | null;
+  probFlat: number | null;
+  positionAction: string | null;
+  success: boolean;
+  error: string | null;
+  autoFlatten: boolean;
+  rawRequest: unknown | null;
+  rawResponse: unknown | null;
+  createdAt: string;
+}
+
+export async function fetchBacktestDecisions(
+  id: string,
+): Promise<BacktestDecisionEntry[]> {
+  const res = await fetch(
+    `${await loadApiUrl()}/backtests/${encodeURIComponent(id)}/decisions`,
+    { credentials: "include" },
+  );
+  if (!res.ok) {
+    throw new Error("Failed to load backtest decisions");
+  }
+  const body = (await res.json()) as { decisions: BacktestDecisionEntry[] };
+  return body.decisions;
+}
+
+export interface BacktestPosition {
+  backtestRunId: string;
+  symbol: string;
+  direction: string;
+  entryPrice: number;
+  notionalUsd: number;
+  openedAt: string;
+}
+
+export async function fetchBacktestPosition(
+  id: string,
+): Promise<BacktestPosition | null> {
+  const res = await fetch(
+    `${await loadApiUrl()}/backtests/${encodeURIComponent(id)}/position`,
+    { credentials: "include" },
+  );
+  if (!res.ok) {
+    throw new Error("Failed to load backtest position");
+  }
+  const body = (await res.json()) as { position: BacktestPosition | null };
+  return body.position;
+}
+
+export interface BacktestTrade {
+  id: string;
+  symbol: string;
+  direction: string;
+  entryPrice: number;
+  notionalUsd: number;
+  openedAt: string;
+  exitPrice: number;
+  pnlUsd: number;
+  closedAt: string;
+}
+
+export async function fetchBacktestTrades(id: string): Promise<BacktestTrade[]> {
+  const res = await fetch(
+    `${await loadApiUrl()}/backtests/${encodeURIComponent(id)}/trades`,
+    { credentials: "include" },
+  );
+  if (!res.ok) {
+    throw new Error("Failed to load backtest trades");
+  }
+  const body = (await res.json()) as { trades: BacktestTrade[] };
+  return body.trades;
 }

@@ -56,6 +56,8 @@ mod tests {
                     short: 0.0,
                     flat: 1.0,
                 },
+                raw_request: None,
+                raw_response: None,
             })
         }
     }

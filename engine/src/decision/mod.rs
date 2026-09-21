@@ -16,12 +16,14 @@ pub use decision_maker::{
 };
 pub use decision_maker_registry::DecisionMakerRegistry;
 pub use execution::{
-    fill_price, realized_pnl_usd, ExecutionAdapter, ExecutionError, MockExecutionAdapter,
-    OpenPosition,
+    clamp_position_size_usd, fill_price, realized_pnl_usd, ExecutionAdapter, ExecutionError,
+    MockExecutionAdapter, OpenPosition,
 };
 pub use health::{FailureTracker, InMemoryFailureTracker, PerpHealthTracker};
 pub use history::{
-    build_context_summary, HistoryError, MarketDataHistoryReader, PostgresMarketDataHistoryReader,
+    build_context, build_context_series, build_context_summary, effective_history_window,
+    HistoryError, HistoryFormat, MarketDataHistoryReader, PostgresMarketDataHistoryReader,
+    MAX_HISTORY_WINDOW_SAMPLES,
 };
 pub use hyperliquid_signing::{KeyError, PrivateKey};
 pub use live_execution::LiveExecutionAdapter;
@@ -31,6 +33,8 @@ pub use model::{
 };
 pub use openrouter_jev_decision_maker::OpenRouterJevDecisionMaker;
 pub use supervisor::{
-    desired_state, run, run_decision_cycle, PostgresSessionLifecycle, SessionLifecycle,
+    desired_state, min_confidence_to_shift_from_env, parse_min_confidence_to_shift, run,
+    run_decision_cycle, PostgresSessionLifecycle, SessionLifecycle,
+    DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
 };
 pub use typesafe_jev_decision_maker::TypeSafeJevDecisionMaker;

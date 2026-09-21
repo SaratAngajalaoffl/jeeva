@@ -211,6 +211,15 @@ export default function SessionDetailPage() {
             </div>
             <div className="flex flex-col gap-0.5">
               <span className="text-[11px] uppercase tracking-wide text-subtext-0">
+                History window
+              </span>
+              <span className="text-sm font-medium text-text">
+                {session.historyWindowSamples} samples (
+                {session.historyFormat})
+              </span>
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[11px] uppercase tracking-wide text-subtext-0">
                 Wallet
               </span>
               <span className="text-sm font-medium text-text">
@@ -297,15 +306,15 @@ export default function SessionDetailPage() {
           )}
         </Card>
 
-        <Card className="flex flex-col p-0">
-          <h2 className="p-5 pb-0 text-sm font-semibold text-text">
+        <Card className="p-5">
+          <h2 className="mb-3 text-sm font-semibold text-text">
             Decision history
           </h2>
           <div className="overflow-x-auto">
             {!decisions ? (
-              <p className="p-5 text-sm text-subtext-1">Loading...</p>
+              <p className="text-sm text-subtext-1">Loading...</p>
             ) : decisions.length === 0 ? (
-              <p className="p-5 text-sm text-subtext-1">No decisions yet.</p>
+              <p className="text-sm text-subtext-1">No decisions yet.</p>
             ) : (
               <table className="w-full min-w-[560px] border-collapse text-left text-sm text-text">
                 <thead>
@@ -315,6 +324,7 @@ export default function SessionDetailPage() {
                     <th className={TH}>Confidence</th>
                     <th className={TH}>Action</th>
                     <th className={TH}>Status</th>
+                    <th className={TH}>Payload</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -333,6 +343,24 @@ export default function SessionDetailPage() {
                           <span className="text-destructive">error</span>
                         )}
                       </td>
+                      <td className={TD}>
+                        {d.rawRequest || d.rawResponse ? (
+                          <details>
+                            <summary className="cursor-pointer text-subtext-0">
+                              view
+                            </summary>
+                            <pre className="mt-1 max-w-xs overflow-x-auto whitespace-pre-wrap text-xs text-subtext-1">
+                              {JSON.stringify(
+                                { request: d.rawRequest, response: d.rawResponse },
+                                null,
+                                2,
+                              )}
+                            </pre>
+                          </details>
+                        ) : (
+                          "-"
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -341,15 +369,15 @@ export default function SessionDetailPage() {
           </div>
         </Card>
 
-        <Card className="flex flex-col p-0">
-          <h2 className="p-5 pb-0 text-sm font-semibold text-text">
+        <Card className="p-5">
+          <h2 className="mb-3 text-sm font-semibold text-text">
             Funding history
           </h2>
           <div className="overflow-x-auto">
             {!fundingPayments ? (
-              <p className="p-5 text-sm text-subtext-1">Loading...</p>
+              <p className="text-sm text-subtext-1">Loading...</p>
             ) : fundingPayments.length === 0 ? (
-              <p className="p-5 text-sm text-subtext-1">
+              <p className="text-sm text-subtext-1">
                 No funding payments yet.
               </p>
             ) : (

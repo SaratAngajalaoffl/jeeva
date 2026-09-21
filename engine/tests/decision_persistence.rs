@@ -211,6 +211,8 @@ mod decision_log {
                 short: 0.1,
                 flat: 0.2,
             },
+            raw_request: None,
+            raw_response: None,
         };
 
         writer
@@ -221,6 +223,8 @@ mod decision_log {
                 position_action: Some(PositionAction::Open(Direction::Long)),
                 error: None,
                 auto_flatten: false,
+                raw_request: None,
+                raw_response: None,
             })
             .await
             .unwrap();
@@ -247,6 +251,65 @@ mod decision_log {
     }
 
     #[tokio::test]
+    async fn writes_and_reads_back_the_raw_request_and_response_when_provided() {
+        let pool = pool().await;
+        let writer = PostgresDecisionLogWriter::new(pool.clone());
+
+        sqlx::query("DELETE FROM decisions WHERE symbol = $1")
+            .bind("TESTLOGRAW")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let decision = JevDecision {
+            direction: TargetDirection::Long,
+            confidence: 0.8,
+            probabilities: Probabilities {
+                long: 0.7,
+                short: 0.1,
+                flat: 0.2,
+            },
+            raw_request: Some(r#"{"state":"BTC context"}"#.to_string()),
+            raw_response: Some(r#"{"choice":"long","confidence":0.8}"#.to_string()),
+        };
+
+        writer
+            .write(DecisionLogEntry {
+                symbol: "TESTLOGRAW",
+                context_summary: "BTC: price=100",
+                decision: Some(&decision),
+                position_action: Some(PositionAction::Open(Direction::Long)),
+                error: None,
+                auto_flatten: false,
+                raw_request: decision.raw_request.as_deref(),
+                raw_response: decision.raw_response.as_deref(),
+            })
+            .await
+            .unwrap();
+
+        let row = sqlx::query(
+            "SELECT raw_request::text AS raw_request, raw_response::text AS raw_response \
+             FROM decisions WHERE symbol = $1",
+        )
+        .bind("TESTLOGRAW")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let raw_request: Option<String> = row.get("raw_request");
+        let raw_response: Option<String> = row.get("raw_response");
+
+        assert_eq!(
+            raw_request.map(|s| s.parse::<serde_json::Value>().unwrap()),
+            Some(serde_json::json!({"state": "BTC context"}))
+        );
+        assert_eq!(
+            raw_response.map(|s| s.parse::<serde_json::Value>().unwrap()),
+            Some(serde_json::json!({"choice": "long", "confidence": 0.8}))
+        );
+    }
+
+    #[tokio::test]
     async fn writes_a_row_for_a_failed_cycle_with_no_decision() {
         let pool = pool().await;
         let writer = PostgresDecisionLogWriter::new(pool.clone());
@@ -265,6 +328,8 @@ mod decision_log {
                 position_action: None,
                 error: Some("no market data available yet"),
                 auto_flatten: false,
+                raw_request: None,
+                raw_response: None,
             })
             .await
             .unwrap();
@@ -305,6 +370,8 @@ mod decision_log {
                     position_action: None,
                     error: Some("no market data available yet"),
                     auto_flatten: false,
+                    raw_request: None,
+                    raw_response: None,
                 })
                 .await
                 .unwrap();
@@ -351,7 +418,7 @@ mod history {
         assert_eq!(samples[0].price, 100.0);
         assert_eq!(samples[2].price, 102.0);
 
-        let summary = build_context_summary("TESTHIST1", &samples, None, None);
+        let summary = build_context_summary("TESTHIST1", &samples, None, None, chrono::Utc::now());
         assert!(summary.contains("price=102.00"));
     }
 

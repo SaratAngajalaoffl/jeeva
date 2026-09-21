@@ -69,33 +69,47 @@ impl TypeSafeJevDecisionMaker {
 impl DecisionMaker for TypeSafeJevDecisionMaker {
     async fn decide(&self, symbol: &str, state: &str) -> Result<JevDecision, DecisionError> {
         let url = format!("{}/v1/systemOne", self.base_url);
+        let request_body = SystemOneRequest {
+            state,
+            question: ChoiceQuestion {
+                criteria: &["long", "short", "flat"],
+            },
+        };
+        // Best-effort: if this ever fails to serialize, the raw request
+        // is just omitted from the log rather than the cycle failing.
+        let raw_request = serde_json::to_string(&request_body).ok();
 
         let response = self
             .http
             .post(&url)
             .bearer_auth(&self.api_key)
-            .json(&SystemOneRequest {
-                state,
-                question: ChoiceQuestion {
-                    criteria: &["long", "short", "flat"],
-                },
-            })
+            .json(&request_body)
             .send()
             .await
-            .map_err(|e| DecisionError(format!("systemOne request failed for {symbol}: {e}")))?;
+            .map_err(|e| {
+                DecisionError::new(format!("systemOne request failed for {symbol}: {e}"))
+                    .with_raw(raw_request.clone(), None)
+            })?;
 
         let response = response.error_for_status().map_err(|e| {
-            DecisionError(format!(
+            DecisionError::new(format!(
                 "systemOne returned an error status for {symbol}: {e}"
             ))
+            .with_raw(raw_request.clone(), None)
         })?;
 
-        let body: SystemOneResponse = response
-            .json()
-            .await
-            .map_err(|e| DecisionError(format!("systemOne response invalid for {symbol}: {e}")))?;
+        let raw_response = response.text().await.map_err(|e| {
+            DecisionError::new(format!("systemOne response invalid for {symbol}: {e}"))
+                .with_raw(raw_request.clone(), None)
+        })?;
 
-        let direction = parse_direction(&body.choice)?;
+        let body: SystemOneResponse = serde_json::from_str(&raw_response).map_err(|e| {
+            DecisionError::new(format!("systemOne response invalid for {symbol}: {e}"))
+                .with_raw(raw_request.clone(), Some(raw_response.clone()))
+        })?;
+
+        let direction = parse_direction(&body.choice)
+            .map_err(|e| e.with_raw(raw_request.clone(), Some(raw_response.clone())))?;
 
         Ok(JevDecision {
             direction,
@@ -105,6 +119,8 @@ impl DecisionMaker for TypeSafeJevDecisionMaker {
                 short: body.probabilities.short,
                 flat: body.probabilities.flat,
             },
+            raw_request,
+            raw_response: Some(raw_response),
         })
     }
 }
@@ -162,7 +178,7 @@ mod tests {
 
         let dm = adapter_against(&server).await;
         let error = dm.decide("BTC", "state").await.unwrap_err();
-        assert!(error.0.contains("error status"));
+        assert!(error.message.contains("error status"));
     }
 
     #[tokio::test]
@@ -177,7 +193,7 @@ mod tests {
 
         let dm = adapter_against(&server).await;
         let error = dm.decide("BTC", "state").await.unwrap_err();
-        assert!(error.0.contains("invalid"));
+        assert!(error.message.contains("invalid"));
     }
 
     #[tokio::test]
@@ -196,7 +212,7 @@ mod tests {
 
         let dm = adapter_against(&server).await;
         let error = dm.decide("BTC", "state").await.unwrap_err();
-        assert!(error.0.contains("unrecognized choice"));
+        assert!(error.message.contains("unrecognized choice"));
     }
 
     #[tokio::test]
@@ -219,6 +235,6 @@ mod tests {
         };
 
         let error = dm.decide("BTC", "state").await.unwrap_err();
-        assert!(error.0.contains("request failed"));
+        assert!(error.message.contains("request failed"));
     }
 }
