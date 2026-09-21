@@ -194,7 +194,13 @@ impl WalletRegistry {
                             continue;
                         }
                     };
-                    Arc::new(LiveExecutionAdapter::new(base_url.clone(), key, is_mainnet))
+                    Arc::new(LiveExecutionAdapter::new(
+                        base_url.clone(),
+                        key,
+                        is_mainnet,
+                        self.pool.clone(),
+                        id.clone(),
+                    ))
                 }
             };
 
