@@ -45,6 +45,7 @@ function session(overrides: Partial<TradingSession> = {}): TradingSession {
     historyWindowSamples: 1000,
     historyFormat: "summary",
     storeDecisionPayloads: false,
+    stopLossPct: null,
     walletId: "w1",
     status: "active",
     createdAt: "2026-09-20T09:00:00.000Z",

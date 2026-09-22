@@ -307,6 +307,8 @@ export interface TradingSession {
   historyFormat: HistoryFormat;
   /** Whether every decision cycle's raw Jev request/response is persisted, not just the parsed fields. */
   storeDecisionPayloads: boolean;
+  /** Fraction of notional (0-1] at which an open position is force-closed; null means no stop-loss. */
+  stopLossPct: number | null;
   walletId: string | null;
   status: TradingSessionStatus;
   createdAt: string;
@@ -349,6 +351,8 @@ export interface CreateTradingSessionInput {
   historyFormat?: HistoryFormat;
   /** Omit to accept the API default (false). */
   storeDecisionPayloads?: boolean;
+  /** Fraction of notional (0-1] at which an open position is force-closed. Omit or pass null for no stop-loss. */
+  stopLossPct?: number | null;
   walletId?: string | null;
 }
 

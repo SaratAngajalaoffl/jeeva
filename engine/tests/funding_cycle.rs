@@ -1,7 +1,9 @@
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use engine::decision::{Direction, ExecutionAdapter, ExecutionError, OpenPosition};
+use engine::decision::{
+    Direction, DriftOutcome, ExecutionAdapter, ExecutionError, OpenPosition, ReconcileTarget,
+};
 use engine::funding::{
     run_funding_cycle, FundingPaymentWriter, FundingRateError, FundingRateSource, FundingWriteError,
 };
@@ -91,6 +93,10 @@ impl ExecutionAdapter for FakeExecution {
             .unwrap()
             .push((symbol.to_string(), amount_usd));
         Ok(())
+    }
+
+    async fn reconcile(&self, _sessions: &[ReconcileTarget]) -> Result<Vec<DriftOutcome>, ExecutionError> {
+        Ok(Vec::new())
     }
 }
 

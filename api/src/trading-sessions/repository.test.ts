@@ -15,6 +15,7 @@ function session(overrides: Partial<TradingSession> = {}): TradingSession {
     historyWindowSamples: 1000,
     historyFormat: "summary",
     storeDecisionPayloads: false,
+    stopLossPct: null,
     walletId: null,
     status: "active",
     createdAt: "2026-01-01T00:00:00.000Z",
@@ -34,6 +35,7 @@ describe("mergeTradingSessionConfig", () => {
       historyWindowSamples: 40,
       historyFormat: "raw",
       storeDecisionPayloads: false,
+      stopLossPct: null,
     });
   });
 
@@ -47,6 +49,7 @@ describe("mergeTradingSessionConfig", () => {
       historyWindowSamples: 40,
       historyFormat: "raw",
       storeDecisionPayloads: false,
+      stopLossPct: null,
     });
   });
 
@@ -71,6 +74,7 @@ describe("mergeTradingSessionConfig", () => {
       historyWindowSamples: 60,
       historyFormat: "raw",
       storeDecisionPayloads: true,
+      stopLossPct: 0.1,
     });
 
     expect(merged).toEqual({
@@ -81,6 +85,21 @@ describe("mergeTradingSessionConfig", () => {
       historyWindowSamples: 60,
       historyFormat: "raw",
       storeDecisionPayloads: true,
+      stopLossPct: 0.1,
+    });
+  });
+
+  it("clears the stop-loss when the patch explicitly sets it to null", () => {
+    const existing = session({ stopLossPct: 0.2 });
+    expect(
+      mergeTradingSessionConfig(existing, { stopLossPct: null }),
+    ).toMatchObject({ stopLossPct: null });
+  });
+
+  it("leaves the stop-loss untouched when the patch omits it", () => {
+    const existing = session({ stopLossPct: 0.2 });
+    expect(mergeTradingSessionConfig(existing, { leverage: 3 })).toMatchObject({
+      stopLossPct: 0.2,
     });
   });
 

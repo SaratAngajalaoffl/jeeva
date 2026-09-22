@@ -20,6 +20,7 @@ type SessionRow = (
     Option<String>,
     String,
     bool,
+    Option<f64>,
 );
 
 fn row_to_session(row: SessionRow) -> Option<TradingSessionConfig> {
@@ -35,6 +36,7 @@ fn row_to_session(row: SessionRow) -> Option<TradingSessionConfig> {
         wallet_id,
         status,
         store_decision_payloads,
+        stop_loss_pct,
     ) = row;
 
     let Some(decision_maker) = DecisionMakerKind::from_db(&decision_maker) else {
@@ -65,6 +67,7 @@ fn row_to_session(row: SessionRow) -> Option<TradingSessionConfig> {
         wallet_id,
         status,
         store_decision_payloads,
+        stop_loss_pct,
     })
 }
 
@@ -77,7 +80,8 @@ async fn refresh(pool: &PgPool, store: &SessionStore) {
         r#"
         SELECT id::text, symbol, decision_maker, decision_frequency_seconds,
                leverage, position_size_usd, history_window_samples,
-               history_format, wallet_id::text, status, store_decision_payloads
+               history_format, wallet_id::text, status, store_decision_payloads,
+               stop_loss_pct
         FROM trading_sessions
         WHERE status <> 'closed'
         "#,
@@ -147,6 +151,7 @@ mod tests {
             None,
             "active".to_string(),
             false,
+            None,
         );
         assert!(row_to_session(row).is_none());
     }
@@ -165,6 +170,7 @@ mod tests {
             None,
             "not-a-real-status".to_string(),
             false,
+            None,
         );
         assert!(row_to_session(row).is_none());
     }
@@ -183,6 +189,7 @@ mod tests {
             None,
             "active".to_string(),
             false,
+            None,
         );
         assert!(row_to_session(row).is_none());
     }
@@ -201,6 +208,7 @@ mod tests {
             Some("w1".to_string()),
             "soft_closing".to_string(),
             true,
+            None,
         );
         let session = row_to_session(row).unwrap();
         assert_eq!(session.id, "s1");
@@ -226,6 +234,7 @@ mod tests {
             None,
             "active".to_string(),
             false,
+            None,
         );
         // The column's CHECK constraint makes 0 unreachable in practice;
         // the engine still degrades to the smallest readable window

@@ -3,7 +3,10 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use sqlx::PgPool;
 
-use super::execution::{ExecutionAdapter, ExecutionError, OpenPosition};
+use super::execution::{
+    DriftAction, DriftEvent, DriftOutcome, DriftPolicy, ExecutionAdapter, ExecutionError,
+    OpenPosition, ReconcileTarget,
+};
 use super::hyperliquid_signing::{
     market_order_price, sign_order_action, KeyError, OrderAction, OrderRequest, OrderType,
     PrivateKey,
@@ -106,6 +109,7 @@ pub struct LiveExecutionAdapter {
     slippage: f64,
     pool: PgPool,
     wallet_id: String,
+    drift_policy: DriftPolicy,
 }
 
 impl LiveExecutionAdapter {
@@ -114,7 +118,9 @@ impl LiveExecutionAdapter {
     /// what it believes is open, read on every decision cycle instead of
     /// calling Hyperliquid each time. `wallet_id` identifies the row in
     /// the `wallets` table this adapter is scoped to, mirroring
-    /// `MockExecutionAdapter`.
+    /// `MockExecutionAdapter`. Starts with `DriftPolicy::default()`; use
+    /// `with_drift_policy` to configure a different one for this
+    /// instance.
     pub fn new(
         base_url: impl Into<String>,
         key: PrivateKey,
@@ -130,7 +136,15 @@ impl LiveExecutionAdapter {
             slippage: DEFAULT_MARKET_SLIPPAGE,
             pool,
             wallet_id,
+            drift_policy: DriftPolicy::default(),
         }
+    }
+
+    /// Configures this instance's drift policy — see `DriftPolicy` for
+    /// why this is per-adapter rather than a single engine-wide setting.
+    pub fn with_drift_policy(mut self, drift_policy: DriftPolicy) -> Self {
+        self.drift_policy = drift_policy;
+        self
     }
 
     /// The wallet's public address, safe to expose read-only to
@@ -291,6 +305,154 @@ impl LiveExecutionAdapter {
             .map_err(|e| ExecutionError(format!("failed to clear virtual position: {e}")))?;
 
         Ok(())
+    }
+
+    /// Every open position this wallet's Hyperliquid account currently
+    /// reports, symbol-keyed — used by `reconcile` to catch positions no
+    /// known session's virtual state accounts for at all (as opposed to
+    /// `fetch_exchange_position`, which checks one symbol a session
+    /// already claims).
+    async fn fetch_all_exchange_positions(
+        &self,
+    ) -> Result<Vec<(String, OpenPosition)>, ExecutionError> {
+        let state: ClearinghouseState = self
+            .http
+            .post(format!("{}/info", self.base_url))
+            .json(&serde_json::json!({
+                "type": "clearinghouseState",
+                "user": self.public_address(),
+            }))
+            .send()
+            .await
+            .map_err(|e| ExecutionError(format!("clearinghouseState request failed: {e}")))?
+            .json()
+            .await
+            .map_err(|e| ExecutionError(format!("clearinghouseState response invalid: {e}")))?;
+
+        let mut positions = Vec::new();
+        for entry in &state.asset_positions {
+            if let Some(position) = parse_position(&entry.position)? {
+                positions.push((entry.position.coin.clone(), position));
+            }
+        }
+        Ok(positions)
+    }
+
+    /// Places whatever order brings the exchange's position for
+    /// `symbol` to flat. Uses `position.entry_price` as the basis for
+    /// `place_order`'s slippage-padded limit price — reconcile has no
+    /// live mid-price feed of its own, so this is a best-effort
+    /// reference rather than a current mark price; the IOC order type
+    /// means an unfavorable price simply fails to fill rather than
+    /// executing at a bad one.
+    async fn flatten_exchange_position(
+        &self,
+        symbol: &str,
+        position: OpenPosition,
+    ) -> Result<(), ExecutionError> {
+        let is_buy = matches!(position.direction, Direction::Short);
+        let size = position.notional_usd / position.entry_price.max(f64::EPSILON);
+        self.place_order(symbol, is_buy, size, position.entry_price, true)
+            .await
+    }
+
+    /// Attempts to bring the exchange's position for `symbol` in line
+    /// with `target` (virtual state's own belief): opens the full
+    /// target size from flat, flattens-then-opens when the current
+    /// position runs the opposite direction, or tops up/trims the
+    /// existing same-direction position by the notional delta
+    /// otherwise. Same reference-price caveat as
+    /// `flatten_exchange_position`.
+    async fn resubmit_to_match(
+        &self,
+        symbol: &str,
+        target: OpenPosition,
+    ) -> Result<(), ExecutionError> {
+        let current = self.fetch_exchange_position(symbol).await?;
+
+        match current {
+            None => {
+                let is_buy = matches!(target.direction, Direction::Long);
+                let size = target.notional_usd / target.entry_price.max(f64::EPSILON);
+                self.place_order(symbol, is_buy, size, target.entry_price, false)
+                    .await
+            }
+            Some(current) if current.direction != target.direction => {
+                self.flatten_exchange_position(symbol, current).await?;
+                let is_buy = matches!(target.direction, Direction::Long);
+                let size = target.notional_usd / target.entry_price.max(f64::EPSILON);
+                self.place_order(symbol, is_buy, size, target.entry_price, false)
+                    .await
+            }
+            Some(current) => {
+                let delta = target.notional_usd - current.notional_usd;
+                if delta.abs() < f64::EPSILON.max(target.notional_usd * 1e-6) {
+                    return Ok(());
+                }
+                let is_buy = if delta > 0.0 {
+                    matches!(target.direction, Direction::Long)
+                } else {
+                    matches!(target.direction, Direction::Short)
+                };
+                let size = delta.abs() / target.entry_price.max(f64::EPSILON);
+                let reduce_only = delta < 0.0;
+                self.place_order(symbol, is_buy, size, target.entry_price, reduce_only)
+                    .await
+            }
+        }
+    }
+
+    /// Carries out `action` for one drift `event`, using whichever of
+    /// `virtual_position`/`exchange_position` are relevant to it. Never
+    /// panics on a missing session id or position — `Halt` and a policy
+    /// action with nothing meaningful to act on (e.g. `ReSubmit` with no
+    /// session to re-target) both resolve to a no-op `Ok(())`.
+    async fn apply_drift_action(
+        &self,
+        event: &DriftEvent,
+        action: DriftAction,
+        virtual_position: Option<OpenPosition>,
+        exchange_position: Option<OpenPosition>,
+    ) -> Result<(), ExecutionError> {
+        let symbol = event.symbol();
+        let session_id = event.session_id();
+
+        match action {
+            DriftAction::Halt => Ok(()),
+            DriftAction::AdoptAndLog => match (session_id, exchange_position) {
+                (Some(session_id), Some(exchange)) => {
+                    self.write_virtual_position(session_id, symbol, exchange)
+                        .await
+                }
+                (Some(session_id), None) => self.delete_virtual_position(session_id).await,
+                (None, _) => Ok(()),
+            },
+            DriftAction::Flatten => {
+                let result = match exchange_position {
+                    Some(exchange) => self.flatten_exchange_position(symbol, exchange).await,
+                    None => Ok(()),
+                };
+                if result.is_ok() {
+                    if let Some(session_id) = session_id {
+                        let _ = self.delete_virtual_position(session_id).await;
+                    }
+                }
+                result
+            }
+            DriftAction::ReSubmit => match (session_id, virtual_position) {
+                (Some(session_id), Some(target)) => {
+                    let result = self.resubmit_to_match(symbol, target).await;
+                    if result.is_ok() {
+                        if let Some(confirmed) = self.fetch_exchange_position(symbol).await? {
+                            self.write_virtual_position(session_id, symbol, confirmed)
+                                .await?;
+                        }
+                    }
+                    result
+                }
+                _ => Ok(()),
+            },
+        }
     }
 
     async fn place_order(
@@ -469,6 +631,83 @@ impl ExecutionAdapter for LiveExecutionAdapter {
     /// owns the entire mock wallet ledger).
     async fn apply_funding(&self, _symbol: &str, _amount_usd: f64) -> Result<(), ExecutionError> {
         Ok(())
+    }
+
+    /// Detects drift between this wallet's virtual state and its real
+    /// Hyperliquid positions for each of `sessions`, plus any exchange
+    /// position no session in `sessions` accounts for at all, and
+    /// applies this adapter's configured `DriftPolicy` to each finding.
+    async fn reconcile(&self, sessions: &[ReconcileTarget]) -> Result<Vec<DriftOutcome>, ExecutionError> {
+        let mut outcomes = Vec::new();
+        let mut accounted_for = std::collections::HashSet::new();
+
+        for target in sessions {
+            accounted_for.insert(target.symbol.clone());
+
+            let virtual_position = self.read_virtual_position(&target.session_id).await?;
+            let exchange_position = self.fetch_exchange_position(&target.symbol).await?;
+
+            let event = match (virtual_position, exchange_position) {
+                (Some(_), None) => Some(DriftEvent::MissingOnExchange {
+                    session_id: target.session_id.clone(),
+                    symbol: target.symbol.clone(),
+                }),
+                (None, Some(exchange)) => Some(DriftEvent::SizeMismatch {
+                    session_id: target.session_id.clone(),
+                    symbol: target.symbol.clone(),
+                    virtual_notional_usd: 0.0,
+                    exchange_notional_usd: exchange.notional_usd,
+                }),
+                (Some(virtual_position), Some(exchange_position)) => {
+                    let direction_matches = virtual_position.direction == exchange_position.direction;
+                    let size_matches = (virtual_position.notional_usd - exchange_position.notional_usd)
+                        .abs()
+                        < f64::EPSILON.max(virtual_position.notional_usd * 1e-6);
+                    if direction_matches && size_matches {
+                        None
+                    } else {
+                        Some(DriftEvent::SizeMismatch {
+                            session_id: target.session_id.clone(),
+                            symbol: target.symbol.clone(),
+                            virtual_notional_usd: virtual_position.notional_usd,
+                            exchange_notional_usd: exchange_position.notional_usd,
+                        })
+                    }
+                }
+                (None, None) => None,
+            };
+
+            let Some(event) = event else { continue };
+            let action = self.drift_policy.action_for(&event);
+            let result = self
+                .apply_drift_action(&event, action, virtual_position, exchange_position)
+                .await;
+            outcomes.push(DriftOutcome {
+                event,
+                action,
+                error: result.err().map(|e| e.to_string()),
+            });
+        }
+
+        for (symbol, position) in self.fetch_all_exchange_positions().await? {
+            if accounted_for.contains(&symbol) {
+                continue;
+            }
+            let event = DriftEvent::UnknownOnExchange {
+                symbol: symbol.clone(),
+            };
+            let action = self.drift_policy.action_for(&event);
+            let result = self
+                .apply_drift_action(&event, action, None, Some(position))
+                .await;
+            outcomes.push(DriftOutcome {
+                event,
+                action,
+                error: result.err().map(|e| e.to_string()),
+            });
+        }
+
+        Ok(outcomes)
     }
 }
 
@@ -759,5 +998,220 @@ mod tests {
         let adapter = LiveExecutionAdapter::new(server_url, key, true, pool, wallet_id.to_string());
         assert!(adapter.public_address().starts_with("0x"));
         assert_eq!(adapter.public_address().len(), 42);
+    }
+
+    /// A single `/info` mock whose body carries every field any
+    /// `/info` call type reads (`clearinghouseState`'s
+    /// `assetPositions`/`withdrawable`, `meta`'s `universe`) — each
+    /// endpoint ignores the fields it doesn't recognize, so one mock can
+    /// stand in for every `/info` call a test makes, however many times.
+    async fn mount_combined_info(server: &MockServer, asset_positions: serde_json::Value) {
+        Mock::given(method("POST"))
+            .and(path("/info"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "withdrawable": "1000.0",
+                "universe": [{ "name": "BTC" }],
+                "assetPositions": asset_positions,
+            })))
+            .mount(server)
+            .await;
+    }
+
+    async fn mount_ok_exchange(server: &MockServer) {
+        Mock::given(method("POST"))
+            .and(path("/exchange"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "status": "ok", "response": {} })),
+            )
+            .mount(server)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn reconcile_adopts_virtual_state_when_the_exchange_is_actually_flat() {
+        let pool = pool().await;
+        let wallet_id = "00000000-0000-0000-0000-000000000101";
+        let session_id = "00000000-0000-0000-0000-000000000102";
+        reset_wallet_and_position(&pool, wallet_id, session_id).await;
+
+        let server = MockServer::start().await;
+        mount_combined_info(&server, json!([])).await;
+
+        let adapter = adapter_against(&server, pool.clone(), wallet_id).await;
+        adapter
+            .write_virtual_position(
+                session_id,
+                "BTC",
+                OpenPosition {
+                    direction: Direction::Long,
+                    entry_price: 50000.0,
+                    notional_usd: 1000.0,
+                    opened_at: Utc::now(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let outcomes = adapter
+            .reconcile(&[ReconcileTarget {
+                session_id: session_id.to_string(),
+                symbol: "BTC".to_string(),
+                status: crate::session::TradingSessionStatus::Active,
+            }])
+            .await
+            .unwrap();
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(
+            outcomes[0].event,
+            DriftEvent::MissingOnExchange {
+                session_id: session_id.to_string(),
+                symbol: "BTC".to_string(),
+            }
+        );
+        assert_eq!(outcomes[0].action, DriftAction::AdoptAndLog);
+        assert_eq!(outcomes[0].error, None);
+
+        // Virtual state now agrees with the exchange: flat.
+        assert_eq!(adapter.get_position(session_id, "BTC").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn reconcile_flattens_an_unknown_exchange_position_by_default() {
+        let pool = pool().await;
+        let wallet_id = "00000000-0000-0000-0000-000000000103";
+        let session_id = "00000000-0000-0000-0000-000000000104";
+        reset_wallet_and_position(&pool, wallet_id, session_id).await;
+
+        let server = MockServer::start().await;
+        mount_combined_info(
+            &server,
+            json!([{ "position": { "coin": "BTC", "szi": "0.02", "entryPx": "50000" } }]),
+        )
+        .await;
+        mount_ok_exchange(&server).await;
+
+        let adapter = adapter_against(&server, pool.clone(), wallet_id).await;
+
+        // No sessions at all track BTC — the exchange position is
+        // entirely unaccounted for.
+        let outcomes = adapter.reconcile(&[]).await.unwrap();
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(
+            outcomes[0].event,
+            DriftEvent::UnknownOnExchange {
+                symbol: "BTC".to_string(),
+            }
+        );
+        assert_eq!(outcomes[0].action, DriftAction::Flatten);
+        assert_eq!(outcomes[0].error, None);
+    }
+
+    #[tokio::test]
+    async fn reconcile_resubmits_to_top_up_a_partially_filled_position() {
+        let pool = pool().await;
+        let wallet_id = "00000000-0000-0000-0000-000000000105";
+        let session_id = "00000000-0000-0000-0000-000000000106";
+        reset_wallet_and_position(&pool, wallet_id, session_id).await;
+
+        let server = MockServer::start().await;
+        // Exchange only has half of what virtual state believes is open
+        // (e.g. a partial fill never topped up).
+        mount_combined_info(
+            &server,
+            json!([{ "position": { "coin": "BTC", "szi": "0.01", "entryPx": "50000" } }]),
+        )
+        .await;
+        mount_ok_exchange(&server).await;
+
+        let adapter = adapter_against(&server, pool.clone(), wallet_id)
+            .await
+            .with_drift_policy(DriftPolicy {
+                size_mismatch: DriftAction::ReSubmit,
+                ..DriftPolicy::default()
+            });
+        adapter
+            .write_virtual_position(
+                session_id,
+                "BTC",
+                OpenPosition {
+                    direction: Direction::Long,
+                    entry_price: 50000.0,
+                    notional_usd: 1000.0,
+                    opened_at: Utc::now(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let outcomes = adapter
+            .reconcile(&[ReconcileTarget {
+                session_id: session_id.to_string(),
+                symbol: "BTC".to_string(),
+                status: crate::session::TradingSessionStatus::Active,
+            }])
+            .await
+            .unwrap();
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].action, DriftAction::ReSubmit);
+        assert_eq!(outcomes[0].error, None);
+        assert!(matches!(
+            outcomes[0].event,
+            DriftEvent::SizeMismatch { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn reconcile_takes_no_action_when_the_policy_is_halt() {
+        let pool = pool().await;
+        let wallet_id = "00000000-0000-0000-0000-000000000107";
+        let session_id = "00000000-0000-0000-0000-000000000108";
+        reset_wallet_and_position(&pool, wallet_id, session_id).await;
+
+        let server = MockServer::start().await;
+        // No /exchange mock at all: if Halt somehow placed an order,
+        // this test would fail on the unmatched request instead of
+        // silently passing.
+        mount_combined_info(
+            &server,
+            json!([{ "position": { "coin": "BTC", "szi": "0.01", "entryPx": "50000" } }]),
+        )
+        .await;
+
+        let adapter = adapter_against(&server, pool.clone(), wallet_id)
+            .await
+            .with_drift_policy(DriftPolicy {
+                size_mismatch: DriftAction::Halt,
+                ..DriftPolicy::default()
+            });
+        let seeded = OpenPosition {
+            direction: Direction::Long,
+            entry_price: 50000.0,
+            notional_usd: 1000.0,
+            opened_at: Utc::now(),
+        };
+        adapter
+            .write_virtual_position(session_id, "BTC", seeded)
+            .await
+            .unwrap();
+
+        let outcomes = adapter
+            .reconcile(&[ReconcileTarget {
+                session_id: session_id.to_string(),
+                symbol: "BTC".to_string(),
+                status: crate::session::TradingSessionStatus::Active,
+            }])
+            .await
+            .unwrap();
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].action, DriftAction::Halt);
+        assert_eq!(outcomes[0].error, None);
+
+        // Virtual state is untouched — Halt takes no corrective action.
+        let unchanged = adapter.get_position(session_id, "BTC").await.unwrap().unwrap();
+        assert_eq!(unchanged.notional_usd, seeded.notional_usd);
     }
 }

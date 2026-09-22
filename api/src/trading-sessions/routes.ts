@@ -11,6 +11,7 @@ import {
   isValidHistoryFormat,
   isValidHistoryWindowSamples,
 } from "./historyWindow.js";
+import { isValidStopLossPct } from "./stopLoss.js";
 import {
   createTradingSession,
   getTradingSession,
@@ -61,6 +62,7 @@ export function createTradingSessionsRouter(
       historyWindowSamples,
       historyFormat,
       storeDecisionPayloads,
+      stopLossPct,
       walletId,
     } = req.body ?? {};
 
@@ -74,6 +76,9 @@ export function createTradingSessionsRouter(
       (historyFormat !== undefined && !isValidHistoryFormat(historyFormat)) ||
       (storeDecisionPayloads !== undefined &&
         typeof storeDecisionPayloads !== "boolean") ||
+      (stopLossPct !== undefined &&
+        stopLossPct !== null &&
+        !isValidStopLossPct(stopLossPct)) ||
       (walletId !== undefined &&
         walletId !== null &&
         typeof walletId !== "string")
@@ -110,6 +115,7 @@ export function createTradingSessionsRouter(
         historyWindowSamples,
         historyFormat,
         storeDecisionPayloads,
+        stopLossPct: stopLossPct ?? null,
         walletId: resolvedWalletId,
       });
       // A market can't be traded blind: enabling trading for it (by
@@ -145,6 +151,7 @@ export function createTradingSessionsRouter(
       historyWindowSamples,
       historyFormat,
       storeDecisionPayloads,
+      stopLossPct,
     } = req.body ?? {};
 
     if (
@@ -158,13 +165,16 @@ export function createTradingSessionsRouter(
         !isValidHistoryWindowSamples(historyWindowSamples)) ||
       (historyFormat !== undefined && !isValidHistoryFormat(historyFormat)) ||
       (storeDecisionPayloads !== undefined &&
-        typeof storeDecisionPayloads !== "boolean")
+        typeof storeDecisionPayloads !== "boolean") ||
+      (stopLossPct !== undefined &&
+        stopLossPct !== null &&
+        !isValidStopLossPct(stopLossPct))
     ) {
       res.status(400).json({ error: "invalid request" });
       return;
     }
 
-    const session = await updateTradingSessionConfig(pgPool, id, {
+    const patch: Parameters<typeof updateTradingSessionConfig>[2] = {
       decisionMaker,
       decisionFrequencySeconds,
       leverage,
@@ -172,7 +182,15 @@ export function createTradingSessionsRouter(
       historyWindowSamples,
       historyFormat,
       storeDecisionPayloads,
-    });
+    };
+    // Only include `stopLossPct` in the patch when the caller sent it —
+    // an omitted field must leave the existing stop-loss untouched,
+    // while an explicit `null` clears it (see `mergeTradingSessionConfig`).
+    if ("stopLossPct" in (req.body ?? {})) {
+      patch.stopLossPct = stopLossPct ?? null;
+    }
+
+    const session = await updateTradingSessionConfig(pgPool, id, patch);
     if (!session) {
       res.status(404).json({ error: "trading session not found" });
       return;

@@ -24,6 +24,11 @@ const SESSION_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const BACKTEST_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const WALLET_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const POSTGRES_CONNECT_RETRY_DELAY: Duration = Duration::from_secs(5);
+// Deliberately much tighter than any session's decision_frequency_seconds
+// (which defaults to 300s and is rarely configured below tens of
+// seconds), so drift and a hard-close request are caught well before the
+// next decision cycle would notice them.
+const RECONCILE_POLL_INTERVAL: Duration = Duration::from_secs(5);
 // Hyperliquid applies funding hourly.
 const FUNDING_INTERVAL: Duration = Duration::from_secs(60 * 60);
 // How often expired market data is pruned.
@@ -134,8 +139,9 @@ async fn main() {
         _ = market_data::run(store.clone(), market_data_client, market_data_writer, SAMPLING_POLL_INTERVAL) => {},
         _ = wallets.clone().run(WALLET_POLL_INTERVAL) => {},
         _ = session::run(pool.clone(), session_store.clone(), SESSION_POLL_INTERVAL) => {},
-        _ = decision::run(session_store, min_confidence_to_shift, history, decision_makers, wallets.clone(), mode_store, funding_history, decision_log, health, session_lifecycle, DECISION_POLL_INTERVAL) => {},
-        _ = funding::run(wallets, funding_rate_source, funding_payment_writer, FUNDING_INTERVAL) => {},
+        _ = decision::run(session_store.clone(), min_confidence_to_shift, history.clone(), decision_makers, wallets.clone(), mode_store.clone(), funding_history, decision_log.clone(), health, session_lifecycle.clone(), DECISION_POLL_INTERVAL) => {},
+        _ = funding::run(wallets.clone(), funding_rate_source, funding_payment_writer, FUNDING_INTERVAL) => {},
+        _ = engine::reconcile::run(session_store, wallets, mode_store, history, decision_log, session_lifecycle, RECONCILE_POLL_INTERVAL) => {},
         _ = backtest::run(pool.clone(), backtest_decision_maker_for, BACKTEST_POLL_INTERVAL) => {},
         _ = market_data::run_retention(pool.clone(), market_data_ttl_days, MARKET_DATA_RETENTION_SWEEP_INTERVAL) => {},
     }

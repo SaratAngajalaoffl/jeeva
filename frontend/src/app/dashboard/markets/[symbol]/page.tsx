@@ -840,6 +840,7 @@ function NewSessionForm({
   const [historyWindowSamples, setHistoryWindowSamples] = useState("1000");
   const [historyFormat, setHistoryFormat] = useState<HistoryFormat>("summary");
   const [storeDecisionPayloads, setStoreDecisionPayloads] = useState(false);
+  const [stopLossPct, setStopLossPct] = useState("");
   const [walletId, setWalletId] = useState("");
   const [wallets, setWallets] = useState<Wallet[] | null>(null);
   const [startTime, setStartTime] = useState("");
@@ -882,6 +883,7 @@ function NewSessionForm({
         const lev = Number(leverage);
         const size = Number(positionSizeUsd);
         const history = Number(historyWindowSamples);
+        const stopLoss = stopLossPct.trim() === "" ? null : Number(stopLossPct) / 100;
         if (
           !Number.isFinite(decision) ||
           decision <= 0 ||
@@ -891,7 +893,8 @@ function NewSessionForm({
           size <= 0 ||
           !Number.isInteger(history) ||
           history < 1 ||
-          history > 1000
+          history > 1000 ||
+          (stopLoss !== null && (!Number.isFinite(stopLoss) || stopLoss <= 0 || stopLoss > 1))
         ) {
           return;
         }
@@ -939,6 +942,7 @@ function NewSessionForm({
           historyWindowSamples: history,
           historyFormat,
           storeDecisionPayloads,
+          stopLossPct: stopLoss,
           walletId: walletId || null,
         });
         setSubmitting(false);
@@ -1033,6 +1037,20 @@ function NewSessionForm({
           Store raw Jev request/response for every decision
         </span>
       </label>
+      {sessionType === "live" ? (
+        <label className="flex flex-col gap-1">
+          <Label>Stop loss (% of notional, optional)</Label>
+          <Input
+            type="number"
+            min={0}
+            max={100}
+            step="any"
+            placeholder="No stop loss"
+            value={stopLossPct}
+            onChange={(e) => setStopLossPct(e.target.value)}
+          />
+        </label>
+      ) : null}
       {sessionType === "live" ? (
         <label className="flex flex-col gap-1">
           <Label>Wallet (optional — can attach later)</Label>
