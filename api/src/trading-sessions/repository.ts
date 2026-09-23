@@ -26,6 +26,8 @@ export interface TradingSession {
   historyFormat: HistoryFormat;
   /** Whether every decision cycle's raw Jev request/response JSON is persisted, not just the parsed fields. */
   storeDecisionPayloads: boolean;
+  /** Fraction of notional (0-1] at which an open position is force-closed; null means no stop-loss. */
+  stopLossPct: number | null;
   walletId: string | null;
   status: TradingSessionStatus;
   createdAt: string;
@@ -58,6 +60,7 @@ interface TradingSessionRow {
   history_window_samples: number;
   history_format: HistoryFormat;
   store_decision_payloads: boolean;
+  stop_loss_pct: string | null;
   wallet_id: string | null;
   status: TradingSessionStatus;
   created_at: Date;
@@ -75,6 +78,7 @@ function toTradingSession(row: TradingSessionRow): TradingSession {
     historyWindowSamples: row.history_window_samples,
     historyFormat: row.history_format,
     storeDecisionPayloads: row.store_decision_payloads,
+    stopLossPct: row.stop_loss_pct === null ? null : Number(row.stop_loss_pct),
     walletId: row.wallet_id,
     status: row.status,
     createdAt: row.created_at.toISOString(),
@@ -83,7 +87,7 @@ function toTradingSession(row: TradingSessionRow): TradingSession {
 }
 
 const COLUMNS =
-  "id, symbol, decision_maker, decision_frequency_seconds, leverage, position_size_usd, history_window_samples, history_format, store_decision_payloads, wallet_id, status, created_at, closed_at";
+  "id, symbol, decision_maker, decision_frequency_seconds, leverage, position_size_usd, history_window_samples, history_format, store_decision_payloads, stop_loss_pct, wallet_id, status, created_at, closed_at";
 
 export async function listTradingSessions(
   pool: Pool,
@@ -124,6 +128,7 @@ export interface CreateTradingSessionInput {
   historyWindowSamples?: number;
   historyFormat?: HistoryFormat;
   storeDecisionPayloads?: boolean;
+  stopLossPct?: number | null;
   walletId: string | null;
 }
 
@@ -151,8 +156,8 @@ export async function createTradingSession(
     const result = await pool.query<TradingSessionRow>(
       `INSERT INTO trading_sessions
          (symbol, decision_maker, decision_frequency_seconds, leverage, position_size_usd,
-          history_window_samples, history_format, store_decision_payloads, wallet_id, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active')
+          history_window_samples, history_format, store_decision_payloads, stop_loss_pct, wallet_id, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'active')
        RETURNING ${COLUMNS}`,
       [
         input.symbol,
@@ -163,6 +168,7 @@ export async function createTradingSession(
         input.historyWindowSamples ?? DEFAULT_HISTORY_WINDOW_SAMPLES,
         input.historyFormat ?? DEFAULT_HISTORY_FORMAT,
         input.storeDecisionPayloads ?? false,
+        input.stopLossPct ?? null,
         input.walletId,
       ],
     );
@@ -180,6 +186,7 @@ export type TradingSessionConfigPatch = Partial<
     | "historyWindowSamples"
     | "historyFormat"
     | "storeDecisionPayloads"
+    | "stopLossPct"
   >
 >;
 
@@ -199,6 +206,7 @@ export function mergeTradingSessionConfig(
   historyWindowSamples: number;
   historyFormat: HistoryFormat;
   storeDecisionPayloads: boolean;
+  stopLossPct: number | null;
 } {
   return {
     decisionMaker: patch.decisionMaker ?? existing.decisionMaker,
@@ -211,6 +219,11 @@ export function mergeTradingSessionConfig(
     historyFormat: patch.historyFormat ?? existing.historyFormat,
     storeDecisionPayloads:
       patch.storeDecisionPayloads ?? existing.storeDecisionPayloads,
+    // `stopLossPct` is nullable itself (null clears the stop-loss), so
+    // an omitted key (undefined) means "leave it alone" while an
+    // explicit `null` means "clear it" — `??` can't tell those apart.
+    stopLossPct:
+      "stopLossPct" in patch ? (patch.stopLossPct ?? null) : existing.stopLossPct,
   };
 }
 
@@ -233,7 +246,8 @@ export async function updateTradingSessionConfig(
          position_size_usd = $5,
          history_window_samples = $6,
          history_format = $7,
-         store_decision_payloads = $8
+         store_decision_payloads = $8,
+         stop_loss_pct = $9
      WHERE id = $1
      RETURNING ${COLUMNS}`,
     [
@@ -245,6 +259,7 @@ export async function updateTradingSessionConfig(
       merged.historyWindowSamples,
       merged.historyFormat,
       merged.storeDecisionPayloads,
+      merged.stopLossPct,
     ],
   );
   return toTradingSession(result.rows[0]);

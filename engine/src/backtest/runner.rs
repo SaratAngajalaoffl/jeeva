@@ -58,6 +58,9 @@ fn to_session_config(run: &BacktestRun) -> TradingSessionConfig {
         // lifecycle states, irrelevant to a one-shot replay.
         status: TradingSessionStatus::Active,
         store_decision_payloads: run.store_decision_payloads,
+        // Stop-loss enforcement lives in the reconcile loop, which a
+        // one-shot backtest replay never runs.
+        stop_loss_pct: None,
     }
 }
 

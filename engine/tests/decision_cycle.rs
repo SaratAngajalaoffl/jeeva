@@ -2,9 +2,10 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use engine::decision::{
-    run_decision_cycle, DecisionLogEntry, DecisionLogWriter, Direction, ExecutionAdapter,
-    ExecutionError, HistoryError, InMemoryFailureTracker, MarketDataHistoryReader, OpenPosition,
-    RandomDecisionMaker, SessionLifecycle, TargetDirection, DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+    run_decision_cycle, DecisionLogEntry, DecisionLogWriter, Direction, DriftOutcome,
+    ExecutionAdapter, ExecutionError, HistoryError, InMemoryFailureTracker,
+    MarketDataHistoryReader, OpenPosition, RandomDecisionMaker, ReconcileTarget, SessionLifecycle,
+    TargetDirection, DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
 };
 use engine::funding::{FundingHistoryError, FundingHistoryReader, FundingRecord};
 use engine::market_data::MarketDataSample;
@@ -126,6 +127,13 @@ impl ExecutionAdapter for FakeExecution {
     async fn apply_funding(&self, _symbol: &str, _amount_usd: f64) -> Result<(), ExecutionError> {
         Ok(())
     }
+
+    async fn reconcile(
+        &self,
+        _sessions: &[ReconcileTarget],
+    ) -> Result<Vec<DriftOutcome>, ExecutionError> {
+        Ok(Vec::new())
+    }
 }
 
 struct LoggedEntry {
@@ -202,6 +210,7 @@ fn config() -> TradingSessionConfig {
         wallet_id: None,
         status: TradingSessionStatus::Active,
         store_decision_payloads: false,
+        stop_loss_pct: None,
     }
 }
 

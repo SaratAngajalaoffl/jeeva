@@ -217,4 +217,14 @@ impl ExecutionAdapter for BacktestExecutionAdapter {
 
         Ok(())
     }
+
+    /// A backtest replay has no real exchange to drift from — its
+    /// simulated state is authoritative by construction, same as
+    /// `MockExecutionAdapter`.
+    async fn reconcile(
+        &self,
+        _sessions: &[crate::decision::ReconcileTarget],
+    ) -> Result<Vec<crate::decision::DriftOutcome>, ExecutionError> {
+        Ok(Vec::new())
+    }
 }

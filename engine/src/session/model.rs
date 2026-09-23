@@ -49,4 +49,8 @@ pub struct TradingSessionConfig {
     /// probabilities. Off by default: raw payloads can be large and
     /// most sessions don't need them for debugging or auditing.
     pub store_decision_payloads: bool,
+    /// Fraction of notional (0-1] at which an open position is force-
+    /// closed by the reconcile loop; `None` means no stop-loss is
+    /// configured.
+    pub stop_loss_pct: Option<f64>,
 }

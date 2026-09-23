@@ -1,8 +1,12 @@
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
+use sqlx::PgPool;
 
-use super::execution::{ExecutionAdapter, ExecutionError, OpenPosition};
+use super::execution::{
+    DriftAction, DriftEvent, DriftOutcome, DriftPolicy, ExecutionAdapter, ExecutionError,
+    OpenPosition, ReconcileTarget,
+};
 use super::hyperliquid_signing::{
     market_order_price, sign_order_action, KeyError, OrderAction, OrderRequest, OrderType,
     PrivateKey,
@@ -103,17 +107,44 @@ pub struct LiveExecutionAdapter {
     key: PrivateKey,
     is_mainnet: bool,
     slippage: f64,
+    pool: PgPool,
+    wallet_id: String,
+    drift_policy: DriftPolicy,
 }
 
 impl LiveExecutionAdapter {
-    pub fn new(base_url: impl Into<String>, key: PrivateKey, is_mainnet: bool) -> Self {
+    /// `pool`/`wallet_id` back this adapter's persisted virtual position
+    /// state (the `live_positions` table) — the engine's own record of
+    /// what it believes is open, read on every decision cycle instead of
+    /// calling Hyperliquid each time. `wallet_id` identifies the row in
+    /// the `wallets` table this adapter is scoped to, mirroring
+    /// `MockExecutionAdapter`. Starts with `DriftPolicy::default()`; use
+    /// `with_drift_policy` to configure a different one for this
+    /// instance.
+    pub fn new(
+        base_url: impl Into<String>,
+        key: PrivateKey,
+        is_mainnet: bool,
+        pool: PgPool,
+        wallet_id: String,
+    ) -> Self {
         Self {
             base_url: base_url.into(),
             http: reqwest::Client::new(),
             key,
             is_mainnet,
             slippage: DEFAULT_MARKET_SLIPPAGE,
+            pool,
+            wallet_id,
+            drift_policy: DriftPolicy::default(),
         }
+    }
+
+    /// Configures this instance's drift policy — see `DriftPolicy` for
+    /// why this is per-adapter rather than a single engine-wide setting.
+    pub fn with_drift_policy(mut self, drift_policy: DriftPolicy) -> Self {
+        self.drift_policy = drift_policy;
+        self
     }
 
     /// The wallet's public address, safe to expose read-only to
@@ -167,7 +198,16 @@ impl LiveExecutionAdapter {
             .ok_or_else(|| ExecutionError(format!("unknown symbol: {symbol}")))
     }
 
-    async fn fetch_position(&self, symbol: &str) -> Result<Option<OpenPosition>, ExecutionError> {
+    /// Reads the real position straight from Hyperliquid's
+    /// `clearinghouseState` — the exchange's own truth, as opposed to
+    /// `read_virtual_position`'s engine-owned record. Used here only to
+    /// confirm a fill immediately after placing an order; the reconcile
+    /// loop (a later slice) is what calls this on a schedule to detect
+    /// drift between the two.
+    async fn fetch_exchange_position(
+        &self,
+        symbol: &str,
+    ) -> Result<Option<OpenPosition>, ExecutionError> {
         let state: ClearinghouseState = self
             .http
             .post(format!("{}/info", self.base_url))
@@ -190,6 +230,228 @@ impl LiveExecutionAdapter {
         match entry {
             Some(entry) => parse_position(&entry.position),
             None => Ok(None),
+        }
+    }
+
+    /// Reads this session's virtual position — the engine's own record
+    /// of what it believes is open, written by `open`/`close` — rather
+    /// than calling Hyperliquid.
+    async fn read_virtual_position(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<OpenPosition>, ExecutionError> {
+        let row = sqlx::query_as::<_, (String, f64, f64, DateTime<Utc>)>(
+            "SELECT direction, entry_price, notional_usd, opened_at FROM live_positions WHERE session_id = $1::uuid",
+        )
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| ExecutionError(format!("failed to read virtual position: {e}")))?;
+
+        Ok(row.map(
+            |(direction, entry_price, notional_usd, opened_at)| OpenPosition {
+                direction: if direction == "long" {
+                    Direction::Long
+                } else {
+                    Direction::Short
+                },
+                entry_price,
+                notional_usd,
+                opened_at,
+            },
+        ))
+    }
+
+    /// Upserts this session's virtual position after a confirmed open.
+    async fn write_virtual_position(
+        &self,
+        session_id: &str,
+        symbol: &str,
+        position: OpenPosition,
+    ) -> Result<(), ExecutionError> {
+        sqlx::query(
+            r#"
+            INSERT INTO live_positions (session_id, symbol, direction, entry_price, notional_usd, opened_at, wallet_id)
+            VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid)
+            ON CONFLICT (session_id) DO UPDATE SET
+                symbol = EXCLUDED.symbol,
+                direction = EXCLUDED.direction,
+                entry_price = EXCLUDED.entry_price,
+                notional_usd = EXCLUDED.notional_usd,
+                opened_at = EXCLUDED.opened_at,
+                wallet_id = EXCLUDED.wallet_id
+            "#,
+        )
+        .bind(session_id)
+        .bind(symbol)
+        .bind(position.direction.as_str())
+        .bind(position.entry_price)
+        .bind(position.notional_usd)
+        .bind(position.opened_at)
+        .bind(&self.wallet_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| ExecutionError(format!("failed to write virtual position: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Clears this session's virtual position after a confirmed close.
+    async fn delete_virtual_position(&self, session_id: &str) -> Result<(), ExecutionError> {
+        sqlx::query("DELETE FROM live_positions WHERE session_id = $1::uuid")
+            .bind(session_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| ExecutionError(format!("failed to clear virtual position: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Every open position this wallet's Hyperliquid account currently
+    /// reports, symbol-keyed — used by `reconcile` to catch positions no
+    /// known session's virtual state accounts for at all (as opposed to
+    /// `fetch_exchange_position`, which checks one symbol a session
+    /// already claims).
+    async fn fetch_all_exchange_positions(
+        &self,
+    ) -> Result<Vec<(String, OpenPosition)>, ExecutionError> {
+        let state: ClearinghouseState = self
+            .http
+            .post(format!("{}/info", self.base_url))
+            .json(&serde_json::json!({
+                "type": "clearinghouseState",
+                "user": self.public_address(),
+            }))
+            .send()
+            .await
+            .map_err(|e| ExecutionError(format!("clearinghouseState request failed: {e}")))?
+            .json()
+            .await
+            .map_err(|e| ExecutionError(format!("clearinghouseState response invalid: {e}")))?;
+
+        let mut positions = Vec::new();
+        for entry in &state.asset_positions {
+            if let Some(position) = parse_position(&entry.position)? {
+                positions.push((entry.position.coin.clone(), position));
+            }
+        }
+        Ok(positions)
+    }
+
+    /// Places whatever order brings the exchange's position for
+    /// `symbol` to flat. Uses `position.entry_price` as the basis for
+    /// `place_order`'s slippage-padded limit price — reconcile has no
+    /// live mid-price feed of its own, so this is a best-effort
+    /// reference rather than a current mark price; the IOC order type
+    /// means an unfavorable price simply fails to fill rather than
+    /// executing at a bad one.
+    async fn flatten_exchange_position(
+        &self,
+        symbol: &str,
+        position: OpenPosition,
+    ) -> Result<(), ExecutionError> {
+        let is_buy = matches!(position.direction, Direction::Short);
+        let size = position.notional_usd / position.entry_price.max(f64::EPSILON);
+        self.place_order(symbol, is_buy, size, position.entry_price, true)
+            .await
+    }
+
+    /// Attempts to bring the exchange's position for `symbol` in line
+    /// with `target` (virtual state's own belief): opens the full
+    /// target size from flat, flattens-then-opens when the current
+    /// position runs the opposite direction, or tops up/trims the
+    /// existing same-direction position by the notional delta
+    /// otherwise. Same reference-price caveat as
+    /// `flatten_exchange_position`.
+    async fn resubmit_to_match(
+        &self,
+        symbol: &str,
+        target: OpenPosition,
+    ) -> Result<(), ExecutionError> {
+        let current = self.fetch_exchange_position(symbol).await?;
+
+        match current {
+            None => {
+                let is_buy = matches!(target.direction, Direction::Long);
+                let size = target.notional_usd / target.entry_price.max(f64::EPSILON);
+                self.place_order(symbol, is_buy, size, target.entry_price, false)
+                    .await
+            }
+            Some(current) if current.direction != target.direction => {
+                self.flatten_exchange_position(symbol, current).await?;
+                let is_buy = matches!(target.direction, Direction::Long);
+                let size = target.notional_usd / target.entry_price.max(f64::EPSILON);
+                self.place_order(symbol, is_buy, size, target.entry_price, false)
+                    .await
+            }
+            Some(current) => {
+                let delta = target.notional_usd - current.notional_usd;
+                if delta.abs() < f64::EPSILON.max(target.notional_usd * 1e-6) {
+                    return Ok(());
+                }
+                let is_buy = if delta > 0.0 {
+                    matches!(target.direction, Direction::Long)
+                } else {
+                    matches!(target.direction, Direction::Short)
+                };
+                let size = delta.abs() / target.entry_price.max(f64::EPSILON);
+                let reduce_only = delta < 0.0;
+                self.place_order(symbol, is_buy, size, target.entry_price, reduce_only)
+                    .await
+            }
+        }
+    }
+
+    /// Carries out `action` for one drift `event`, using whichever of
+    /// `virtual_position`/`exchange_position` are relevant to it. Never
+    /// panics on a missing session id or position — `Halt` and a policy
+    /// action with nothing meaningful to act on (e.g. `ReSubmit` with no
+    /// session to re-target) both resolve to a no-op `Ok(())`.
+    async fn apply_drift_action(
+        &self,
+        event: &DriftEvent,
+        action: DriftAction,
+        virtual_position: Option<OpenPosition>,
+        exchange_position: Option<OpenPosition>,
+    ) -> Result<(), ExecutionError> {
+        let symbol = event.symbol();
+        let session_id = event.session_id();
+
+        match action {
+            DriftAction::Halt => Ok(()),
+            DriftAction::AdoptAndLog => match (session_id, exchange_position) {
+                (Some(session_id), Some(exchange)) => {
+                    self.write_virtual_position(session_id, symbol, exchange)
+                        .await
+                }
+                (Some(session_id), None) => self.delete_virtual_position(session_id).await,
+                (None, _) => Ok(()),
+            },
+            DriftAction::Flatten => {
+                let result = match exchange_position {
+                    Some(exchange) => self.flatten_exchange_position(symbol, exchange).await,
+                    None => Ok(()),
+                };
+                if result.is_ok() {
+                    if let Some(session_id) = session_id {
+                        let _ = self.delete_virtual_position(session_id).await;
+                    }
+                }
+                result
+            }
+            DriftAction::ReSubmit => match (session_id, virtual_position) {
+                (Some(session_id), Some(target)) => {
+                    let result = self.resubmit_to_match(symbol, target).await;
+                    if result.is_ok() {
+                        if let Some(confirmed) = self.fetch_exchange_position(symbol).await? {
+                            self.write_virtual_position(session_id, symbol, confirmed)
+                                .await?;
+                        }
+                    }
+                    result
+                }
+                _ => Ok(()),
+            },
         }
     }
 
@@ -250,21 +512,24 @@ impl LiveExecutionAdapter {
 
 #[async_trait]
 impl ExecutionAdapter for LiveExecutionAdapter {
-    /// Hyperliquid has no session concept — it nets to one position per
-    /// wallet+symbol regardless of which session is driving it, so
-    /// `session_id` is unused here (wallet exclusivity guarantees at
-    /// most one non-closed session drives a given live wallet at a time).
+    /// Hyperliquid itself has no session concept — it nets to one
+    /// position per wallet+symbol regardless of which session is driving
+    /// it (wallet exclusivity guarantees at most one non-closed session
+    /// drives a given live wallet at a time) — but the engine's own
+    /// virtual state is still keyed by `session_id`, mirroring
+    /// `MockExecutionAdapter`, so this reads that record rather than
+    /// calling Hyperliquid on every decision cycle.
     async fn get_position(
         &self,
-        _session_id: &str,
-        symbol: &str,
+        session_id: &str,
+        _symbol: &str,
     ) -> Result<Option<OpenPosition>, ExecutionError> {
-        self.fetch_position(symbol).await
+        self.read_virtual_position(session_id).await
     }
 
     async fn open(
         &self,
-        _session_id: &str,
+        session_id: &str,
         symbol: &str,
         direction: Direction,
         position_size_usd: f64,
@@ -292,18 +557,23 @@ impl ExecutionAdapter for LiveExecutionAdapter {
             "submitted live order to open position"
         );
 
-        self.fetch_position(symbol).await?.ok_or_else(|| {
+        let position = self.fetch_exchange_position(symbol).await?.ok_or_else(|| {
             ExecutionError("order submitted but no position found after open".to_string())
-        })
+        })?;
+
+        self.write_virtual_position(session_id, symbol, position)
+            .await?;
+
+        Ok(position)
     }
 
     async fn close(
         &self,
-        _session_id: &str,
+        session_id: &str,
         symbol: &str,
         mid_price: f64,
     ) -> Result<(), ExecutionError> {
-        let Some(position) = self.fetch_position(symbol).await? else {
+        let Some(position) = self.read_virtual_position(session_id).await? else {
             return Ok(());
         };
 
@@ -315,33 +585,44 @@ impl ExecutionAdapter for LiveExecutionAdapter {
         self.place_order(symbol, is_buy, size, mid_price, true)
             .await?;
 
+        self.delete_virtual_position(session_id).await?;
+
         tracing::info!(symbol, "submitted live order to close position");
 
         Ok(())
     }
 
+    /// Reads this wallet's open virtual positions, mirroring
+    /// `MockExecutionAdapter::list_open_positions` — used by the funding
+    /// sweep, which needs the engine's own record rather than an extra
+    /// Hyperliquid round-trip per wallet.
     async fn list_open_positions(&self) -> Result<Vec<(String, OpenPosition)>, ExecutionError> {
-        let state: ClearinghouseState = self
-            .http
-            .post(format!("{}/info", self.base_url))
-            .json(&serde_json::json!({
-                "type": "clearinghouseState",
-                "user": self.public_address(),
-            }))
-            .send()
-            .await
-            .map_err(|e| ExecutionError(format!("clearinghouseState request failed: {e}")))?
-            .json()
-            .await
-            .map_err(|e| ExecutionError(format!("clearinghouseState response invalid: {e}")))?;
+        let rows = sqlx::query_as::<_, (String, String, f64, f64, DateTime<Utc>)>(
+            "SELECT symbol, direction, entry_price, notional_usd, opened_at FROM live_positions WHERE wallet_id = $1::uuid",
+        )
+        .bind(&self.wallet_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| ExecutionError(format!("failed to list virtual positions: {e}")))?;
 
-        let mut positions = Vec::new();
-        for entry in &state.asset_positions {
-            if let Some(position) = parse_position(&entry.position)? {
-                positions.push((entry.position.coin.clone(), position));
-            }
-        }
-        Ok(positions)
+        Ok(rows
+            .into_iter()
+            .map(
+                |(symbol, direction, entry_price, notional_usd, opened_at)| {
+                    let position = OpenPosition {
+                        direction: if direction == "long" {
+                            Direction::Long
+                        } else {
+                            Direction::Short
+                        },
+                        entry_price,
+                        notional_usd,
+                        opened_at,
+                    };
+                    (symbol, position)
+                },
+            )
+            .collect())
     }
 
     /// Live funding is applied by Hyperliquid itself directly against
@@ -351,76 +632,196 @@ impl ExecutionAdapter for LiveExecutionAdapter {
     async fn apply_funding(&self, _symbol: &str, _amount_usd: f64) -> Result<(), ExecutionError> {
         Ok(())
     }
+
+    /// Detects drift between this wallet's virtual state and its real
+    /// Hyperliquid positions for each of `sessions`, plus any exchange
+    /// position no session in `sessions` accounts for at all, and
+    /// applies this adapter's configured `DriftPolicy` to each finding.
+    async fn reconcile(
+        &self,
+        sessions: &[ReconcileTarget],
+    ) -> Result<Vec<DriftOutcome>, ExecutionError> {
+        let mut outcomes = Vec::new();
+        let mut accounted_for = std::collections::HashSet::new();
+
+        for target in sessions {
+            accounted_for.insert(target.symbol.clone());
+
+            let virtual_position = self.read_virtual_position(&target.session_id).await?;
+            let exchange_position = self.fetch_exchange_position(&target.symbol).await?;
+
+            let event = match (virtual_position, exchange_position) {
+                (Some(_), None) => Some(DriftEvent::MissingOnExchange {
+                    session_id: target.session_id.clone(),
+                    symbol: target.symbol.clone(),
+                }),
+                (None, Some(exchange)) => Some(DriftEvent::SizeMismatch {
+                    session_id: target.session_id.clone(),
+                    symbol: target.symbol.clone(),
+                    virtual_notional_usd: 0.0,
+                    exchange_notional_usd: exchange.notional_usd,
+                }),
+                (Some(virtual_position), Some(exchange_position)) => {
+                    let direction_matches =
+                        virtual_position.direction == exchange_position.direction;
+                    let size_matches =
+                        (virtual_position.notional_usd - exchange_position.notional_usd).abs()
+                            < f64::EPSILON.max(virtual_position.notional_usd * 1e-6);
+                    if direction_matches && size_matches {
+                        None
+                    } else {
+                        Some(DriftEvent::SizeMismatch {
+                            session_id: target.session_id.clone(),
+                            symbol: target.symbol.clone(),
+                            virtual_notional_usd: virtual_position.notional_usd,
+                            exchange_notional_usd: exchange_position.notional_usd,
+                        })
+                    }
+                }
+                (None, None) => None,
+            };
+
+            let Some(event) = event else { continue };
+            let action = self.drift_policy.action_for(&event);
+            let result = self
+                .apply_drift_action(&event, action, virtual_position, exchange_position)
+                .await;
+            outcomes.push(DriftOutcome {
+                event,
+                action,
+                error: result.err().map(|e| e.to_string()),
+            });
+        }
+
+        for (symbol, position) in self.fetch_all_exchange_positions().await? {
+            if accounted_for.contains(&symbol) {
+                continue;
+            }
+            let event = DriftEvent::UnknownOnExchange {
+                symbol: symbol.clone(),
+            };
+            let action = self.drift_policy.action_for(&event);
+            let result = self
+                .apply_drift_action(&event, action, None, Some(position))
+                .await;
+            outcomes.push(DriftOutcome {
+                event,
+                action,
+                error: result.err().map(|e| e.to_string()),
+            });
+        }
+
+        Ok(outcomes)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+    use sqlx::postgres::PgPoolOptions;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     const TEST_KEY_HEX: &str = "0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318";
 
-    fn adapter_against(server: &MockServer) -> LiveExecutionAdapter {
+    fn test_database_url() -> String {
+        std::env::var("TEST_DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://jeeva:jeeva@localhost:5432/jeeva_test".to_string())
+    }
+
+    async fn pool() -> PgPool {
+        PgPoolOptions::new()
+            .connect(&test_database_url())
+            .await
+            .expect("failed to connect to TimescaleDB")
+    }
+
+    /// Inserts (or replaces) a `live` wallet row for `wallet_id` and
+    /// clears any virtual position rows for `session_id`, so each test
+    /// starts from a clean slate regardless of run order.
+    async fn reset_wallet_and_position(pool: &PgPool, wallet_id: &str, session_id: &str) {
+        sqlx::query("DELETE FROM live_positions WHERE session_id = $1::uuid")
+            .bind(session_id)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM wallets WHERE id = $1::uuid")
+            .bind(wallet_id)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO wallets (id, label, kind) VALUES ($1::uuid, $2, 'live')")
+            .bind(wallet_id)
+            .bind(format!("live-execution-test-wallet-{wallet_id}"))
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn adapter_against(
+        server: &MockServer,
+        pool: PgPool,
+        wallet_id: &str,
+    ) -> LiveExecutionAdapter {
         let key = PrivateKey::from_hex(TEST_KEY_HEX).unwrap();
-        LiveExecutionAdapter::new(server.uri(), key, true)
+        LiveExecutionAdapter::new(server.uri(), key, true, pool, wallet_id.to_string())
     }
 
-    #[tokio::test]
-    async fn get_position_returns_none_when_the_symbol_has_no_open_position() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/info"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "assetPositions": [] })))
-            .mount(&server)
-            .await;
-
-        let adapter = adapter_against(&server);
-        assert_eq!(adapter.get_position("s1", "BTC").await.unwrap(), None);
+    #[test]
+    fn parse_position_returns_none_for_a_flat_position() {
+        let raw = RawPosition {
+            coin: "BTC".to_string(),
+            szi: "0".to_string(),
+            entry_px: Some("50000".to_string()),
+        };
+        assert_eq!(parse_position(&raw).unwrap(), None);
     }
 
-    #[tokio::test]
-    async fn get_position_parses_a_long_position() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/info"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "assetPositions": [
-                    { "position": { "coin": "BTC", "szi": "0.5", "entryPx": "50000" } }
-                ]
-            })))
-            .mount(&server)
-            .await;
-
-        let adapter = adapter_against(&server);
-        let position = adapter.get_position("s1", "BTC").await.unwrap().unwrap();
+    #[test]
+    fn parse_position_parses_a_long_position() {
+        let raw = RawPosition {
+            coin: "BTC".to_string(),
+            szi: "0.5".to_string(),
+            entry_px: Some("50000".to_string()),
+        };
+        let position = parse_position(&raw).unwrap().unwrap();
         assert_eq!(position.direction, Direction::Long);
         assert_eq!(position.entry_price, 50000.0);
         assert_eq!(position.notional_usd, 25000.0);
     }
 
-    #[tokio::test]
-    async fn get_position_parses_a_short_position() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/info"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "assetPositions": [
-                    { "position": { "coin": "ETH", "szi": "-2", "entryPx": "3000" } }
-                ]
-            })))
-            .mount(&server)
-            .await;
-
-        let adapter = adapter_against(&server);
-        let position = adapter.get_position("s1", "ETH").await.unwrap().unwrap();
+    #[test]
+    fn parse_position_parses_a_short_position() {
+        let raw = RawPosition {
+            coin: "ETH".to_string(),
+            szi: "-2".to_string(),
+            entry_px: Some("3000".to_string()),
+        };
+        let position = parse_position(&raw).unwrap().unwrap();
         assert_eq!(position.direction, Direction::Short);
         assert_eq!(position.notional_usd, 6000.0);
     }
 
     #[tokio::test]
-    async fn open_submits_a_signed_order_and_returns_the_resulting_position() {
+    async fn get_position_returns_none_when_no_virtual_position_is_recorded() {
+        let pool = pool().await;
+        let wallet_id = "00000000-0000-0000-0000-0000000000f1";
+        let session_id = "00000000-0000-0000-0000-0000000000f2";
+        reset_wallet_and_position(&pool, wallet_id, session_id).await;
+
+        let server = MockServer::start().await;
+        let adapter = adapter_against(&server, pool, wallet_id).await;
+        assert_eq!(adapter.get_position(session_id, "BTC").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn open_submits_a_signed_order_and_persists_virtual_state() {
+        let pool = pool().await;
+        let wallet_id = "00000000-0000-0000-0000-0000000000f3";
+        let session_id = "00000000-0000-0000-0000-0000000000f4";
+        reset_wallet_and_position(&pool, wallet_id, session_id).await;
+
         let server = MockServer::start().await;
         // First /info call: balance read (withdrawable) before the order.
         Mock::given(method("POST"))
@@ -449,8 +850,8 @@ mod tests {
             )
             .mount(&server)
             .await;
-        // Remaining /info calls: balance read (withdrawable) and the
-        // post-open position fetch.
+        // Remaining /info calls: the post-order position fetch used to
+        // confirm the fill before persisting virtual state.
         Mock::given(method("POST"))
             .and(path("/info"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -462,16 +863,38 @@ mod tests {
             .mount(&server)
             .await;
 
-        let adapter = adapter_against(&server);
+        let adapter = adapter_against(&server, pool.clone(), wallet_id).await;
         let position = adapter
-            .open("s1", "BTC", Direction::Long, 1000.0, 1.0, 50000.0)
+            .open(session_id, "BTC", Direction::Long, 1000.0, 1.0, 50000.0)
             .await
             .unwrap();
         assert_eq!(position.direction, Direction::Long);
+
+        // Reconstructing the adapter against the same pool still finds
+        // the persisted virtual position — it survives an engine restart.
+        let key = PrivateKey::from_hex(TEST_KEY_HEX).unwrap();
+        let restarted =
+            LiveExecutionAdapter::new(server.uri(), key, true, pool, wallet_id.to_string());
+        let fetched = restarted
+            .get_position(session_id, "BTC")
+            .await
+            .unwrap()
+            .unwrap();
+        // Postgres truncates timestamptz to microsecond precision, so
+        // compare fields individually rather than deriving equality on
+        // the whole struct against the pre-round-trip value.
+        assert_eq!(fetched.direction, position.direction);
+        assert_eq!(fetched.entry_price, position.entry_price);
+        assert_eq!(fetched.notional_usd, position.notional_usd);
     }
 
     #[tokio::test]
     async fn open_fails_when_the_exchange_rejects_the_order() {
+        let pool = pool().await;
+        let wallet_id = "00000000-0000-0000-0000-0000000000f5";
+        let session_id = "00000000-0000-0000-0000-0000000000f6";
+        reset_wallet_and_position(&pool, wallet_id, session_id).await;
+
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/info"))
@@ -491,40 +914,314 @@ mod tests {
             .mount(&server)
             .await;
 
-        let adapter = adapter_against(&server);
+        let adapter = adapter_against(&server, pool.clone(), wallet_id).await;
         let error = adapter
-            .open("s1", "BTC", Direction::Long, 1000.0, 1.0, 50000.0)
+            .open(session_id, "BTC", Direction::Long, 1000.0, 1.0, 50000.0)
             .await
             .unwrap_err();
         assert!(error.0.contains("rejected"));
+        assert_eq!(adapter.get_position(session_id, "BTC").await.unwrap(), None);
     }
 
     #[tokio::test]
-    async fn close_is_a_no_op_when_there_is_no_open_position() {
+    async fn close_is_a_no_op_when_there_is_no_virtual_position() {
+        let pool = pool().await;
+        let wallet_id = "00000000-0000-0000-0000-0000000000f7";
+        let session_id = "00000000-0000-0000-0000-0000000000f8";
+        reset_wallet_and_position(&pool, wallet_id, session_id).await;
+
         let server = MockServer::start().await;
+        let adapter = adapter_against(&server, pool, wallet_id).await;
+        // No mocks mounted: close() must not hit the exchange at all when
+        // there's no virtual position to close.
+        adapter.close(session_id, "BTC", 50000.0).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn close_places_an_order_and_clears_virtual_state() {
+        let pool = pool().await;
+        let wallet_id = "00000000-0000-0000-0000-0000000000f9";
+        let session_id = "00000000-0000-0000-0000-0000000000fa";
+        reset_wallet_and_position(&pool, wallet_id, session_id).await;
+
+        let server = MockServer::start().await;
+        // asset_index lookup for the closing order.
         Mock::given(method("POST"))
             .and(path("/info"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "assetPositions": [] })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "universe": [{ "name": "BTC" }]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/exchange"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "status": "ok", "response": {} })),
+            )
             .mount(&server)
             .await;
 
-        let adapter = adapter_against(&server);
-        adapter.close("s1", "BTC", 50000.0).await.unwrap();
+        let adapter = adapter_against(&server, pool.clone(), wallet_id).await;
+        // Seed virtual state directly rather than going through open(),
+        // to keep this test focused on close()'s own behavior.
+        adapter
+            .write_virtual_position(
+                session_id,
+                "BTC",
+                OpenPosition {
+                    direction: Direction::Long,
+                    entry_price: 50000.0,
+                    notional_usd: 1000.0,
+                    opened_at: Utc::now(),
+                },
+            )
+            .await
+            .unwrap();
+
+        adapter.close(session_id, "BTC", 51000.0).await.unwrap();
+
+        assert_eq!(adapter.get_position(session_id, "BTC").await.unwrap(), None);
     }
 
     #[tokio::test]
     async fn apply_funding_is_a_no_op_for_live_positions() {
+        let pool = pool().await;
+        let wallet_id = "00000000-0000-0000-0000-0000000000fb";
+        let session_id = "00000000-0000-0000-0000-0000000000fc";
+        reset_wallet_and_position(&pool, wallet_id, session_id).await;
+
         let server = MockServer::start().await;
-        let adapter = adapter_against(&server);
+        let adapter = adapter_against(&server, pool, wallet_id).await;
         adapter.apply_funding("BTC", 12.5).await.unwrap();
     }
 
-    #[test]
-    fn public_address_is_derived_from_the_configured_key() {
+    #[tokio::test]
+    async fn public_address_is_derived_from_the_configured_key() {
+        let pool = pool().await;
+        let wallet_id = "00000000-0000-0000-0000-0000000000fd";
+        let session_id = "00000000-0000-0000-0000-0000000000fe";
+        reset_wallet_and_position(&pool, wallet_id, session_id).await;
+
         let server_url = "https://example.invalid";
         let key = PrivateKey::from_hex(TEST_KEY_HEX).unwrap();
-        let adapter = LiveExecutionAdapter::new(server_url, key, true);
+        let adapter = LiveExecutionAdapter::new(server_url, key, true, pool, wallet_id.to_string());
         assert!(adapter.public_address().starts_with("0x"));
         assert_eq!(adapter.public_address().len(), 42);
+    }
+
+    /// A single `/info` mock whose body carries every field any
+    /// `/info` call type reads (`clearinghouseState`'s
+    /// `assetPositions`/`withdrawable`, `meta`'s `universe`) — each
+    /// endpoint ignores the fields it doesn't recognize, so one mock can
+    /// stand in for every `/info` call a test makes, however many times.
+    async fn mount_combined_info(server: &MockServer, asset_positions: serde_json::Value) {
+        Mock::given(method("POST"))
+            .and(path("/info"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "withdrawable": "1000.0",
+                "universe": [{ "name": "BTC" }],
+                "assetPositions": asset_positions,
+            })))
+            .mount(server)
+            .await;
+    }
+
+    async fn mount_ok_exchange(server: &MockServer) {
+        Mock::given(method("POST"))
+            .and(path("/exchange"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "status": "ok", "response": {} })),
+            )
+            .mount(server)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn reconcile_adopts_virtual_state_when_the_exchange_is_actually_flat() {
+        let pool = pool().await;
+        let wallet_id = "00000000-0000-0000-0000-000000000101";
+        let session_id = "00000000-0000-0000-0000-000000000102";
+        reset_wallet_and_position(&pool, wallet_id, session_id).await;
+
+        let server = MockServer::start().await;
+        mount_combined_info(&server, json!([])).await;
+
+        let adapter = adapter_against(&server, pool.clone(), wallet_id).await;
+        adapter
+            .write_virtual_position(
+                session_id,
+                "BTC",
+                OpenPosition {
+                    direction: Direction::Long,
+                    entry_price: 50000.0,
+                    notional_usd: 1000.0,
+                    opened_at: Utc::now(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let outcomes = adapter
+            .reconcile(&[ReconcileTarget {
+                session_id: session_id.to_string(),
+                symbol: "BTC".to_string(),
+                status: crate::session::TradingSessionStatus::Active,
+            }])
+            .await
+            .unwrap();
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(
+            outcomes[0].event,
+            DriftEvent::MissingOnExchange {
+                session_id: session_id.to_string(),
+                symbol: "BTC".to_string(),
+            }
+        );
+        assert_eq!(outcomes[0].action, DriftAction::AdoptAndLog);
+        assert_eq!(outcomes[0].error, None);
+
+        // Virtual state now agrees with the exchange: flat.
+        assert_eq!(adapter.get_position(session_id, "BTC").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn reconcile_flattens_an_unknown_exchange_position_by_default() {
+        let pool = pool().await;
+        let wallet_id = "00000000-0000-0000-0000-000000000103";
+        let session_id = "00000000-0000-0000-0000-000000000104";
+        reset_wallet_and_position(&pool, wallet_id, session_id).await;
+
+        let server = MockServer::start().await;
+        mount_combined_info(
+            &server,
+            json!([{ "position": { "coin": "BTC", "szi": "0.02", "entryPx": "50000" } }]),
+        )
+        .await;
+        mount_ok_exchange(&server).await;
+
+        let adapter = adapter_against(&server, pool.clone(), wallet_id).await;
+
+        // No sessions at all track BTC — the exchange position is
+        // entirely unaccounted for.
+        let outcomes = adapter.reconcile(&[]).await.unwrap();
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(
+            outcomes[0].event,
+            DriftEvent::UnknownOnExchange {
+                symbol: "BTC".to_string(),
+            }
+        );
+        assert_eq!(outcomes[0].action, DriftAction::Flatten);
+        assert_eq!(outcomes[0].error, None);
+    }
+
+    #[tokio::test]
+    async fn reconcile_resubmits_to_top_up_a_partially_filled_position() {
+        let pool = pool().await;
+        let wallet_id = "00000000-0000-0000-0000-000000000105";
+        let session_id = "00000000-0000-0000-0000-000000000106";
+        reset_wallet_and_position(&pool, wallet_id, session_id).await;
+
+        let server = MockServer::start().await;
+        // Exchange only has half of what virtual state believes is open
+        // (e.g. a partial fill never topped up).
+        mount_combined_info(
+            &server,
+            json!([{ "position": { "coin": "BTC", "szi": "0.01", "entryPx": "50000" } }]),
+        )
+        .await;
+        mount_ok_exchange(&server).await;
+
+        let adapter = adapter_against(&server, pool.clone(), wallet_id)
+            .await
+            .with_drift_policy(DriftPolicy {
+                size_mismatch: DriftAction::ReSubmit,
+                ..DriftPolicy::default()
+            });
+        adapter
+            .write_virtual_position(
+                session_id,
+                "BTC",
+                OpenPosition {
+                    direction: Direction::Long,
+                    entry_price: 50000.0,
+                    notional_usd: 1000.0,
+                    opened_at: Utc::now(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let outcomes = adapter
+            .reconcile(&[ReconcileTarget {
+                session_id: session_id.to_string(),
+                symbol: "BTC".to_string(),
+                status: crate::session::TradingSessionStatus::Active,
+            }])
+            .await
+            .unwrap();
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].action, DriftAction::ReSubmit);
+        assert_eq!(outcomes[0].error, None);
+        assert!(matches!(outcomes[0].event, DriftEvent::SizeMismatch { .. }));
+    }
+
+    #[tokio::test]
+    async fn reconcile_takes_no_action_when_the_policy_is_halt() {
+        let pool = pool().await;
+        let wallet_id = "00000000-0000-0000-0000-000000000107";
+        let session_id = "00000000-0000-0000-0000-000000000108";
+        reset_wallet_and_position(&pool, wallet_id, session_id).await;
+
+        let server = MockServer::start().await;
+        // No /exchange mock at all: if Halt somehow placed an order,
+        // this test would fail on the unmatched request instead of
+        // silently passing.
+        mount_combined_info(
+            &server,
+            json!([{ "position": { "coin": "BTC", "szi": "0.01", "entryPx": "50000" } }]),
+        )
+        .await;
+
+        let adapter = adapter_against(&server, pool.clone(), wallet_id)
+            .await
+            .with_drift_policy(DriftPolicy {
+                size_mismatch: DriftAction::Halt,
+                ..DriftPolicy::default()
+            });
+        let seeded = OpenPosition {
+            direction: Direction::Long,
+            entry_price: 50000.0,
+            notional_usd: 1000.0,
+            opened_at: Utc::now(),
+        };
+        adapter
+            .write_virtual_position(session_id, "BTC", seeded)
+            .await
+            .unwrap();
+
+        let outcomes = adapter
+            .reconcile(&[ReconcileTarget {
+                session_id: session_id.to_string(),
+                symbol: "BTC".to_string(),
+                status: crate::session::TradingSessionStatus::Active,
+            }])
+            .await
+            .unwrap();
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].action, DriftAction::Halt);
+        assert_eq!(outcomes[0].error, None);
+
+        // Virtual state is untouched — Halt takes no corrective action.
+        let unchanged = adapter
+            .get_position(session_id, "BTC")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(unchanged.notional_usd, seeded.notional_usd);
     }
 }

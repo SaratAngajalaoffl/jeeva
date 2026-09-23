@@ -25,6 +25,123 @@ pub struct OpenPosition {
     pub opened_at: DateTime<Utc>,
 }
 
+/// One session the reconcile loop asks an `ExecutionAdapter` to check
+/// on a given tick — every non-closed session currently attached to
+/// that adapter's wallet (in practice at most one, since a wallet may
+/// drive only one non-closed session at a time).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReconcileTarget {
+    pub session_id: String,
+    pub symbol: String,
+    pub status: crate::session::TradingSessionStatus,
+}
+
+/// A deviation an `ExecutionAdapter::reconcile` call observed between
+/// its virtual state and the real exchange.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DriftEvent {
+    /// Virtual state believes a session has an open position, but the
+    /// exchange reports none.
+    MissingOnExchange { session_id: String, symbol: String },
+    /// The exchange reports an open position for a symbol no known
+    /// session's virtual state accounts for.
+    UnknownOnExchange { symbol: String },
+    /// Both sides agree a position is open, but disagree on its
+    /// direction or size — also used when the exchange has a position
+    /// for a symbol a session tracks, but that session's own virtual
+    /// state doesn't (`virtual_notional_usd: 0.0`).
+    SizeMismatch {
+        session_id: String,
+        symbol: String,
+        virtual_notional_usd: f64,
+        exchange_notional_usd: f64,
+    },
+}
+
+impl DriftEvent {
+    pub fn symbol(&self) -> &str {
+        match self {
+            DriftEvent::MissingOnExchange { symbol, .. } => symbol,
+            DriftEvent::UnknownOnExchange { symbol } => symbol,
+            DriftEvent::SizeMismatch { symbol, .. } => symbol,
+        }
+    }
+
+    pub fn session_id(&self) -> Option<&str> {
+        match self {
+            DriftEvent::MissingOnExchange { session_id, .. } => Some(session_id),
+            DriftEvent::UnknownOnExchange { .. } => None,
+            DriftEvent::SizeMismatch { session_id, .. } => Some(session_id),
+        }
+    }
+}
+
+/// What an `ExecutionAdapter::reconcile` should do about a given
+/// `DriftEvent`. Configurable per adapter instance (see
+/// `LiveExecutionAdapter::with_drift_policy`), not a single engine-wide
+/// setting, since different wallets can warrant different risk
+/// tolerances.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DriftAction {
+    /// Accept the exchange's state as truth and update virtual state to
+    /// match it, without placing any order.
+    AdoptAndLog,
+    /// Attempt to re-place whatever order is needed to bring the
+    /// exchange in line with virtual state's own target.
+    ReSubmit,
+    /// Force the exchange position for this symbol to flat via the
+    /// adapter's normal close path.
+    Flatten,
+    /// Take no automatic action beyond logging — the wallet/PERP is
+    /// left for an operator to look at.
+    Halt,
+}
+
+/// Per-drift-kind policy an `ExecutionAdapter::reconcile` applies.
+/// Defaults are conservative, per the safety note on issue #31: never
+/// silently re-submit against a live exchange. `missing_on_exchange`
+/// defaults to `AdoptAndLog` rather than `Flatten` because the exchange
+/// is already flat in that case — there's nothing to close, only
+/// virtual state to correct.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DriftPolicy {
+    pub missing_on_exchange: DriftAction,
+    pub unknown_on_exchange: DriftAction,
+    pub size_mismatch: DriftAction,
+}
+
+impl Default for DriftPolicy {
+    fn default() -> Self {
+        Self {
+            missing_on_exchange: DriftAction::AdoptAndLog,
+            unknown_on_exchange: DriftAction::Flatten,
+            size_mismatch: DriftAction::Flatten,
+        }
+    }
+}
+
+impl DriftPolicy {
+    pub fn action_for(&self, event: &DriftEvent) -> DriftAction {
+        match event {
+            DriftEvent::MissingOnExchange { .. } => self.missing_on_exchange,
+            DriftEvent::UnknownOnExchange { .. } => self.unknown_on_exchange,
+            DriftEvent::SizeMismatch { .. } => self.size_mismatch,
+        }
+    }
+}
+
+/// One drift event `reconcile` observed, the policy action taken in
+/// response, and whether that action itself succeeded — the caller
+/// (the reconcile loop) writes one of these to the decision log per
+/// outcome, so drift is never silently dropped even when remediation
+/// fails.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DriftOutcome {
+    pub event: DriftEvent,
+    pub action: DriftAction,
+    pub error: Option<String>,
+}
+
 /// Opens/closes a PERP's mock position against the shared mock wallet.
 /// The real (only, for now) implementation simulates fills at
 /// mid-price plus/minus slippage and realizes P&L into the wallet's
@@ -71,6 +188,22 @@ pub trait ExecutionAdapter: Send + Sync {
     /// for funding payments, which are distinct from decision-driven
     /// realized P&L on close.
     async fn apply_funding(&self, symbol: &str, amount_usd: f64) -> Result<(), ExecutionError>;
+
+    /// Checks this adapter's virtual state against the real exchange for
+    /// each of `sessions` (every non-closed session currently attached
+    /// to this adapter's wallet), applies this adapter's configured
+    /// `DriftPolicy` to whatever drift it finds, and reports what
+    /// happened. Called by the reconcile loop (`crate::reconcile::run`)
+    /// on a tighter interval than any session's decision frequency —
+    /// independent of, and much more frequent than, `run_decision_cycle`.
+    ///
+    /// `MockExecutionAdapter`'s virtual state is authoritative by
+    /// construction and can never drift from itself, so its
+    /// implementation is a no-op.
+    async fn reconcile(
+        &self,
+        sessions: &[ReconcileTarget],
+    ) -> Result<Vec<DriftOutcome>, ExecutionError>;
 }
 
 /// Simulates a fill at `mid_price` adjusted by `slippage_bps` (basis
@@ -345,6 +478,15 @@ impl ExecutionAdapter for MockExecutionAdapter {
         tracing::info!(symbol, amount_usd, "applied funding payment");
 
         Ok(())
+    }
+
+    /// The mock ledger (`mock_positions`) is itself the engine's virtual
+    /// state — there is no separate exchange to drift from it.
+    async fn reconcile(
+        &self,
+        _sessions: &[ReconcileTarget],
+    ) -> Result<Vec<DriftOutcome>, ExecutionError> {
+        Ok(Vec::new())
     }
 }
 

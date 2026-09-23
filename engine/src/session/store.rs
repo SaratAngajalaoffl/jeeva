@@ -60,6 +60,7 @@ mod tests {
             wallet_id: None,
             status: TradingSessionStatus::Active,
             store_decision_payloads: false,
+            stop_loss_pct: None,
         }
     }
 

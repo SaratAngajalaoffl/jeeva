@@ -203,4 +203,61 @@ describe("POST /perps/:symbol/trading-sessions", () => {
 
     expect(res.status).toBe(404);
   });
+
+  it("defaults the stop-loss to null when not provided", async () => {
+    const res = await createSession();
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ stopLossPct: null });
+  });
+
+  it("accepts a configured stop-loss", async () => {
+    const res = await createSession({ stopLossPct: 0.1 });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ stopLossPct: 0.1 });
+  });
+
+  it.each([{ stopLossPct: 0 }, { stopLossPct: 1.5 }, { stopLossPct: -0.1 }])(
+    "rejects an invalid stop-loss: %p",
+    async (body) => {
+      const res = await createSession(body);
+      expect(res.status).toBe(400);
+    },
+  );
+
+  it("clears a configured stop-loss via patch with an explicit null", async () => {
+    const created = await createSession({ stopLossPct: 0.2 });
+    expect(created.status).toBe(201);
+
+    const res = await request(buildApp())
+      .patch(`/trading-sessions/${created.body.id}`)
+      .set("Cookie", authCookie())
+      .send({ stopLossPct: null });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ stopLossPct: null });
+  });
+
+  it("leaves the stop-loss untouched when the patch omits it", async () => {
+    const created = await createSession({ stopLossPct: 0.2 });
+    expect(created.status).toBe(201);
+
+    const res = await request(buildApp())
+      .patch(`/trading-sessions/${created.body.id}`)
+      .set("Cookie", authCookie())
+      .send({ leverage: 3 });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ stopLossPct: 0.2, leverage: 3 });
+  });
+
+  it("rejects an invalid stop-loss on patch", async () => {
+    const res = await request(buildApp())
+      .patch("/trading-sessions/00000000-0000-0000-0000-000000000000")
+      .set("Cookie", authCookie())
+      .send({ stopLossPct: 2 });
+
+    expect(res.status).toBe(400);
+  });
 });

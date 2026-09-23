@@ -690,6 +690,7 @@ mod tests {
             wallet_id: Some("test-wallet".to_string()),
             status,
             store_decision_payloads: false,
+            stop_loss_pct: None,
         }
     }
 
@@ -914,6 +915,13 @@ mod tests {
             _amount_usd: f64,
         ) -> Result<(), ExecutionError> {
             Ok(())
+        }
+
+        async fn reconcile(
+            &self,
+            _sessions: &[super::super::execution::ReconcileTarget],
+        ) -> Result<Vec<super::super::execution::DriftOutcome>, ExecutionError> {
+            Ok(Vec::new())
         }
     }
 
