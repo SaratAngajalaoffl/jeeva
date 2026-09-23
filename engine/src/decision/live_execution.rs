@@ -637,7 +637,10 @@ impl ExecutionAdapter for LiveExecutionAdapter {
     /// Hyperliquid positions for each of `sessions`, plus any exchange
     /// position no session in `sessions` accounts for at all, and
     /// applies this adapter's configured `DriftPolicy` to each finding.
-    async fn reconcile(&self, sessions: &[ReconcileTarget]) -> Result<Vec<DriftOutcome>, ExecutionError> {
+    async fn reconcile(
+        &self,
+        sessions: &[ReconcileTarget],
+    ) -> Result<Vec<DriftOutcome>, ExecutionError> {
         let mut outcomes = Vec::new();
         let mut accounted_for = std::collections::HashSet::new();
 
@@ -659,10 +662,11 @@ impl ExecutionAdapter for LiveExecutionAdapter {
                     exchange_notional_usd: exchange.notional_usd,
                 }),
                 (Some(virtual_position), Some(exchange_position)) => {
-                    let direction_matches = virtual_position.direction == exchange_position.direction;
-                    let size_matches = (virtual_position.notional_usd - exchange_position.notional_usd)
-                        .abs()
-                        < f64::EPSILON.max(virtual_position.notional_usd * 1e-6);
+                    let direction_matches =
+                        virtual_position.direction == exchange_position.direction;
+                    let size_matches =
+                        (virtual_position.notional_usd - exchange_position.notional_usd).abs()
+                            < f64::EPSILON.max(virtual_position.notional_usd * 1e-6);
                     if direction_matches && size_matches {
                         None
                     } else {
@@ -755,7 +759,11 @@ mod tests {
             .unwrap();
     }
 
-    async fn adapter_against(server: &MockServer, pool: PgPool, wallet_id: &str) -> LiveExecutionAdapter {
+    async fn adapter_against(
+        server: &MockServer,
+        pool: PgPool,
+        wallet_id: &str,
+    ) -> LiveExecutionAdapter {
         let key = PrivateKey::from_hex(TEST_KEY_HEX).unwrap();
         LiveExecutionAdapter::new(server.uri(), key, true, pool, wallet_id.to_string())
     }
@@ -865,7 +873,8 @@ mod tests {
         // Reconstructing the adapter against the same pool still finds
         // the persisted virtual position — it survives an engine restart.
         let key = PrivateKey::from_hex(TEST_KEY_HEX).unwrap();
-        let restarted = LiveExecutionAdapter::new(server.uri(), key, true, pool, wallet_id.to_string());
+        let restarted =
+            LiveExecutionAdapter::new(server.uri(), key, true, pool, wallet_id.to_string());
         let fetched = restarted
             .get_position(session_id, "BTC")
             .await
@@ -1157,10 +1166,7 @@ mod tests {
         assert_eq!(outcomes.len(), 1);
         assert_eq!(outcomes[0].action, DriftAction::ReSubmit);
         assert_eq!(outcomes[0].error, None);
-        assert!(matches!(
-            outcomes[0].event,
-            DriftEvent::SizeMismatch { .. }
-        ));
+        assert!(matches!(outcomes[0].event, DriftEvent::SizeMismatch { .. }));
     }
 
     #[tokio::test]
@@ -1211,7 +1217,11 @@ mod tests {
         assert_eq!(outcomes[0].error, None);
 
         // Virtual state is untouched — Halt takes no corrective action.
-        let unchanged = adapter.get_position(session_id, "BTC").await.unwrap().unwrap();
+        let unchanged = adapter
+            .get_position(session_id, "BTC")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(unchanged.notional_usd, seeded.notional_usd);
     }
 }

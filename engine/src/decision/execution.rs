@@ -200,7 +200,10 @@ pub trait ExecutionAdapter: Send + Sync {
     /// `MockExecutionAdapter`'s virtual state is authoritative by
     /// construction and can never drift from itself, so its
     /// implementation is a no-op.
-    async fn reconcile(&self, sessions: &[ReconcileTarget]) -> Result<Vec<DriftOutcome>, ExecutionError>;
+    async fn reconcile(
+        &self,
+        sessions: &[ReconcileTarget],
+    ) -> Result<Vec<DriftOutcome>, ExecutionError>;
 }
 
 /// Simulates a fill at `mid_price` adjusted by `slippage_bps` (basis
@@ -479,7 +482,10 @@ impl ExecutionAdapter for MockExecutionAdapter {
 
     /// The mock ledger (`mock_positions`) is itself the engine's virtual
     /// state — there is no separate exchange to drift from it.
-    async fn reconcile(&self, _sessions: &[ReconcileTarget]) -> Result<Vec<DriftOutcome>, ExecutionError> {
+    async fn reconcile(
+        &self,
+        _sessions: &[ReconcileTarget],
+    ) -> Result<Vec<DriftOutcome>, ExecutionError> {
         Ok(Vec::new())
     }
 }

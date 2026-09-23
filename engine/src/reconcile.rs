@@ -63,7 +63,11 @@ async fn latest_mid_price(symbol: &str, history: &dyn MarketDataHistoryReader) -
 /// 10% underwater), negative when the position is actually in profit.
 /// Pure, so the stop-loss threshold comparison is directly testable
 /// without a database or fake adapters.
-fn unrealized_loss_fraction(direction: crate::decision::Direction, entry_price: f64, mid_price: f64) -> f64 {
+fn unrealized_loss_fraction(
+    direction: crate::decision::Direction,
+    entry_price: f64,
+    mid_price: f64,
+) -> f64 {
     use crate::decision::Direction;
 
     match direction {
@@ -114,9 +118,15 @@ async fn breached_stop_losses(
             continue;
         };
 
-        let loss_fraction = unrealized_loss_fraction(position.direction, position.entry_price, mid_price);
+        let loss_fraction =
+            unrealized_loss_fraction(position.direction, position.entry_price, mid_price);
         if loss_fraction >= stop_loss_pct {
-            breached.push((config.id.clone(), config.symbol.clone(), loss_fraction, mid_price));
+            breached.push((
+                config.id.clone(),
+                config.symbol.clone(),
+                loss_fraction,
+                mid_price,
+            ));
         }
     }
 
@@ -243,7 +253,11 @@ async fn hard_close(
 
     match result {
         Ok(()) => {
-            tracing::warn!(session_id, symbol, "reconcile: hard-close flattened position");
+            tracing::warn!(
+                session_id,
+                symbol,
+                "reconcile: hard-close flattened position"
+            );
             lifecycle.mark_closed(session_id).await;
         }
         Err(error) => {
@@ -341,7 +355,15 @@ pub async fn run_reconcile_cycle(
 ) {
     let all_sessions = sessions.snapshot();
 
-    dispatch_hard_closes(&all_sessions, wallets, mode, history, decision_log, lifecycle).await;
+    dispatch_hard_closes(
+        &all_sessions,
+        wallets,
+        mode,
+        history,
+        decision_log,
+        lifecycle,
+    )
+    .await;
 
     let breached = breached_stop_losses(&all_sessions, wallets, mode, history).await;
     dispatch_stop_losses(breached, &all_sessions, wallets, decision_log).await;
@@ -568,7 +590,11 @@ mod tests {
             Ok(Vec::new())
         }
 
-        async fn apply_funding(&self, _symbol: &str, _amount_usd: f64) -> Result<(), ExecutionError> {
+        async fn apply_funding(
+            &self,
+            _symbol: &str,
+            _amount_usd: f64,
+        ) -> Result<(), ExecutionError> {
             Ok(())
         }
 
@@ -708,16 +734,7 @@ mod tests {
         let execution = FakeExecution::with_open_position();
         let log = CapturingDecisionLog::default();
 
-        close_for_stop_loss(
-            "session-1",
-            "BTC",
-            90.0,
-            0.1,
-            0.05,
-            &execution,
-            &log,
-        )
-        .await;
+        close_for_stop_loss("session-1", "BTC", 90.0, 0.1, 0.05, &execution, &log).await;
 
         assert_eq!(execution.close_calls.load(Ordering::SeqCst), 1);
         assert!(execution

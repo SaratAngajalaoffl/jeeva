@@ -95,7 +95,10 @@ impl ExecutionAdapter for FakeExecution {
         Ok(())
     }
 
-    async fn reconcile(&self, _sessions: &[ReconcileTarget]) -> Result<Vec<DriftOutcome>, ExecutionError> {
+    async fn reconcile(
+        &self,
+        _sessions: &[ReconcileTarget],
+    ) -> Result<Vec<DriftOutcome>, ExecutionError> {
         Ok(Vec::new())
     }
 }
