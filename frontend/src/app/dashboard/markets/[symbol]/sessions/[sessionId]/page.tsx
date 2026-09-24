@@ -80,6 +80,12 @@ export default function SessionDetailPage() {
     FundingPayment[] | null
   >(null);
   const [error, setError] = useState<string | null>(null);
+  const [sectionErrors, setSectionErrors] = useState<{
+    marketData?: string;
+    position?: string;
+    decisions?: string;
+    funding?: string;
+  }>({});
   const [busy, setBusy] = useState(false);
 
   function refresh() {
@@ -93,28 +99,58 @@ export default function SessionDetailPage() {
   useEffect(() => {
     function poll() {
       refresh();
-      fetchMarketData(symbol, { from: new Date(Date.now() - chartRangeMs(range)) })
+      fetchMarketData(symbol, {
+        from: new Date(Date.now() - chartRangeMs(range)),
+      })
         .then((s) => {
           setSamples(s.samples);
           setOldestSampleTime(s.oldestSampleTime);
+          setSectionErrors((prev) => ({ ...prev, marketData: undefined }));
         })
-        .catch(() => {});
+        .catch(() =>
+          setSectionErrors((prev) => ({
+            ...prev,
+            marketData: "Failed to load market data.",
+          })),
+        );
       fetchPerpStats()
-        .then((stats) => setStats(stats.find((s) => s.symbol === symbol) ?? null))
+        .then((stats) =>
+          setStats(stats.find((s) => s.symbol === symbol) ?? null),
+        )
         .catch(() => {});
       fetchPositions()
         .then((positions) => {
           setPosition(positions.find((p) => p.sessionId === sessionId) ?? null);
+          setSectionErrors((prev) => ({ ...prev, position: undefined }));
         })
-        .catch(() => {});
+        .catch(() =>
+          setSectionErrors((prev) => ({
+            ...prev,
+            position: "Failed to load position.",
+          })),
+        );
       fetchDecisions({ sessionId })
-        .then(setDecisions)
-        .catch(() => setDecisions([]));
-      fetchFundingPayments()
-        .then((payments) => {
-          setFundingPayments(payments.filter((p) => p.sessionId === sessionId));
+        .then((entries) => {
+          setDecisions(entries);
+          setSectionErrors((prev) => ({ ...prev, decisions: undefined }));
         })
-        .catch(() => setFundingPayments([]));
+        .catch(() =>
+          setSectionErrors((prev) => ({
+            ...prev,
+            decisions: "Failed to load decision history.",
+          })),
+        );
+      fetchFundingPayments({ sessionId })
+        .then((payments) => {
+          setFundingPayments(payments);
+          setSectionErrors((prev) => ({ ...prev, funding: undefined }));
+        })
+        .catch(() =>
+          setSectionErrors((prev) => ({
+            ...prev,
+            funding: "Failed to load funding history.",
+          })),
+        );
     }
 
     poll();
@@ -214,8 +250,7 @@ export default function SessionDetailPage() {
                 History window
               </span>
               <span className="text-sm font-medium text-text">
-                {session.historyWindowSamples} samples (
-                {session.historyFormat})
+                {session.historyWindowSamples} samples ({session.historyFormat})
               </span>
             </div>
             <div className="flex flex-col gap-0.5">
@@ -239,23 +274,37 @@ export default function SessionDetailPage() {
                       : "text-destructive"
                 }`}
               >
-                {pnl === null ? "-" : `${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}`}
+                {pnl === null
+                  ? "-"
+                  : `${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}`}
               </span>
             </div>
 
             {session.status === "active" && (
               <div className="ml-auto flex gap-2">
-                <Button variant="ghost" disabled={busy} onClick={handleSoftClose}>
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={handleSoftClose}
+                >
                   Soft close
                 </Button>
-                <Button variant="ghost" disabled={busy} onClick={handleHardClose}>
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={handleHardClose}
+                >
                   Hard close
                 </Button>
               </div>
             )}
             {session.status === "soft_closing" && (
               <div className="ml-auto">
-                <Button variant="ghost" disabled={busy} onClick={handleHardClose}>
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={handleHardClose}
+                >
                   Force close now
                 </Button>
               </div>
@@ -263,7 +312,16 @@ export default function SessionDetailPage() {
           </Card>
         )}
 
-        {samples && (
+        {sectionErrors.marketData ? (
+          <Card className="p-5">
+            <h2 className="mb-2 text-sm font-semibold text-text">
+              Market data
+            </h2>
+            <p className="text-sm text-destructive">
+              {sectionErrors.marketData}
+            </p>
+          </Card>
+        ) : samples ? (
           <PriceVolumeChart
             title="Market data"
             range={range}
@@ -272,11 +330,20 @@ export default function SessionDetailPage() {
             pricePoints={samples.map((s) => ({ x: s.time, y: s.price }))}
             volumePoints={samples.map((s) => ({ x: s.time, y: s.volume }))}
           />
+        ) : (
+          <Card className="p-5">
+            <h2 className="mb-2 text-sm font-semibold text-text">
+              Market data
+            </h2>
+            <Skeleton className="h-56 w-full" />
+          </Card>
         )}
 
         <Card className="p-5">
           <h2 className="mb-3 text-sm font-semibold text-text">Position</h2>
-          {!position ? (
+          {sectionErrors.position ? (
+            <p className="text-sm text-destructive">{sectionErrors.position}</p>
+          ) : !position ? (
             <p className="text-sm text-subtext-1">No open position.</p>
           ) : (
             <dl className="grid max-w-sm grid-cols-2 gap-y-2 text-sm">
@@ -311,7 +378,11 @@ export default function SessionDetailPage() {
             Decision history
           </h2>
           <div className="overflow-x-auto">
-            {!decisions ? (
+            {sectionErrors.decisions ? (
+              <p className="text-sm text-destructive">
+                {sectionErrors.decisions}
+              </p>
+            ) : !decisions ? (
               <p className="text-sm text-subtext-1">Loading...</p>
             ) : decisions.length === 0 ? (
               <p className="text-sm text-subtext-1">No decisions yet.</p>
@@ -330,7 +401,9 @@ export default function SessionDetailPage() {
                 <tbody>
                   {decisions.slice(0, 50).map((d, i) => (
                     <tr key={i} className="hover:bg-surface-0/60">
-                      <td className={TD}>{new Date(d.time).toLocaleString()}</td>
+                      <td className={TD}>
+                        {new Date(d.time).toLocaleString()}
+                      </td>
                       <td className={TD}>{d.targetDirection ?? "-"}</td>
                       <td className={TD}>
                         {d.confidence !== null ? d.confidence.toFixed(2) : "-"}
@@ -340,7 +413,17 @@ export default function SessionDetailPage() {
                         {d.success ? (
                           <span className="text-emerald-400">ok</span>
                         ) : (
-                          <span className="text-destructive">error</span>
+                          <div className="text-destructive">
+                            <span>error</span>
+                            {d.error && (
+                              <div
+                                className="mt-1 max-w-xs whitespace-pre-wrap text-xs"
+                                title={d.error}
+                              >
+                                {d.error}
+                              </div>
+                            )}
+                          </div>
                         )}
                       </td>
                       <td className={TD}>
@@ -351,7 +434,10 @@ export default function SessionDetailPage() {
                             </summary>
                             <pre className="mt-1 max-w-xs overflow-x-auto whitespace-pre-wrap text-xs text-subtext-1">
                               {JSON.stringify(
-                                { request: d.rawRequest, response: d.rawResponse },
+                                {
+                                  request: d.rawRequest,
+                                  response: d.rawResponse,
+                                },
                                 null,
                                 2,
                               )}
@@ -374,12 +460,14 @@ export default function SessionDetailPage() {
             Funding history
           </h2>
           <div className="overflow-x-auto">
-            {!fundingPayments ? (
+            {sectionErrors.funding ? (
+              <p className="text-sm text-destructive">
+                {sectionErrors.funding}
+              </p>
+            ) : !fundingPayments ? (
               <p className="text-sm text-subtext-1">Loading...</p>
             ) : fundingPayments.length === 0 ? (
-              <p className="text-sm text-subtext-1">
-                No funding payments yet.
-              </p>
+              <p className="text-sm text-subtext-1">No funding payments yet.</p>
             ) : (
               <table className="w-full min-w-[520px] border-collapse text-left text-sm text-text">
                 <thead>
@@ -393,9 +481,13 @@ export default function SessionDetailPage() {
                 <tbody>
                   {fundingPayments.map((p, i) => (
                     <tr key={i} className="hover:bg-surface-0/60">
-                      <td className={TD}>{new Date(p.time).toLocaleString()}</td>
+                      <td className={TD}>
+                        {new Date(p.time).toLocaleString()}
+                      </td>
                       <td className={TD}>{p.direction}</td>
-                      <td className={TD}>{(p.fundingRate * 100).toFixed(4)}%</td>
+                      <td className={TD}>
+                        {(p.fundingRate * 100).toFixed(4)}%
+                      </td>
                       <td className={TD}>{p.amountUsd.toFixed(4)}</td>
                     </tr>
                   ))}

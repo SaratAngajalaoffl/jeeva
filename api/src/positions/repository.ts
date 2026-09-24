@@ -10,9 +10,9 @@ export interface Position {
 }
 
 /**
- * All currently open mock positions, across every trading session. A
- * session with no row here is flat — the mock_positions table
- * (owned/written by the engine, keyed by session_id) only ever holds
+ * All currently open mock and live positions, across every trading
+ * session. A session with no row here is flat — both position tables
+ * (owned/written by the engine, keyed by session_id) only ever hold
  * long/short rows, never an explicit "flat" entry.
  */
 export async function getOpenPositions(pool: Pool): Promise<Position[]> {
@@ -24,7 +24,15 @@ export async function getOpenPositions(pool: Pool): Promise<Position[]> {
     notional_usd: string;
     opened_at: Date;
   }>(
-    "SELECT session_id, symbol, direction, entry_price, notional_usd, opened_at FROM mock_positions ORDER BY symbol ASC",
+    `SELECT session_id, symbol, direction, entry_price, notional_usd, opened_at
+     FROM (
+       SELECT session_id, symbol, direction, entry_price, notional_usd, opened_at
+       FROM mock_positions
+       UNION ALL
+       SELECT session_id, symbol, direction, entry_price, notional_usd, opened_at
+       FROM live_positions
+     ) positions
+     ORDER BY symbol ASC`,
   );
 
   return result.rows.map((row) => ({

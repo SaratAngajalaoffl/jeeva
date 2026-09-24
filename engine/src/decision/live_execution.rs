@@ -596,9 +596,11 @@ impl ExecutionAdapter for LiveExecutionAdapter {
     /// `MockExecutionAdapter::list_open_positions` — used by the funding
     /// sweep, which needs the engine's own record rather than an extra
     /// Hyperliquid round-trip per wallet.
-    async fn list_open_positions(&self) -> Result<Vec<(String, OpenPosition)>, ExecutionError> {
-        let rows = sqlx::query_as::<_, (String, String, f64, f64, DateTime<Utc>)>(
-            "SELECT symbol, direction, entry_price, notional_usd, opened_at FROM live_positions WHERE wallet_id = $1::uuid",
+    async fn list_open_positions(
+        &self,
+    ) -> Result<Vec<(String, String, OpenPosition)>, ExecutionError> {
+        let rows = sqlx::query_as::<_, (String, String, String, f64, f64, DateTime<Utc>)>(
+            "SELECT session_id::text, symbol, direction, entry_price, notional_usd, opened_at FROM live_positions WHERE wallet_id = $1::uuid",
         )
         .bind(&self.wallet_id)
         .fetch_all(&self.pool)
@@ -608,7 +610,7 @@ impl ExecutionAdapter for LiveExecutionAdapter {
         Ok(rows
             .into_iter()
             .map(
-                |(symbol, direction, entry_price, notional_usd, opened_at)| {
+                |(session_id, symbol, direction, entry_price, notional_usd, opened_at)| {
                     let position = OpenPosition {
                         direction: if direction == "long" {
                             Direction::Long
@@ -619,7 +621,7 @@ impl ExecutionAdapter for LiveExecutionAdapter {
                         notional_usd,
                         opened_at,
                     };
-                    (symbol, position)
+                    (session_id, symbol, position)
                 },
             )
             .collect())
