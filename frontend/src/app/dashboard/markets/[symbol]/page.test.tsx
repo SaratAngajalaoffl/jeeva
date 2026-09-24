@@ -4,6 +4,7 @@ import type {
   DecisionLogEntry,
   FundingPayment,
   MarketDataHistory,
+  MarketDataRange,
   OrderBook,
   Perp,
   PerpStats,
@@ -14,6 +15,7 @@ import type {
 import type { ClosedTrade } from "@/lib/api";
 
 const fetchMarketDataMock = vi.fn<[string], Promise<MarketDataHistory>>();
+const fetchMarketDataRangeMock = vi.fn<[string], Promise<MarketDataRange>>();
 const fetchPerpsMock = vi.fn<[], Promise<Perp[]>>();
 const fetchPerpStatsMock = vi.fn<[], Promise<PerpStats[]>>();
 const fetchPositionsMock = vi.fn<[], Promise<Position[]>>();
@@ -33,13 +35,16 @@ const fetchTradeHistoryMock = vi.fn<
 
 vi.mock("@/lib/api", () => ({
   fetchMarketData: (...args: [string]) => fetchMarketDataMock(...args),
+  fetchMarketDataRange: (...args: [string]) =>
+    fetchMarketDataRangeMock(...args),
   fetchPerps: (...args: []) => fetchPerpsMock(...args),
   fetchPerpStats: (...args: []) => fetchPerpStatsMock(...args),
   fetchPositions: (...args: []) => fetchPositionsMock(...args),
   fetchDecisions: (...args: [{ symbol?: string; sessionId?: string }?]) =>
     fetchDecisionsMock(...args),
   fetchFundingPayments: (...args: []) => fetchFundingPaymentsMock(...args),
-  fetchTradingSessions: (...args: [string]) => fetchTradingSessionsMock(...args),
+  fetchTradingSessions: (...args: [string]) =>
+    fetchTradingSessionsMock(...args),
   fetchOrderBook: (...args: [string]) => fetchOrderBookMock(...args),
   fetchRecentTrades: (...args: [string]) => fetchRecentTradesMock(...args),
   fetchTradeHistory: (...args: [{ symbol?: string; sessionId?: string }?]) =>
@@ -59,9 +64,23 @@ vi.mock("next/navigation", () => ({
 
 import MarketDataPage from "./page";
 
+function expectedDateTimeLocal(iso: string): string {
+  const date = new Date(iso);
+  const pad = (value: number, length = 2) =>
+    String(value).padStart(length, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
+}
+
 describe("MarketDataPage", () => {
   beforeEach(() => {
-    fetchMarketDataMock.mockReset();
+    fetchMarketDataMock.mockReset().mockResolvedValue({
+      samples: [],
+      oldestSampleTime: null,
+    });
+    fetchMarketDataRangeMock.mockReset().mockResolvedValue({
+      earliest: null,
+      latest: null,
+    });
     fetchPerpsMock.mockReset().mockResolvedValue([]);
     fetchPerpStatsMock.mockReset().mockResolvedValue([]);
     fetchPositionsMock.mockReset().mockResolvedValue([]);
@@ -106,6 +125,105 @@ describe("MarketDataPage", () => {
     );
   });
 
+  it("discovers and prefills the exact local market-data range in backtest mode", async () => {
+    const earliest = "2026-09-20T21:19:00.432Z";
+    const latest = "2026-09-20T21:19:00.900Z";
+    fetchMarketDataRangeMock.mockResolvedValue({ earliest, latest });
+    render(<MarketDataPage />);
+
+    fireEvent.click(await screen.findByText("New session"));
+    expect(fetchMarketDataRangeMock).not.toHaveBeenCalled();
+    fireEvent.change(await screen.findByLabelText("Session type"), {
+      target: { value: "backtest" },
+    });
+
+    const expectedStart = expectedDateTimeLocal(earliest);
+    const expectedEnd = expectedDateTimeLocal(latest);
+    const start = screen.getByLabelText("Start");
+    const end = screen.getByLabelText("End");
+    await waitFor(() => {
+      expect(start).toHaveValue(expectedStart);
+      expect(end).toHaveValue(expectedEnd);
+    });
+
+    expect(fetchMarketDataRangeMock).toHaveBeenCalledWith("BTC");
+    expect(start).toHaveAttribute("min", expectedStart);
+    expect(start).toHaveAttribute("max", expectedEnd);
+    expect(start).toHaveAttribute("step", "0.001");
+    expect(end).toHaveAttribute("min", expectedStart);
+    expect(end).toHaveAttribute("max", expectedEnd);
+    expect(end).toHaveAttribute("step", "0.001");
+    expect(screen.getByText(/Data available \(local time\)/)).toHaveTextContent(
+      `${new Date(earliest).toLocaleString()} – ${new Date(latest).toLocaleString()}`,
+    );
+  });
+
+  it("preserves entered dates when a late range response arrives", async () => {
+    let resolveRange: (range: MarketDataRange) => void = () => {};
+    fetchMarketDataRangeMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRange = resolve;
+      }),
+    );
+    render(<MarketDataPage />);
+
+    fireEvent.click(await screen.findByText("New session"));
+    fireEvent.change(await screen.findByLabelText("Session type"), {
+      target: { value: "backtest" },
+    });
+    const start = screen.getByLabelText("Start");
+    const end = screen.getByLabelText("End");
+    fireEvent.change(start, { target: { value: "2026-09-20T21:20:00.123" } });
+    fireEvent.change(end, { target: { value: "2026-09-21T17:00:00.456" } });
+
+    resolveRange({
+      earliest: "2026-09-20T21:19:00.432Z",
+      latest: "2026-09-21T18:04:12.987Z",
+    });
+
+    await waitFor(() => {
+      expect(start).toHaveAttribute("min");
+      expect(end).toHaveAttribute("max");
+    });
+    expect(start).toHaveValue("2026-09-20T21:20:00.123");
+    expect(end).toHaveValue("2026-09-21T17:00:00.456");
+  });
+
+  it("shows no available data when the range lookup fails", async () => {
+    fetchMarketDataRangeMock.mockRejectedValue(new Error("boom"));
+    render(<MarketDataPage />);
+
+    fireEvent.click(await screen.findByText("New session"));
+    fireEvent.change(await screen.findByLabelText("Session type"), {
+      target: { value: "backtest" },
+    });
+
+    expect(
+      await screen.findByText(
+        "No market data is available for this market yet.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("reports when the market has only one sample", async () => {
+    const sampleTime = "2026-09-20T21:19:00.432Z";
+    fetchMarketDataRangeMock.mockResolvedValue({
+      earliest: sampleTime,
+      latest: sampleTime,
+    });
+    render(<MarketDataPage />);
+
+    fireEvent.click(await screen.findByText("New session"));
+    fireEvent.change(await screen.findByLabelText("Session type"), {
+      target: { value: "backtest" },
+    });
+
+    expect(
+      await screen.findByText("Not enough market data yet to run a backtest."),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Start")).toHaveValue("");
+  });
+
   it("shows an error message when loading fails", async () => {
     fetchMarketDataMock.mockRejectedValue(new Error("boom"));
 
@@ -146,7 +264,9 @@ describe("MarketDataPage", () => {
 
     render(<MarketDataPage />);
 
-    await waitFor(() => expect(screen.getByText("Sampling: On")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("Sampling: On")).toBeInTheDocument(),
+    );
     expect(screen.getByText("1 active session")).toBeInTheDocument();
   });
 

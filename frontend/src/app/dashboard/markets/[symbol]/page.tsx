@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import PriceVolumeChart, {
@@ -17,6 +17,7 @@ import {
   fetchDecisions,
   fetchFundingPayments,
   fetchMarketData,
+  fetchMarketDataRange,
   fetchOrderBook,
   fetchPerps,
   fetchPerpStats,
@@ -43,7 +44,15 @@ import {
   type Wallet,
 } from "@/lib/api";
 import { SiteHeader } from "@/components/SiteHeader";
-import { Button, Card, IconButton, Input, Label, Select, Skeleton } from "@/components/ui";
+import {
+  Button,
+  Card,
+  IconButton,
+  Input,
+  Label,
+  Select,
+  Skeleton,
+} from "@/components/ui";
 
 const TH =
   "border-b border-surface-1 py-2 pr-4 text-left text-xs font-medium uppercase tracking-wide text-subtext-0";
@@ -58,13 +67,20 @@ function formatPrice(price: number | null | undefined): string {
 
 function formatVolume(volume: number | null | undefined): string {
   if (volume === null || volume === undefined) return "-";
-  if (volume >= 1_000_000_000) return `$${(volume / 1_000_000_000).toFixed(2)}B`;
+  if (volume >= 1_000_000_000)
+    return `$${(volume / 1_000_000_000).toFixed(2)}B`;
   if (volume >= 1_000_000) return `$${(volume / 1_000_000).toFixed(2)}M`;
   if (volume >= 1_000) return `$${(volume / 1_000).toFixed(2)}K`;
   return `$${volume.toFixed(2)}`;
 }
 
-function HeaderStat({ label, value }: { label: string; value: React.ReactNode }) {
+function HeaderStat({
+  label,
+  value,
+}: {
+  label: string;
+  value: React.ReactNode;
+}) {
   return (
     <div className="flex flex-col gap-0.5">
       <span className="text-[11px] uppercase tracking-wide text-subtext-0">
@@ -173,12 +189,14 @@ export default function MarketDataPage() {
         });
       fetchPerps()
         .then((perps) => {
-          if (!cancelled) setPerp(perps.find((p) => p.symbol === symbol) ?? null);
+          if (!cancelled)
+            setPerp(perps.find((p) => p.symbol === symbol) ?? null);
         })
         .catch(() => {});
       fetchPerpStats()
         .then((stats) => {
-          if (!cancelled) setStats(stats.find((s) => s.symbol === symbol) ?? null);
+          if (!cancelled)
+            setStats(stats.find((s) => s.symbol === symbol) ?? null);
         })
         .catch(() => {});
       fetchPositions()
@@ -360,7 +378,10 @@ export default function MarketDataPage() {
               )
             }
           />
-          <HeaderStat label="24h volume" value={formatVolume(stats?.volumeUsd)} />
+          <HeaderStat
+            label="24h volume"
+            value={formatVolume(stats?.volumeUsd)}
+          />
           <HeaderStat
             label="Open interest"
             value={formatVolume(stats?.openInterestUsd)}
@@ -520,7 +541,10 @@ export default function MarketDataPage() {
                           position.notionalUsd *
                           (position.direction === "long" ? 1 : -1);
                       return (
-                        <tr key={position.sessionId} className="hover:bg-surface-0/60">
+                        <tr
+                          key={position.sessionId}
+                          className="hover:bg-surface-0/60"
+                        >
                           <td className={TD}>
                             <Link
                               href={`/dashboard/markets/${symbol}/sessions/${position.sessionId}`}
@@ -538,7 +562,9 @@ export default function MarketDataPage() {
                           >
                             {position.direction}
                           </td>
-                          <td className={TD}>{formatPrice(position.entryPrice)}</td>
+                          <td className={TD}>
+                            {formatPrice(position.entryPrice)}
+                          </td>
                           <td className={TD}>
                             ${position.notionalUsd.toLocaleString()}
                           </td>
@@ -603,7 +629,9 @@ export default function MarketDataPage() {
                         </td>
                         <td className={TD}>{d.targetDirection ?? "-"}</td>
                         <td className={TD}>
-                          {d.confidence !== null ? d.confidence.toFixed(2) : "-"}
+                          {d.confidence !== null
+                            ? d.confidence.toFixed(2)
+                            : "-"}
                         </td>
                         <td className={TD}>{d.positionAction ?? "no_op"}</td>
                         <td className={TD}>
@@ -677,7 +705,10 @@ export default function MarketDataPage() {
       )}
 
       {dialog === "new-session" && (
-        <Modal title={`New trading session — ${symbol}`} onClose={() => setDialog(null)}>
+        <Modal
+          title={`New trading session — ${symbol}`}
+          onClose={() => setDialog(null)}
+        >
           <NewSessionForm
             symbol={symbol}
             onCancel={() => setDialog(null)}
@@ -822,6 +853,22 @@ function SessionsPanel({
 
 const DECISION_MAKERS: DecisionMaker[] = ["random", "typesafe", "openrouter"];
 
+function toDateTimeLocal(date: Date): string {
+  const pad = (value: number, length = 2) =>
+    String(value).padStart(length, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
+}
+
+function marketDataRangeBounds(range: {
+  earliest: string | null;
+  latest: string | null;
+}): { min: string; max: string; hasWindow: boolean } | null {
+  if (!range.earliest || !range.latest) return null;
+  const min = toDateTimeLocal(new Date(range.earliest));
+  const max = toDateTimeLocal(new Date(range.latest));
+  return { min, max, hasWindow: min < max };
+}
+
 function NewSessionForm({
   symbol,
   onCancel,
@@ -834,7 +881,8 @@ function NewSessionForm({
   const router = useRouter();
   const [sessionType, setSessionType] = useState<"live" | "backtest">("live");
   const [decisionMaker, setDecisionMaker] = useState<DecisionMaker>("random");
-  const [decisionFrequencySeconds, setDecisionFrequencySeconds] = useState("300");
+  const [decisionFrequencySeconds, setDecisionFrequencySeconds] =
+    useState("300");
   const [leverage, setLeverage] = useState("1");
   const [positionSizeUsd, setPositionSizeUsd] = useState("100");
   const [historyWindowSamples, setHistoryWindowSamples] = useState("1000");
@@ -845,9 +893,45 @@ function NewSessionForm({
   const [wallets, setWallets] = useState<Wallet[] | null>(null);
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
+  const startTimeEdited = useRef(false);
+  const endTimeEdited = useRef(false);
   const [initialBalanceUsd, setInitialBalanceUsd] = useState("10000");
+  const [marketDataRange, setMarketDataRange] = useState<{
+    earliest: string | null;
+    latest: string | null;
+  } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const rangeBounds = useMemo(
+    () =>
+      marketDataRangeBounds(
+        marketDataRange ?? { earliest: null, latest: null },
+      ),
+    [marketDataRange],
+  );
+
+  useEffect(() => {
+    if (sessionType !== "backtest") return;
+
+    let cancelled = false;
+    fetchMarketDataRange(symbol)
+      .then((range) => {
+        if (cancelled) return;
+        setMarketDataRange(range);
+        const bounds = marketDataRangeBounds(range);
+        if (bounds?.hasWindow) {
+          if (!startTimeEdited.current) setStartTime(bounds.min);
+          if (!endTimeEdited.current) setEndTime(bounds.max);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setMarketDataRange({ earliest: null, latest: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionType, symbol]);
 
   useEffect(() => {
     const size = Number(positionSizeUsd);
@@ -883,7 +967,8 @@ function NewSessionForm({
         const lev = Number(leverage);
         const size = Number(positionSizeUsd);
         const history = Number(historyWindowSamples);
-        const stopLoss = stopLossPct.trim() === "" ? null : Number(stopLossPct) / 100;
+        const stopLoss =
+          stopLossPct.trim() === "" ? null : Number(stopLossPct) / 100;
         if (
           !Number.isFinite(decision) ||
           decision <= 0 ||
@@ -894,7 +979,8 @@ function NewSessionForm({
           !Number.isInteger(history) ||
           history < 1 ||
           history > 1000 ||
-          (stopLoss !== null && (!Number.isFinite(stopLoss) || stopLoss <= 0 || stopLoss > 1))
+          (stopLoss !== null &&
+            (!Number.isFinite(stopLoss) || stopLoss <= 0 || stopLoss > 1))
         ) {
           return;
         }
@@ -907,6 +993,21 @@ function NewSessionForm({
             !Number.isFinite(balance) ||
             balance <= 0
           ) {
+            return;
+          }
+          if (
+            rangeBounds &&
+            (startTime < rangeBounds.min ||
+              startTime > rangeBounds.max ||
+              endTime < rangeBounds.min ||
+              endTime > rangeBounds.max ||
+              endTime <= startTime)
+          ) {
+            setError(
+              rangeBounds.hasWindow
+                ? `Choose a Start and End within the available market-data range (${rangeBounds.min} to ${rangeBounds.max}).`
+                : "At least two market-data samples are required to run a backtest.",
+            );
             return;
           }
           setSubmitting(true);
@@ -928,7 +1029,9 @@ function NewSessionForm({
             setError(result.error);
             return;
           }
-          router.push(`/dashboard/markets/${symbol}/backtests/${result.backtest.id}`);
+          router.push(
+            `/dashboard/markets/${symbol}/backtests/${result.backtest.id}`,
+          );
           return;
         }
 
@@ -961,7 +1064,9 @@ function NewSessionForm({
         <Label>Session type</Label>
         <Select
           value={sessionType}
-          onChange={(e) => setSessionType(e.target.value as "live" | "backtest")}
+          onChange={(e) =>
+            setSessionType(e.target.value as "live" | "backtest")
+          }
         >
           <option value="live">Live (paper/real trading)</option>
           <option value="backtest">Backtest (replay historical data)</option>
@@ -1054,7 +1159,10 @@ function NewSessionForm({
       {sessionType === "live" ? (
         <label className="flex flex-col gap-1">
           <Label>Wallet (optional — can attach later)</Label>
-          <Select value={walletId} onChange={(e) => setWalletId(e.target.value)}>
+          <Select
+            value={walletId}
+            onChange={(e) => setWalletId(e.target.value)}
+          >
             <option value="">No wallet</option>
             {wallets?.map((w) => (
               <option key={w.id} value={w.id}>
@@ -1069,20 +1177,47 @@ function NewSessionForm({
         </label>
       ) : (
         <>
+          <p className="text-xs text-subtext-1">
+            {rangeBounds ? (
+              rangeBounds.hasWindow ? (
+                <>
+                  Data available (local time):{" "}
+                  {new Date(`${rangeBounds.min}`).toLocaleString()} –{" "}
+                  {new Date(`${rangeBounds.max}`).toLocaleString()}
+                </>
+              ) : (
+                "Not enough market data yet to run a backtest."
+              )
+            ) : (
+              "No market data is available for this market yet."
+            )}
+          </p>
           <label className="flex flex-col gap-1">
             <Label>Start</Label>
             <Input
               type="datetime-local"
+              min={rangeBounds?.min}
+              max={rangeBounds?.max}
+              step={0.001}
               value={startTime}
-              onChange={(e) => setStartTime(e.target.value)}
+              onChange={(e) => {
+                setStartTime(e.target.value);
+                startTimeEdited.current = true;
+              }}
             />
           </label>
           <label className="flex flex-col gap-1">
             <Label>End</Label>
             <Input
               type="datetime-local"
+              min={rangeBounds?.min}
+              max={rangeBounds?.max}
+              step={0.001}
               value={endTime}
-              onChange={(e) => setEndTime(e.target.value)}
+              onChange={(e) => {
+                setEndTime(e.target.value);
+                endTimeEdited.current = true;
+              }}
             />
           </label>
           <label className="flex flex-col gap-1">
@@ -1131,7 +1266,9 @@ function OrderBookRow({
         style={{
           width: `${pct}%`,
           backgroundColor:
-            side === "ask" ? "rgba(255, 107, 107, 0.16)" : "rgba(74, 222, 128, 0.16)",
+            side === "ask"
+              ? "rgba(255, 107, 107, 0.16)"
+              : "rgba(74, 222, 128, 0.16)",
         }}
       />
       <span
@@ -1227,7 +1364,11 @@ function TradesPanel({ trades }: { trades: Trade[] | null }) {
           key={`${t.time}-${i}`}
           className="flex justify-between rounded px-2 py-1 hover:bg-surface-0/60"
         >
-          <span className={t.side === "buy" ? "text-emerald-400" : "text-destructive"}>
+          <span
+            className={
+              t.side === "buy" ? "text-emerald-400" : "text-destructive"
+            }
+          >
             {formatPrice(t.price)}
           </span>
           <span className="text-subtext-1">{t.size.toFixed(4)}</span>
