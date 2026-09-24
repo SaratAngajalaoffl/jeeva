@@ -1,8 +1,13 @@
+use std::collections::HashMap;
 use std::fmt;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
+use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::OwnedMutexGuard;
 
 use super::model::Direction;
 
@@ -16,6 +21,45 @@ impl fmt::Display for ExecutionError {
 }
 
 impl std::error::Error for ExecutionError {}
+
+/// Process-wide coordination for work that can change a PERP's
+/// execution state. The decision and reconcile loops share one instance
+/// so a stale decision cannot race a drift/safety remediation, even
+/// while different wallet adapters are being refreshed.
+#[derive(Debug, Default)]
+pub struct ExecutionCoordinator {
+    symbols: Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
+}
+
+impl ExecutionCoordinator {
+    fn guard(&self, symbol: &str) -> Arc<AsyncMutex<()>> {
+        self.symbols
+            .lock()
+            .unwrap()
+            .entry(symbol.to_string())
+            .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+            .clone()
+    }
+
+    /// Claims a PERP without waiting. Callers skip this pass when a
+    /// decision cycle or reconciliation is already in flight for the
+    /// symbol. A per-PERP nonblocking claim avoids serializing unrelated
+    /// markets and keeps the reconcile loop from blocking behind a slow
+    /// decision maker network call. Only live adapters opt in, so mock
+    /// and backtest behavior remains fully sequential.
+    pub fn try_lock(&self, symbol: &str) -> Option<OwnedMutexGuard<()>> {
+        let guard = self.guard(symbol);
+        guard.try_lock_owned().ok()
+    }
+}
+
+/// Shared by the decision and reconciliation loops. Keeping it in one
+/// process-level place means the safety contract also holds when the
+/// wallet registry replaces adapter instances during a refresh.
+pub fn execution_coordinator() -> &'static ExecutionCoordinator {
+    static COORDINATOR: OnceLock<ExecutionCoordinator> = OnceLock::new();
+    COORDINATOR.get_or_init(ExecutionCoordinator::default)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OpenPosition {
@@ -188,6 +232,31 @@ pub trait ExecutionAdapter: Send + Sync {
     /// for funding payments, which are distinct from decision-driven
     /// realized P&L on close.
     async fn apply_funding(&self, symbol: &str, amount_usd: f64) -> Result<(), ExecutionError>;
+
+    /// Records when a decision cycle began. Live adapters use this to
+    /// reject a decision whose network call exceeded the freshness
+    /// window; mock/backtest adapters are authoritative and no-op.
+    async fn mark_decision_started(&self, _symbol: &str) {}
+
+    /// Whether this adapter participates in the process-wide per-PERP
+    /// execution claim. Mock and backtest adapters are sequential and
+    /// do not need process-global coordination.
+    async fn needs_execution_coordination(&self) -> bool {
+        false
+    }
+
+    /// Re-checks the market context after `DecisionMaker::decide`
+    /// returns. Implementations may reject stale decisions; the
+    /// default keeps the existing mock/backtest behavior.
+    async fn decision_is_fresh(
+        &self,
+        _symbol: &str,
+        _latest_mid_price: f64,
+        _reference_mid_price: f64,
+        _max_age: Duration,
+    ) -> Result<bool, ExecutionError> {
+        Ok(true)
+    }
 
     /// Checks this adapter's virtual state against the real exchange for
     /// each of `sessions` (every non-closed session currently attached
@@ -493,6 +562,16 @@ impl ExecutionAdapter for MockExecutionAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn execution_coordinator_allows_only_one_in_flight_claim_per_perp() {
+        let coordinator = ExecutionCoordinator::default();
+        let first = coordinator.try_lock("BTC").unwrap();
+        assert!(coordinator.try_lock("BTC").is_none());
+        assert!(coordinator.try_lock("ETH").is_some());
+        drop(first);
+        assert!(coordinator.try_lock("BTC").is_some());
+    }
 
     #[test]
     fn opening_long_fills_above_mid() {

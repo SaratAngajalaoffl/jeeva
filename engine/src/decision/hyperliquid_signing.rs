@@ -91,6 +91,11 @@ pub struct OrderRequest {
     pub reduce_only: bool,
     #[serde(rename = "t")]
     pub order_type: OrderType,
+    /// Optional client order id. Its position is part of the signed
+    /// MessagePack wire layout: Hyperliquid's canonical order map is
+    /// `a, b, p, s, r, t, c?`, so this must remain the final field.
+    #[serde(rename = "c", skip_serializing_if = "Option::is_none")]
+    pub cloid: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -323,6 +328,7 @@ mod tests {
             size: "0.1".to_string(),
             reduce_only: false,
             order_type: OrderType::ioc(),
+            cloid: None,
         })
     }
 
@@ -342,6 +348,50 @@ mod tests {
         let sig1 = sign_order_action(&key, &action, 1_000, true).unwrap();
         let sig2 = sign_order_action(&key, &action, 2_000, true).unwrap();
         assert_ne!(sig1, sig2);
+    }
+
+    #[test]
+    fn client_order_id_changes_the_signed_order() {
+        let key = PrivateKey::from_hex(TEST_KEY_HEX).unwrap();
+        let mut action = sample_order();
+        let first_signature = sign_order_action(&key, &action, 1_000, true).unwrap();
+        let OrderAction::Order { orders, .. } = &mut action;
+        orders[0].cloid = Some("0x0123456789abcdef0123456789abcdef".to_string());
+        let second_signature = sign_order_action(&key, &action, 1_000, true).unwrap();
+        assert_ne!(first_signature, second_signature);
+    }
+
+    #[test]
+    fn client_order_id_matches_the_canonical_messagepack_layout() {
+        let action = OrderAction::single(OrderRequest {
+            asset: 0,
+            is_buy: true,
+            price: "50000".to_string(),
+            size: "0.1".to_string(),
+            reduce_only: false,
+            order_type: OrderType::ioc(),
+            cloid: Some("0x0123456789abcdef0123456789abcdef".to_string()),
+        });
+
+        // Hyperliquid signs an ordered map, so field placement is part of
+        // the protocol. The official L2Order layout is
+        // {a, b, p, s, r, t, c}. Verify that the serialized field names
+        // occur in that order, independently of MessagePack's string
+        // length encoding.
+        let mut encoded = Vec::new();
+        let mut serializer = rmp_serde::Serializer::new(&mut encoded).with_struct_map();
+        action.serialize(&mut serializer).unwrap();
+        let mut previous = 0;
+        for field in [b"a", b"b", b"p", b"s", b"r", b"t", b"c"] {
+            let key = [0xa1, field[0]];
+            let position = encoded
+                .windows(key.len())
+                .skip(previous)
+                .position(|window| window == key)
+                .map(|offset| previous + offset)
+                .expect("canonical order key must be present");
+            previous = position + key.len();
+        }
     }
 
     #[test]

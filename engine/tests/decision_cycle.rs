@@ -66,6 +66,7 @@ struct FakeExecution {
     position: Mutex<Option<OpenPosition>>,
     open_calls: Mutex<Vec<(String, Direction, f64, f64)>>,
     close_calls: Mutex<Vec<String>>,
+    freshness: Mutex<Option<bool>>,
 }
 
 #[async_trait]
@@ -126,6 +127,16 @@ impl ExecutionAdapter for FakeExecution {
 
     async fn apply_funding(&self, _symbol: &str, _amount_usd: f64) -> Result<(), ExecutionError> {
         Ok(())
+    }
+
+    async fn decision_is_fresh(
+        &self,
+        _symbol: &str,
+        _latest_mid_price: f64,
+        _reference_mid_price: f64,
+        _max_age: std::time::Duration,
+    ) -> Result<bool, ExecutionError> {
+        Ok(self.freshness.lock().unwrap().unwrap_or(true))
     }
 
     async fn reconcile(
@@ -219,6 +230,43 @@ struct NoopLifecycle;
 #[async_trait]
 impl SessionLifecycle for NoopLifecycle {
     async fn mark_closed(&self, _session_id: &str) {}
+}
+
+#[tokio::test]
+async fn stale_live_decision_is_logged_without_placing_an_order() {
+    let history = FakeHistory::new(vec![sample(100.0)]);
+    let decision_maker = RandomDecisionMaker::with_sequence(vec![TargetDirection::Long]);
+    let execution = FakeExecution {
+        freshness: Mutex::new(Some(false)),
+        ..FakeExecution::default()
+    };
+    let log = FakeDecisionLog::default();
+
+    run_decision_cycle(
+        "session-1",
+        "BTC",
+        &config(),
+        DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+        chrono::Utc::now(),
+        &history,
+        &decision_maker,
+        &execution,
+        &EmptyFunding,
+        &log,
+        &InMemoryFailureTracker::new(),
+        &NoopLifecycle,
+    )
+    .await;
+
+    assert!(execution.open_calls.lock().unwrap().is_empty());
+    let entries = log.entries.lock().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert!(!entries[0].success);
+    assert!(entries[0]
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("stale decision"));
 }
 
 #[tokio::test]
