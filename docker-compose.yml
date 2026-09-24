@@ -36,7 +36,7 @@ services:
       POSTGRES_PASSWORD: jeeva
       POSTGRES_DB: jeeva
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - timescale_data:/var/lib/postgresql/data
     healthcheck:
