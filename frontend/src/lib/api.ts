@@ -315,9 +315,14 @@ export interface TradingSession {
   closedAt: string | null;
 }
 
+export type TradingSessionRow = TradingSession & {
+  /** Closed-trade P&L plus funding, scoped to this session. */
+  realizedPnlUsd: number;
+};
+
 export async function fetchTradingSessions(
   symbol: string,
-): Promise<TradingSession[]> {
+): Promise<TradingSessionRow[]> {
   const res = await fetch(
     `${await loadApiUrl()}/perps/${encodeURIComponent(symbol)}/trading-sessions`,
     { credentials: "include" },
@@ -325,18 +330,18 @@ export async function fetchTradingSessions(
   if (!res.ok) {
     throw new Error("Failed to load trading sessions");
   }
-  const body = (await res.json()) as { sessions: TradingSession[] };
+  const body = (await res.json()) as { sessions: TradingSessionRow[] };
   return body.sessions;
 }
 
-export async function fetchAllTradingSessions(): Promise<TradingSession[]> {
+export async function fetchAllTradingSessions(): Promise<TradingSessionRow[]> {
   const res = await fetch(`${await loadApiUrl()}/trading-sessions`, {
     credentials: "include",
   });
   if (!res.ok) {
     throw new Error("Failed to load trading sessions");
   }
-  const body = (await res.json()) as { sessions: TradingSession[] };
+  const body = (await res.json()) as { sessions: TradingSessionRow[] };
   return body.sessions;
 }
 

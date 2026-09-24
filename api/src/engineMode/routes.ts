@@ -31,6 +31,7 @@ async function closeSessionsOnLiveWallets(pgPool: Pool): Promise<void> {
 
   await Promise.all(
     sessions
+      .map(({ session }) => session)
       .filter(
         (s) =>
           s.status !== "closed" &&

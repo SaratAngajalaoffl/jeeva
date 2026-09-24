@@ -36,7 +36,7 @@ import {
   type PerpHealth,
   type PerpStats,
   type Position,
-  type TradingSession,
+  type TradingSessionRow,
   type Wallet,
 } from "@/lib/api";
 import {
@@ -129,7 +129,7 @@ interface Snapshot {
   decisions: DecisionLogEntry[];
   funding: FundingPayment[];
   wallets: Wallet[];
-  sessions: TradingSession[];
+  sessions: TradingSessionRow[];
   health: PerpHealth[];
   engineMode: EngineMode | null;
 }

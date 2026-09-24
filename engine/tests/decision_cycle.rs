@@ -114,12 +114,14 @@ impl ExecutionAdapter for FakeExecution {
         Ok(())
     }
 
-    async fn list_open_positions(&self) -> Result<Vec<(String, OpenPosition)>, ExecutionError> {
+    async fn list_open_positions(
+        &self,
+    ) -> Result<Vec<(String, String, OpenPosition)>, ExecutionError> {
         Ok(self
             .position
             .lock()
             .unwrap()
-            .map(|p| ("BTC".to_string(), p))
+            .map(|p| ("test-session".to_string(), "BTC".to_string(), p))
             .into_iter()
             .collect())
     }

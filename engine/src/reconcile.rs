@@ -586,7 +586,9 @@ mod tests {
             Ok(())
         }
 
-        async fn list_open_positions(&self) -> Result<Vec<(String, OpenPosition)>, ExecutionError> {
+        async fn list_open_positions(
+            &self,
+        ) -> Result<Vec<(String, String, OpenPosition)>, ExecutionError> {
             Ok(Vec::new())
         }
 

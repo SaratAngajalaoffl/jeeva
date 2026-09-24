@@ -3,6 +3,8 @@ use engine::funding::{FundingPaymentWriter, PostgresFundingPaymentWriter};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Row};
 
+const SESSION_ID: &str = "00000000-0000-0000-0000-000000000043";
+
 fn test_database_url() -> String {
     std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "postgres://jeeva:jeeva@localhost:5432/jeeva_test".to_string())
@@ -27,24 +29,33 @@ async fn writes_a_row_readable_back_with_all_fields() {
         .unwrap();
 
     writer
-        .write("TESTFUND1", Direction::Long, 0.0001, 1000.0, -0.1)
+        .write(
+            SESSION_ID,
+            "TESTFUND1",
+            Direction::Long,
+            0.0001,
+            1000.0,
+            -0.1,
+        )
         .await
         .unwrap();
 
     let row = sqlx::query(
-        "SELECT symbol, direction, funding_rate, notional_usd, amount_usd FROM funding_payments WHERE symbol = $1",
+        "SELECT session_id::text AS session_id, symbol, direction, funding_rate, notional_usd, amount_usd FROM funding_payments WHERE symbol = $1",
     )
     .bind("TESTFUND1")
     .fetch_one(&pool)
     .await
     .unwrap();
 
+    let session_id: String = row.get("session_id");
     let symbol: String = row.get("symbol");
     let direction: String = row.get("direction");
     let funding_rate: f64 = row.get("funding_rate");
     let notional_usd: f64 = row.get("notional_usd");
     let amount_usd: f64 = row.get("amount_usd");
 
+    assert_eq!(session_id, SESSION_ID);
     assert_eq!(symbol, "TESTFUND1");
     assert_eq!(direction, "long");
     assert_eq!(funding_rate, 0.0001);
@@ -65,7 +76,14 @@ async fn every_call_writes_a_separate_row() {
 
     for _ in 0..3 {
         writer
-            .write("TESTFUND2", Direction::Short, 0.0001, 500.0, 0.05)
+            .write(
+                SESSION_ID,
+                "TESTFUND2",
+                Direction::Short,
+                0.0001,
+                500.0,
+                0.05,
+            )
             .await
             .unwrap();
     }

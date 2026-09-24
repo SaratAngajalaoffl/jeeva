@@ -16,7 +16,7 @@ import type {
   FundingPayment,
   MarketDataPoint,
   Position,
-  TradingSession,
+  TradingSessionRow,
   Wallet,
 } from "./api";
 
@@ -34,7 +34,7 @@ function wallet(overrides: Partial<Wallet> = {}): Wallet {
   };
 }
 
-function session(overrides: Partial<TradingSession> = {}): TradingSession {
+function session(overrides: Partial<TradingSessionRow> = {}): TradingSessionRow {
   return {
     id: "s1",
     symbol: "BTC",
@@ -50,6 +50,7 @@ function session(overrides: Partial<TradingSession> = {}): TradingSession {
     status: "active",
     createdAt: "2026-09-20T09:00:00.000Z",
     closedAt: null,
+    realizedPnlUsd: 0,
     ...overrides,
   };
 }
@@ -362,9 +363,23 @@ describe("buildPositionRows", () => {
 });
 
 describe("buildSessionRows", () => {
-  it("reads realised P&L off the session's own wallet", () => {
+  it("uses session-scoped realised P&L, not reused wallet history", () => {
     const [row] = buildSessionRows(
-      [session()],
+      [session({ realizedPnlUsd: 0 })],
+      [wallet({ currentBalanceUsd: 129.8 })],
+      [],
+      [],
+      new Map(),
+    );
+
+    expect(row.realizedPnlUsd).toBe(0);
+    expect(row.position).toBeNull();
+    expect(row.nextDecisionAt).toBeNull();
+  });
+
+  it("uses a fresh session's realised P&L value", () => {
+    const [row] = buildSessionRows(
+      [session({ realizedPnlUsd: -1.5 })],
       [wallet({ currentBalanceUsd: 98.5 })],
       [],
       [],
@@ -372,8 +387,6 @@ describe("buildSessionRows", () => {
     );
 
     expect(row.realizedPnlUsd).toBeCloseTo(-1.5);
-    expect(row.position).toBeNull();
-    expect(row.nextDecisionAt).toBeNull();
   });
 
   it("projects the next tick from the last decision and the cadence", () => {
