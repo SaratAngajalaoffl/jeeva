@@ -12,6 +12,7 @@ use super::hyperliquid_signing::{
     PrivateKey,
 };
 use super::model::Direction;
+use crate::hyperliquid::{coin, dex};
 
 const DEFAULT_MARKET_SLIPPAGE: f64 = 0.05;
 
@@ -57,6 +58,11 @@ struct ExchangeResponse {
     status: String,
     #[serde(default)]
     response: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PerpDex {
+    name: String,
 }
 
 fn parse_position(raw: &RawPosition) -> Result<Option<OpenPosition>, ExecutionError> {
@@ -113,6 +119,13 @@ pub struct LiveExecutionAdapter {
 }
 
 impl LiveExecutionAdapter {
+    /// HIP-3 markets are assigned an asset ID in one global namespace:
+    /// default-DEX assets start at 0 and builder-deployed DEXs are spaced
+    /// 10,000 apart starting at 110,000. Keep this in sync with
+    /// `perpDexs` when the order is signed.
+    const FIRST_HIP3_ASSET: u32 = 110_000;
+    const HIP3_ASSET_STRIDE: u32 = 10_000;
+
     /// `pool`/`wallet_id` back this adapter's persisted virtual position
     /// state (the `live_positions` table) — the engine's own record of
     /// what it believes is open, read on every decision cycle instead of
@@ -156,20 +169,8 @@ impl LiveExecutionAdapter {
     /// The account's on-chain withdrawable USD balance, as reported by
     /// Hyperliquid's `clearinghouseState`. Used to cap position sizes so
     /// an order is never submitted for more than the account can cover.
-    async fn account_withdrawable_usd(&self) -> Result<f64, ExecutionError> {
-        let state: ClearinghouseState = self
-            .http
-            .post(format!("{}/info", self.base_url))
-            .json(&serde_json::json!({
-                "type": "clearinghouseState",
-                "user": self.public_address(),
-            }))
-            .send()
-            .await
-            .map_err(|e| ExecutionError(format!("clearinghouseState request failed: {e}")))?
-            .json()
-            .await
-            .map_err(|e| ExecutionError(format!("clearinghouseState response invalid: {e}")))?;
+    async fn account_withdrawable_usd(&self, symbol: &str) -> Result<f64, ExecutionError> {
+        let state = self.clearinghouse_state(dex(symbol)).await?;
 
         state.withdrawable.parse().map_err(|_| {
             ExecutionError(format!(
@@ -180,10 +181,16 @@ impl LiveExecutionAdapter {
     }
 
     async fn asset_index(&self, symbol: &str) -> Result<u32, ExecutionError> {
+        let symbol_dex = dex(symbol);
+        let coin = coin(symbol);
+        let mut request = serde_json::json!({ "type": "meta" });
+        if let Some(symbol_dex) = symbol_dex {
+            request["dex"] = serde_json::Value::String(symbol_dex.to_string());
+        }
         let meta: MetaResponse = self
             .http
             .post(format!("{}/info", self.base_url))
-            .json(&serde_json::json!({ "type": "meta" }))
+            .json(&request)
             .send()
             .await
             .map_err(|e| ExecutionError(format!("meta request failed: {e}")))?
@@ -191,11 +198,43 @@ impl LiveExecutionAdapter {
             .await
             .map_err(|e| ExecutionError(format!("meta response invalid: {e}")))?;
 
-        meta.universe
+        let index = meta
+            .universe
             .iter()
-            .position(|u| u.name == symbol)
-            .map(|i| i as u32)
-            .ok_or_else(|| ExecutionError(format!("unknown symbol: {symbol}")))
+            .position(|u| coin == crate::hyperliquid::coin(&u.name))
+            .ok_or_else(|| ExecutionError(format!("unknown symbol: {symbol}")))?;
+
+        if symbol_dex.is_none() {
+            return Ok(index as u32);
+        }
+
+        let perp_dexs = self.perp_dexs().await?;
+        let dex_index = perp_dexs
+            .iter()
+            .skip(1)
+            .position(|entry| {
+                entry
+                    .as_ref()
+                    .is_some_and(|entry| Some(entry.name.as_str()) == symbol_dex)
+            })
+            .ok_or_else(|| ExecutionError(format!("unknown perp DEX: {}", symbol_dex.unwrap())))?
+            as u32;
+        Ok(Self::FIRST_HIP3_ASSET + dex_index * Self::HIP3_ASSET_STRIDE + index as u32)
+    }
+
+    async fn perp_dexs(&self) -> Result<Vec<Option<PerpDex>>, ExecutionError> {
+        let body: Vec<Option<PerpDex>> = self
+            .http
+            .post(format!("{}/info", self.base_url))
+            .json(&serde_json::json!({ "type": "perpDexs" }))
+            .send()
+            .await
+            .map_err(|e| ExecutionError(format!("perpDexs request failed: {e}")))?
+            .json()
+            .await
+            .map_err(|e| ExecutionError(format!("perpDexs response invalid: {e}")))?;
+
+        Ok(body)
     }
 
     /// Reads the real position straight from Hyperliquid's
@@ -208,24 +247,12 @@ impl LiveExecutionAdapter {
         &self,
         symbol: &str,
     ) -> Result<Option<OpenPosition>, ExecutionError> {
-        let state: ClearinghouseState = self
-            .http
-            .post(format!("{}/info", self.base_url))
-            .json(&serde_json::json!({
-                "type": "clearinghouseState",
-                "user": self.public_address(),
-            }))
-            .send()
-            .await
-            .map_err(|e| ExecutionError(format!("clearinghouseState request failed: {e}")))?
-            .json()
-            .await
-            .map_err(|e| ExecutionError(format!("clearinghouseState response invalid: {e}")))?;
+        let state = self.clearinghouse_state(dex(symbol)).await?;
 
         let entry = state
             .asset_positions
             .iter()
-            .find(|entry| entry.position.coin == symbol);
+            .find(|entry| crate::hyperliquid::coin(&entry.position.coin) == coin(symbol));
 
         match entry {
             Some(entry) => parse_position(&entry.position),
@@ -312,27 +339,46 @@ impl LiveExecutionAdapter {
     /// known session's virtual state accounts for at all (as opposed to
     /// `fetch_exchange_position`, which checks one symbol a session
     /// already claims).
-    async fn fetch_all_exchange_positions(
+    async fn clearinghouse_state(
         &self,
-    ) -> Result<Vec<(String, OpenPosition)>, ExecutionError> {
-        let state: ClearinghouseState = self
-            .http
+        dex: Option<&str>,
+    ) -> Result<ClearinghouseState, ExecutionError> {
+        let mut request = serde_json::json!({
+            "type": "clearinghouseState",
+            "user": self.public_address(),
+        });
+        if let Some(dex) = dex {
+            request["dex"] = serde_json::Value::String(dex.to_string());
+        }
+        self.http
             .post(format!("{}/info", self.base_url))
-            .json(&serde_json::json!({
-                "type": "clearinghouseState",
-                "user": self.public_address(),
-            }))
+            .json(&request)
             .send()
             .await
             .map_err(|e| ExecutionError(format!("clearinghouseState request failed: {e}")))?
             .json()
             .await
-            .map_err(|e| ExecutionError(format!("clearinghouseState response invalid: {e}")))?;
+            .map_err(|e| ExecutionError(format!("clearinghouseState response invalid: {e}")))
+    }
 
+    /// Every open position across the default DEX and the HIP-3 DEXs
+    /// used by this wallet's active sessions. There is no single endpoint
+    /// spanning all namespaces, so reconcile must read each one.
+    async fn fetch_all_exchange_positions(
+        &self,
+        dexes: &[Option<&str>],
+    ) -> Result<Vec<(String, OpenPosition)>, ExecutionError> {
         let mut positions = Vec::new();
-        for entry in &state.asset_positions {
-            if let Some(position) = parse_position(&entry.position)? {
-                positions.push((entry.position.coin.clone(), position));
+        for dex in dexes {
+            let state = self.clearinghouse_state(*dex).await?;
+            for entry in &state.asset_positions {
+                if let Some(position) = parse_position(&entry.position)? {
+                    let symbol = dex.map_or_else(
+                        || entry.position.coin.clone(),
+                        |dex| format!("{dex}:{}", crate::hyperliquid::coin(&entry.position.coin)),
+                    );
+                    positions.push((symbol, position));
+                }
             }
         }
         Ok(positions)
@@ -539,7 +585,7 @@ impl ExecutionAdapter for LiveExecutionAdapter {
         // A fixed session size may exceed what the account can actually
         // trade after earlier losses; clamp to the withdrawable balance
         // instead of sending an order the exchange will reject.
-        let available_usd: f64 = self.account_withdrawable_usd().await?;
+        let available_usd: f64 = self.account_withdrawable_usd(symbol).await?;
         let position_size_usd =
             super::execution::clamp_position_size_usd(position_size_usd, available_usd)
                 .map_err(ExecutionError)?;
@@ -693,7 +739,16 @@ impl ExecutionAdapter for LiveExecutionAdapter {
             });
         }
 
-        for (symbol, position) in self.fetch_all_exchange_positions().await? {
+        let dexes: Vec<Option<String>> = self
+            .perp_dexs()
+            .await?
+            .into_iter()
+            .map(|entry| entry.map(|entry| entry.name))
+            .collect();
+        let all_dexes: Vec<Option<&str>> = std::iter::once(None)
+            .chain(dexes.iter().filter_map(|entry| entry.as_deref().map(Some)))
+            .collect();
+        for (symbol, position) in self.fetch_all_exchange_positions(&all_dexes).await? {
             if accounted_for.contains(&symbol) {
                 continue;
             }
@@ -720,7 +775,7 @@ mod tests {
     use super::*;
     use serde_json::json;
     use sqlx::postgres::PgPoolOptions;
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{body_partial_json, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     const TEST_KEY_HEX: &str = "0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318";
@@ -766,6 +821,55 @@ mod tests {
     ) -> LiveExecutionAdapter {
         let key = PrivateKey::from_hex(TEST_KEY_HEX).unwrap();
         LiveExecutionAdapter::new(server.uri(), key, true, pool, wallet_id.to_string())
+    }
+
+    #[tokio::test]
+    async fn place_order_routes_a_hip3_symbol_to_its_dex() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/info"))
+            .and(body_partial_json(json!({ "type": "perpDexs" })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                null,
+                { "name": "xyz" }
+            ])))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/info"))
+            .and(body_partial_json(json!({ "type": "meta", "dex": "xyz" })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "universe": [
+                    { "name": "xyz:TSLA" },
+                    { "name": "xyz:AAOI" }
+                ]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/exchange"))
+            .and(body_partial_json(json!({
+                "action": {
+                    "type": "order",
+                    "orders": [{ "a": 110001 }]
+                }
+            })))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "status": "ok", "response": {} })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://unused")
+            .unwrap();
+        let adapter = adapter_against(&server, pool, "00000000-0000-0000-0000-0000000000ff").await;
+
+        adapter
+            .place_order("xyz:AAOI", true, 1.0, 101.5, false)
+            .await
+            .unwrap();
     }
 
     #[test]
@@ -886,6 +990,38 @@ mod tests {
         assert_eq!(fetched.direction, position.direction);
         assert_eq!(fetched.entry_price, position.entry_price);
         assert_eq!(fetched.notional_usd, position.notional_usd);
+    }
+
+    #[tokio::test]
+    async fn open_confirms_a_hip3_position_from_the_dex_local_coin() {
+        let pool = pool().await;
+        let wallet_id = "00000000-0000-0000-0000-00000000010d";
+        let session_id = "00000000-0000-0000-0000-00000000010e";
+        reset_wallet_and_position(&pool, wallet_id, session_id).await;
+
+        let server = MockServer::start().await;
+        mount_hip3_info(
+            &server,
+            json!([{ "position": { "coin": "AAOI", "szi": "1", "entryPx": "101.5" } }]),
+        )
+        .await;
+        mount_ok_exchange(&server).await;
+        let adapter = adapter_against(&server, pool.clone(), wallet_id).await;
+
+        let position = adapter
+            .open(session_id, "xyz:AAOI", Direction::Long, 101.5, 1.0, 101.5)
+            .await
+            .unwrap();
+        assert_eq!(position.notional_usd, 101.5);
+        assert_eq!(
+            adapter
+                .get_position(session_id, "xyz:AAOI")
+                .await
+                .unwrap()
+                .unwrap()
+                .notional_usd,
+            101.5
+        );
     }
 
     #[tokio::test]
@@ -1017,10 +1153,59 @@ mod tests {
     async fn mount_combined_info(server: &MockServer, asset_positions: serde_json::Value) {
         Mock::given(method("POST"))
             .and(path("/info"))
+            .and(body_partial_json(json!({ "type": "perpDexs" })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([null])))
+            .mount(server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/info"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "withdrawable": "1000.0",
                 "universe": [{ "name": "BTC" }],
                 "assetPositions": asset_positions,
+            })))
+            .mount(server)
+            .await;
+    }
+
+    async fn mount_hip3_info(server: &MockServer, asset_positions: serde_json::Value) {
+        Mock::given(method("POST"))
+            .and(path("/info"))
+            .and(body_partial_json(json!({ "type": "perpDexs" })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                null,
+                { "name": "xyz" }
+            ])))
+            .mount(server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/info"))
+            .and(body_partial_json(json!({
+                "type": "clearinghouseState",
+                "dex": "xyz"
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "withdrawable": "1000.0",
+                "assetPositions": asset_positions,
+            })))
+            .mount(server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/info"))
+            .and(body_partial_json(json!({
+                "type": "clearinghouseState"
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "withdrawable": "0.0",
+                "assetPositions": []
+            })))
+            .mount(server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/info"))
+            .and(body_partial_json(json!({ "type": "meta", "dex": "xyz" })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "universe": [{ "name": "xyz:AAOI" }]
             })))
             .mount(server)
             .await;
@@ -1034,6 +1219,53 @@ mod tests {
             )
             .mount(server)
             .await;
+    }
+
+    #[tokio::test]
+    async fn fetch_exchange_position_matches_a_namespaced_symbol_to_the_dex_local_coin() {
+        let server = MockServer::start().await;
+        mount_hip3_info(
+            &server,
+            json!([{ "position": { "coin": "AAOI", "szi": "2", "entryPx": "101.5" } }]),
+        )
+        .await;
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://unused")
+            .unwrap();
+        let adapter = adapter_against(&server, pool, "00000000-0000-0000-0000-0000000000ff").await;
+
+        let position = adapter
+            .fetch_exchange_position("xyz:AAOI")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(position.notional_usd, 203.0);
+    }
+
+    #[tokio::test]
+    async fn reconcile_attributes_unknown_hip3_positions_to_their_namespaced_symbol() {
+        let pool = pool().await;
+        let wallet_id = "00000000-0000-0000-0000-0000000000ff";
+        let session_id = "00000000-0000-0000-0000-0000000000fe";
+        reset_wallet_and_position(&pool, wallet_id, session_id).await;
+
+        let server = MockServer::start().await;
+        mount_hip3_info(
+            &server,
+            json!([{ "position": { "coin": "AAOI", "szi": "2", "entryPx": "101.5" } }]),
+        )
+        .await;
+        mount_ok_exchange(&server).await;
+        let adapter = adapter_against(&server, pool, wallet_id).await;
+
+        let outcomes = adapter.reconcile(&[]).await.unwrap();
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(
+            outcomes[0].event,
+            DriftEvent::UnknownOnExchange {
+                symbol: "xyz:AAOI".to_string(),
+            }
+        );
     }
 
     #[tokio::test]

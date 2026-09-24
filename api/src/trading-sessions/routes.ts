@@ -96,6 +96,7 @@ export function createTradingSessionsRouter(
         hyperliquidClient,
         resolvedWalletId,
         positionSizeUsd,
+        symbol,
       ))
     ) {
       res.status(400).json({
@@ -220,6 +221,7 @@ export function createTradingSessionsRouter(
         hyperliquidClient,
         walletId,
         existing.positionSizeUsd,
+        existing.symbol,
       ))
     ) {
       res.status(400).json({
