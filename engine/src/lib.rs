@@ -2,6 +2,7 @@ pub mod backtest;
 pub mod config;
 pub mod decision;
 pub mod funding;
+pub mod hyperliquid;
 pub mod market_data;
 pub mod mode;
 pub mod reconcile;
