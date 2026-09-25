@@ -202,6 +202,13 @@ mod decision_log {
             .execute(&pool)
             .await
             .unwrap();
+        let session_id: String =
+            sqlx::query("INSERT INTO trading_sessions (symbol) VALUES ($1) RETURNING id::text")
+                .bind("TESTLOG1")
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+                .get("id");
 
         let decision = JevDecision {
             direction: TargetDirection::Long,
@@ -218,6 +225,7 @@ mod decision_log {
         writer
             .write(DecisionLogEntry {
                 symbol: "TESTLOG1",
+                session_id: Some(&session_id),
                 context_summary: "BTC: price=100",
                 decision: Some(&decision),
                 position_action: Some(PositionAction::Open(Direction::Long)),
@@ -230,19 +238,21 @@ mod decision_log {
             .unwrap();
 
         let row = sqlx::query(
-            "SELECT symbol, target_direction, confidence, position_action, success FROM decisions WHERE symbol = $1",
+            "SELECT session_id::text, symbol, target_direction, confidence, position_action, success FROM decisions WHERE symbol = $1",
         )
         .bind("TESTLOG1")
         .fetch_one(&pool)
         .await
         .unwrap();
 
+        let stored_session_id: String = row.get("session_id");
         let symbol: String = row.get("symbol");
         let target_direction: Option<String> = row.get("target_direction");
         let confidence: Option<f64> = row.get("confidence");
         let position_action: Option<String> = row.get("position_action");
         let success: bool = row.get("success");
 
+        assert_eq!(stored_session_id, session_id);
         assert_eq!(symbol, "TESTLOG1");
         assert_eq!(target_direction.as_deref(), Some("long"));
         assert_eq!(confidence, Some(0.8));
@@ -276,6 +286,7 @@ mod decision_log {
         writer
             .write(DecisionLogEntry {
                 symbol: "TESTLOGRAW",
+                session_id: None,
                 context_summary: "BTC: price=100",
                 decision: Some(&decision),
                 position_action: Some(PositionAction::Open(Direction::Long)),
@@ -323,6 +334,7 @@ mod decision_log {
         writer
             .write(DecisionLogEntry {
                 symbol: "TESTLOG2",
+                session_id: None,
                 context_summary: "TESTLOG2: no recent market data available",
                 decision: None,
                 position_action: None,
@@ -365,6 +377,7 @@ mod decision_log {
             writer
                 .write(DecisionLogEntry {
                     symbol: "TESTLOG3",
+                    session_id: None,
                     context_summary: "context",
                     decision: None,
                     position_action: None,

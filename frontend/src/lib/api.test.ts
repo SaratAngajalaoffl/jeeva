@@ -80,6 +80,27 @@ describe("runtime API URL resolution", () => {
     });
   });
 
+  it("sends session and symbol filters with funding history requests", async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/runtime-config") {
+        return jsonResponse({ apiUrl: "https://api.example.com" });
+      }
+      return jsonResponse({ payments: [] });
+    });
+
+    const { fetchFundingPayments } = await importApi();
+    await fetchFundingPayments({
+      sessionId: "d0d6f8cf-full-id",
+      from: new Date("2026-01-01T00:00:00.000Z"),
+    });
+
+    expect(fetch).toHaveBeenCalledWith(
+      "https://api.example.com/funding?from=2026-01-01T00%3A00%3A00.000Z&sessionId=d0d6f8cf-full-id",
+      { credentials: "include" },
+    );
+  });
+
   it("resolves the runtime config only once across calls", async () => {
     vi.mocked(fetch).mockImplementation(async (input) => {
       const url = String(input);

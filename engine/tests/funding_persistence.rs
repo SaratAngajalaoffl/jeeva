@@ -26,25 +26,42 @@ async fn writes_a_row_readable_back_with_all_fields() {
         .await
         .unwrap();
 
+    let session_id: String =
+        sqlx::query("INSERT INTO trading_sessions (symbol) VALUES ($1) RETURNING id::text")
+            .bind("TESTFUND1")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .get("id");
+
     writer
-        .write("TESTFUND1", Direction::Long, 0.0001, 1000.0, -0.1)
+        .write(
+            &session_id,
+            "TESTFUND1",
+            Direction::Long,
+            0.0001,
+            1000.0,
+            -0.1,
+        )
         .await
         .unwrap();
 
     let row = sqlx::query(
-        "SELECT symbol, direction, funding_rate, notional_usd, amount_usd FROM funding_payments WHERE symbol = $1",
+        "SELECT session_id::text, symbol, direction, funding_rate, notional_usd, amount_usd FROM funding_payments WHERE symbol = $1",
     )
     .bind("TESTFUND1")
     .fetch_one(&pool)
     .await
     .unwrap();
 
+    let stored_session_id: String = row.get("session_id");
     let symbol: String = row.get("symbol");
     let direction: String = row.get("direction");
     let funding_rate: f64 = row.get("funding_rate");
     let notional_usd: f64 = row.get("notional_usd");
     let amount_usd: f64 = row.get("amount_usd");
 
+    assert_eq!(stored_session_id, session_id);
     assert_eq!(symbol, "TESTFUND1");
     assert_eq!(direction, "long");
     assert_eq!(funding_rate, 0.0001);
@@ -63,9 +80,24 @@ async fn every_call_writes_a_separate_row() {
         .await
         .unwrap();
 
+    let session_id: String =
+        sqlx::query("INSERT INTO trading_sessions (symbol) VALUES ($1) RETURNING id::text")
+            .bind("TESTFUND2")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .get("id");
+
     for _ in 0..3 {
         writer
-            .write("TESTFUND2", Direction::Short, 0.0001, 500.0, 0.05)
+            .write(
+                &session_id,
+                "TESTFUND2",
+                Direction::Short,
+                0.0001,
+                500.0,
+                0.05,
+            )
             .await
             .unwrap();
     }

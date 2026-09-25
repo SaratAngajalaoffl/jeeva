@@ -37,6 +37,7 @@ async function seed(
     positionAction: string | null;
     success: boolean;
     error: string | null;
+    sessionId: string | null;
   }> = {},
 ) {
   const row = {
@@ -45,13 +46,14 @@ async function seed(
     positionAction: "opened",
     success: true,
     error: null,
+    sessionId: null,
     ...overrides,
   };
   await pgPool.query(
     `INSERT INTO decisions (
        time, symbol, context_summary, target_direction, confidence,
-       prob_long, prob_short, prob_flat, position_action, success, error
-     ) VALUES ($1, $2, 'context', $3, $4, 0.7, 0.1, 0.2, $5, $6, $7)`,
+       prob_long, prob_short, prob_flat, position_action, success, error, session_id
+     ) VALUES ($1, $2, 'context', $3, $4, 0.7, 0.1, 0.2, $5, $6, $7, $8)`,
     [
       time,
       symbol,
@@ -60,6 +62,7 @@ async function seed(
       row.positionAction,
       row.success,
       row.error,
+      row.sessionId,
     ],
   );
 }
@@ -102,6 +105,32 @@ describe("GET /decisions", () => {
     expect(res.status).toBe(200);
     expect(res.body.decisions).toHaveLength(1);
     expect(res.body.decisions[0].symbol).toBe("BTC");
+  });
+
+  it("isolates concurrent sessions for the same symbol", async () => {
+    const { rows: sessions } = await pgPool.query<{ id: string }>(
+      "INSERT INTO trading_sessions (symbol) VALUES ('BTC'), ('BTC') RETURNING id",
+    );
+    const now = new Date();
+    await seed("BTC", now, { sessionId: sessions[0].id });
+    await seed("BTC", new Date(now.getTime() - 1000), {
+      sessionId: sessions[1].id,
+    });
+
+    const res = await request(buildApp())
+      .get(`/decisions?symbol=BTC&sessionId=${sessions[0].id}`)
+      .set("Cookie", authCookie());
+
+    expect(res.status).toBe(200);
+    expect(res.body.decisions).toHaveLength(1);
+    expect(res.body.decisions[0]).toMatchObject({
+      symbol: "BTC",
+      sessionId: sessions[0].id,
+    });
+
+    await pgPool.query("DELETE FROM trading_sessions WHERE id = ANY($1::uuid[])", [
+      sessions.map((session) => session.id),
+    ]);
   });
 
   it("excludes decisions outside an explicit from/to range", async () => {

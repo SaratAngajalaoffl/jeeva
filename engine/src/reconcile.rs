@@ -174,6 +174,7 @@ async fn close_for_stop_loss(
     let _ = decision_log
         .write(DecisionLogEntry {
             symbol,
+            session_id: Some(session_id),
             context_summary: &context_summary,
             decision: None,
             position_action: Some(PositionAction::Close),
@@ -241,6 +242,7 @@ async fn hard_close(
     let _ = decision_log
         .write(DecisionLogEntry {
             symbol,
+            session_id: Some(session_id),
             context_summary: "reconcile: hard-close flattening immediately",
             decision: None,
             position_action: Some(PositionAction::Close),
@@ -327,6 +329,7 @@ async fn log_drift_outcome(
     let _ = decision_log
         .write(DecisionLogEntry {
             symbol: outcome.event.symbol(),
+            session_id: outcome.event.session_id(),
             context_summary: &context_summary,
             decision: None,
             position_action: None,
@@ -586,7 +589,9 @@ mod tests {
             Ok(())
         }
 
-        async fn list_open_positions(&self) -> Result<Vec<(String, OpenPosition)>, ExecutionError> {
+        async fn list_open_positions(
+            &self,
+        ) -> Result<Vec<(String, String, OpenPosition)>, ExecutionError> {
             Ok(Vec::new())
         }
 

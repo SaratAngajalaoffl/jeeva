@@ -178,10 +178,12 @@ pub trait ExecutionAdapter: Send + Sync {
         mid_price: f64,
     ) -> Result<(), ExecutionError>;
 
-    /// Every currently open mock position, symbol-keyed. Used by the
-    /// funding sweep, which applies to all open positions regardless of
-    /// which PERP's decision loop opened them.
-    async fn list_open_positions(&self) -> Result<Vec<(String, OpenPosition)>, ExecutionError>;
+    /// Every currently open position, with its session and symbol ids.
+    /// The funding sweep records payments against the owning session, not
+    /// merely the market (multiple sessions can trade the same symbol).
+    async fn list_open_positions(
+        &self,
+    ) -> Result<Vec<(String, String, OpenPosition)>, ExecutionError>;
 
     /// Directly credits/debits the wallet by `amount_usd` (positive
     /// credits, negative debits) without touching any position — used
@@ -432,13 +434,15 @@ impl ExecutionAdapter for MockExecutionAdapter {
         Ok(())
     }
 
-    async fn list_open_positions(&self) -> Result<Vec<(String, OpenPosition)>, ExecutionError> {
+    async fn list_open_positions(
+        &self,
+    ) -> Result<Vec<(String, String, OpenPosition)>, ExecutionError> {
         // Scoped to this adapter's own wallet: each `MockExecutionAdapter`
         // is wallet-scoped, and the funding sweep runs one cycle per
         // wallet (see `crate::funding::run`), so an unscoped query here
         // would double-apply funding once per other wallet in the system.
-        let rows = sqlx::query_as::<_, (String, String, f64, f64, DateTime<Utc>)>(
-            "SELECT symbol, direction, entry_price, notional_usd, opened_at FROM mock_positions WHERE wallet_id = $1::uuid",
+        let rows = sqlx::query_as::<_, (String, String, String, f64, f64, DateTime<Utc>)>(
+            "SELECT session_id::text, symbol, direction, entry_price, notional_usd, opened_at FROM mock_positions WHERE wallet_id = $1::uuid",
         )
         .bind(&self.wallet_id)
         .fetch_all(&self.pool)
@@ -448,7 +452,7 @@ impl ExecutionAdapter for MockExecutionAdapter {
         Ok(rows
             .into_iter()
             .map(
-                |(symbol, direction, entry_price, notional_usd, opened_at)| {
+                |(session_id, symbol, direction, entry_price, notional_usd, opened_at)| {
                     let position = OpenPosition {
                         direction: if direction == "long" {
                             Direction::Long
@@ -459,7 +463,7 @@ impl ExecutionAdapter for MockExecutionAdapter {
                         notional_usd,
                         opened_at,
                     };
-                    (symbol, position)
+                    (session_id, symbol, position)
                 },
             )
             .collect())

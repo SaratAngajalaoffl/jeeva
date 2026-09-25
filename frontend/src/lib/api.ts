@@ -487,9 +487,11 @@ export interface FundingPayment {
 }
 
 export async function fetchFundingPayments(
-  query: HistoryQuery = {},
+  filter: { symbol?: string; sessionId?: string } & HistoryQuery = {},
 ): Promise<FundingPayment[]> {
-  const params = historyParams(query);
+  const params = new URLSearchParams(historyParams(filter));
+  if (filter.symbol) params.set("symbol", filter.symbol);
+  if (filter.sessionId) params.set("sessionId", filter.sessionId);
   const res = await fetch(
     `${await loadApiUrl()}/funding${params ? `?${params}` : ""}`,
     {
