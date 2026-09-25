@@ -147,6 +147,59 @@ export async function createWallet(
   });
 }
 
+/**
+ * A PERP a live wallet is currently halted on: the engine's drift policy
+ * took a `halt` action for it, so the decision loop refuses to place new
+ * orders until an operator clears the hold. The hold lives in Postgres
+ * rather than engine memory, so it survives an engine restart and has to
+ * be cleared deliberately rather than by waiting.
+ */
+export interface LiveExecutionHold {
+  symbol: string;
+  reason: string;
+  createdAt: string;
+}
+
+interface LiveExecutionHoldRow {
+  symbol: string;
+  reason: string;
+  created_at: Date;
+}
+
+function toLiveExecutionHold(row: LiveExecutionHoldRow): LiveExecutionHold {
+  return {
+    symbol: row.symbol,
+    reason: row.reason,
+    createdAt: row.created_at.toISOString(),
+  };
+}
+
+export async function listLiveExecutionHolds(
+  pool: Pool,
+  walletId: string,
+): Promise<LiveExecutionHold[]> {
+  const result = await pool.query<LiveExecutionHoldRow>(
+    `SELECT symbol, reason, created_at
+     FROM live_execution_holds
+     WHERE wallet_id = $1
+     ORDER BY symbol`,
+    [walletId],
+  );
+  return result.rows.map(toLiveExecutionHold);
+}
+
+export async function clearLiveExecutionHold(
+  pool: Pool,
+  walletId: string,
+  symbol: string,
+): Promise<boolean> {
+  const result = await pool.query(
+    "DELETE FROM live_execution_holds WHERE wallet_id = $1 AND symbol = $2",
+    [walletId, symbol],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
 export class WalletInUseError extends Error {
   constructor() {
     super("This wallet is attached to an active trading session");

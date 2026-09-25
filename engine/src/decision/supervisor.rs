@@ -323,25 +323,48 @@ pub async fn run_decision_cycle(
         super::model::PositionAction::NoOp
     };
 
-    if action_requires_execution(action) {
+    if action_requires_execution(action) && execution.needs_execution_coordination().await {
+        // Only live execution needs the post-decision safety checks below.
+        // Mock and backtest execution is authoritative by construction and
+        // keeps its pre-existing behavior, so a second history read can never
+        // suppress an action there.
+        if execution.is_halted(symbol).await.unwrap_or(true) {
+            tracing::warn!(
+                symbol,
+                session_id,
+                "execution halted; skipping decision order"
+            );
+            let _ = decision_log
+                .write(DecisionLogEntry {
+                    symbol,
+                    context_summary: &context_summary,
+                    decision: Some(&decision),
+                    position_action: Some(super::model::PositionAction::NoOp),
+                    error: Some("execution is halted pending operator acknowledgement"),
+                    auto_flatten: false,
+                    raw_request: config
+                        .store_decision_payloads
+                        .then_some(decision.raw_request.as_deref())
+                        .flatten(),
+                    raw_response: config
+                        .store_decision_payloads
+                        .then_some(decision.raw_response.as_deref())
+                        .flatten(),
+                })
+                .await;
+            return;
+        }
+
         // The position can also change while Jev is making its network
         // call (an out-of-band close, liquidation, or a prior ambiguous
-        // order). Re-read it before translating the old Target Direction
-        // into an operation.
-        let (current_position_after_decision, position_read_ok) =
-            match execution.get_position(session_id, symbol).await {
-                Ok(position) => (position, true),
-                Err(error) => {
-                    tracing::warn!(symbol, session_id, %error, "failed decision position re-check");
-                    (current_position, false)
-                }
-            };
-        if !position_read_ok
-            || current_position_after_decision
-                .as_ref()
-                .map(|position| position.direction)
-                != current_direction
-        {
+        // order). Live execution re-reads the exchange's own state here,
+        // comparing direction and size: a decision computed against a
+        // different position no longer describes what should be done.
+        let position_matches = execution
+            .position_matches_decision(session_id, symbol, current_position)
+            .await
+            .unwrap_or(false);
+        if !position_matches {
             tracing::warn!(
                 symbol,
                 session_id,
@@ -368,6 +391,9 @@ pub async fn run_decision_cycle(
             return;
         }
 
+        // Decision freshness: a decision whose Jev call took too long, or
+        // that was computed against a price which has since moved, is
+        // waited out rather than acted on.
         let current_mid_price = match history.recent_samples(symbol, 1).await {
             Ok(samples) => samples.last().map(|sample| sample.mid_price),
             Err(error) => {

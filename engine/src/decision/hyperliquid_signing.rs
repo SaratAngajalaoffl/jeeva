@@ -72,7 +72,7 @@ impl PrivateKey {
 /// match Hyperliquid's wire format exactly (see docs.hyperliquid.xyz),
 /// so this struct is msgpack-encoded as-is for hashing and JSON-encoded
 /// as-is for the HTTP request body.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize)]
 pub struct OrderRequest {
     /// Asset index into Hyperliquid's `universe` array.
     #[serde(rename = "a")]
@@ -98,14 +98,14 @@ pub struct OrderRequest {
     pub cloid: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize)]
 pub struct OrderType {
     pub limit: LimitOrderType,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize)]
 pub struct LimitOrderType {
-    pub tif: &'static str,
+    pub tif: String,
 }
 
 impl OrderType {
@@ -114,17 +114,19 @@ impl OrderType {
     /// `market_order_price`).
     pub fn ioc() -> Self {
         Self {
-            limit: LimitOrderType { tif: "Ioc" },
+            limit: LimitOrderType {
+                tif: "Ioc".to_string(),
+            },
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum OrderAction {
     Order {
         orders: Vec<OrderRequest>,
-        grouping: &'static str,
+        grouping: String,
     },
 }
 
@@ -132,7 +134,7 @@ impl OrderAction {
     pub fn single(order: OrderRequest) -> Self {
         OrderAction::Order {
             orders: vec![order],
-            grouping: "na",
+            grouping: "na".to_string(),
         }
     }
 }

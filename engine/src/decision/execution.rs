@@ -245,6 +245,18 @@ pub trait ExecutionAdapter: Send + Sync {
         false
     }
 
+    /// Checks whether the position observed before `DecisionMaker::decide`
+    /// is still the position the exchange reports. Live implementations
+    /// read exchange state; the default preserves mock/backtest behavior.
+    async fn position_matches_decision(
+        &self,
+        _session_id: &str,
+        _symbol: &str,
+        _expected: Option<OpenPosition>,
+    ) -> Result<bool, ExecutionError> {
+        Ok(true)
+    }
+
     /// Re-checks the market context after `DecisionMaker::decide`
     /// returns. Implementations may reject stale decisions; the
     /// default keeps the existing mock/backtest behavior.
@@ -256,6 +268,19 @@ pub trait ExecutionAdapter: Send + Sync {
         _max_age: Duration,
     ) -> Result<bool, ExecutionError> {
         Ok(true)
+    }
+
+    /// Whether this wallet/PERP is durably halted after a configured
+    /// `DriftAction::Halt`. Live adapters persist the hold; mock and
+    /// backtest adapters keep their existing behavior.
+    async fn is_halted(&self, _symbol: &str) -> Result<bool, ExecutionError> {
+        Ok(false)
+    }
+
+    /// Clears a durable operator hold after the exchange and virtual
+    /// state have been reconciled explicitly.
+    async fn clear_halt(&self, _symbol: &str) -> Result<(), ExecutionError> {
+        Ok(())
     }
 
     /// Checks this adapter's virtual state against the real exchange for

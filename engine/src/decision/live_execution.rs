@@ -75,17 +75,26 @@ fn client_order_id() -> String {
     format!("0x{}", hex::encode(bytes))
 }
 
-/// Keeps ambiguous orders across the wallet registry's periodic adapter
-/// replacement. The key is scoped by both wallet and PERP so neither
-/// wallet refreshes nor concurrent markets overwrite each other.
+/// In-process cache of the outstanding order attempt per wallet+PERP,
+/// so the wallet registry's periodic adapter replacement doesn't lose it
+/// mid-flight. The durable copy of record lives in `live_order_attempts`
+/// (Postgres), which is what an engine restart reads; this map is only a
+/// fast path. The key is scoped by both wallet and PERP so neither wallet
+/// refreshes nor concurrent markets overwrite each other.
 fn ambiguous_submissions() -> &'static Mutex<HashMap<(String, String), PendingOrder>> {
     static SUBMISSIONS: OnceLock<Mutex<HashMap<(String, String), PendingOrder>>> = OnceLock::new();
     SUBMISSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// One signed-but-unconfirmed live order, kept until the exchange reports
+/// a terminal status for its client order id. Holds everything needed to
+/// re-send the byte-identical request: the exact signed `action`, the
+/// `nonce` and signature it was signed with, and the order's economic
+/// terms for recognising a matching retry.
 #[derive(Clone, Debug, PartialEq)]
 struct PendingOrder {
     action: OrderAction,
+    client_order_id: String,
     nonce_ms: u64,
     signature: Signature,
     is_buy: bool,
@@ -482,7 +491,24 @@ impl LiveExecutionAdapter {
         let session_id = event.session_id();
 
         match action {
-            DriftAction::Halt => Ok(()),
+            DriftAction::Halt => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO live_execution_holds (wallet_id, symbol, reason)
+                    VALUES ($1::uuid, $2, $3)
+                    ON CONFLICT (wallet_id, symbol) DO UPDATE SET reason = EXCLUDED.reason
+                    "#,
+                )
+                .bind(&self.wallet_id)
+                .bind(symbol)
+                .bind(format!("drift policy halt: {event:?}"))
+                .execute(&self.pool)
+                .await
+                .map_err(|e| {
+                    ExecutionError(format!("failed to persist live execution hold: {e}"))
+                })?;
+                Ok(())
+            }
             DriftAction::AdoptAndLog => match (session_id, exchange_position) {
                 (Some(session_id), Some(exchange)) => {
                     self.write_virtual_position(session_id, symbol, exchange)
@@ -501,7 +527,7 @@ impl LiveExecutionAdapter {
                         ));
                     }
                 }
-                self.clear_ambiguous_submission(symbol).await;
+                self.clear_confirmed_pending_order(symbol).await?;
                 if let Some(session_id) = session_id {
                     self.delete_virtual_position(session_id).await?;
                 }
@@ -525,7 +551,7 @@ impl LiveExecutionAdapter {
                             "reconcile resubmit did not converge exchange position".to_string(),
                         ));
                     }
-                    self.clear_ambiguous_submission(symbol).await;
+                    self.clear_confirmed_pending_order(symbol).await?;
                     self.write_virtual_position(session_id, symbol, confirmed)
                         .await
                 }
@@ -534,29 +560,230 @@ impl LiveExecutionAdapter {
         }
     }
 
-    async fn clear_ambiguous_submission(&self, symbol: &str) {
-        ambiguous_submissions()
-            .lock()
-            .await
-            .remove(&(self.wallet_id.clone(), symbol.to_string()));
+    async fn clear_ambiguous_submission(&self, symbol: &str) -> bool {
+        let key = (self.wallet_id.clone(), symbol.to_string());
+        let removed = ambiguous_submissions().lock().await.remove(&key).is_some();
+        match sqlx::query(
+            "DELETE FROM live_order_attempts WHERE wallet_id = $1::uuid AND symbol = $2",
+        )
+        .bind(&self.wallet_id)
+        .bind(symbol)
+        .execute(&self.pool)
+        .await
+        {
+            Ok(result) => removed || result.rows_affected() > 0,
+            Err(error) => {
+                tracing::error!(symbol, %error, "failed to clear persisted order attempt");
+                false
+            }
+        }
     }
 
     async fn has_ambiguous_submission(&self, symbol: &str) -> bool {
-        ambiguous_submissions()
+        let in_memory = ambiguous_submissions()
             .lock()
             .await
-            .contains_key(&(self.wallet_id.clone(), symbol.to_string()))
+            .contains_key(&(self.wallet_id.clone(), symbol.to_string()));
+        if in_memory {
+            return true;
+        }
+        self.load_pending_order(symbol)
+            .await
+            .map(|pending| pending.is_some())
+            // Fail closed: if the durable attempt can't be read we can't
+            // tell whether an order is outstanding, so assume it is.
+            .unwrap_or(true)
+    }
+
+    async fn persist_pending_order(
+        &self,
+        symbol: &str,
+        pending: &PendingOrder,
+    ) -> Result<(), ExecutionError> {
+        let action =
+            serde_json::to_value(&pending.action).map_err(|e| ExecutionError(e.to_string()))?;
+        sqlx::query(
+            r#"
+            INSERT INTO live_order_attempts
+              (wallet_id, symbol, client_order_id, action, nonce, signature_r, signature_s, signature_v, is_buy, size, mid_price, reduce_only)
+            VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            ON CONFLICT (wallet_id, symbol) DO NOTHING
+            "#,
+        )
+        .bind(&self.wallet_id)
+        .bind(symbol)
+        .bind(&pending.client_order_id)
+        .bind(action)
+        .bind(pending.nonce_ms as i64)
+        .bind(pending.signature.r_hex())
+        .bind(pending.signature.s_hex())
+        .bind(pending.signature.v as i32)
+        .bind(pending.is_buy)
+        .bind(pending.size)
+        .bind(pending.mid_price)
+        .bind(pending.reduce_only)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| ExecutionError(format!("failed to persist live order attempt: {e}")))?;
+        Ok(())
+    }
+
+    async fn load_pending_order(
+        &self,
+        symbol: &str,
+    ) -> Result<Option<PendingOrder>, ExecutionError> {
+        let row = sqlx::query_as::<_, (String, serde_json::Value, i64, String, String, i32, bool, f64, f64, bool)>(
+            "SELECT client_order_id, action, nonce, signature_r, signature_s, signature_v, is_buy, size, mid_price, reduce_only FROM live_order_attempts WHERE wallet_id = $1::uuid AND symbol = $2",
+        )
+        .bind(&self.wallet_id)
+        .bind(symbol)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| ExecutionError(format!("failed to load live order attempt: {e}")))?;
+        let Some((client_order_id, action, nonce, r, s, v, is_buy, size, mid_price, reduce_only)) =
+            row
+        else {
+            return Ok(None);
+        };
+        let action = serde_json::from_value(action)
+            .map_err(|e| ExecutionError(format!("invalid persisted order action: {e}")))?;
+        let decode = |value: String| {
+            let bytes = hex::decode(value.trim_start_matches("0x"))
+                .map_err(|e| ExecutionError(format!("invalid persisted signature: {e}")))?;
+            bytes
+                .try_into()
+                .map_err(|_| ExecutionError("invalid persisted signature length".to_string()))
+        };
+        Ok(Some(PendingOrder {
+            action,
+            client_order_id,
+            nonce_ms: nonce as u64,
+            signature: Signature {
+                r: decode(r)?,
+                s: decode(s)?,
+                v: v as u8,
+            },
+            is_buy,
+            size,
+            mid_price,
+            reduce_only,
+        }))
     }
 
     async fn retry_ambiguous_submission(&self, symbol: &str) -> Result<(), ExecutionError> {
-        let key = (self.wallet_id.clone(), symbol.to_string());
-        let pending = ambiguous_submissions()
-            .lock()
-            .await
-            .get(&key)
-            .cloned()
+        let pending = self
+            .load_pending_order(symbol)
+            .await?
             .ok_or_else(|| ExecutionError("ambiguous order changed during retry".to_string()))?;
         self.send_signed_order(symbol, &pending).await
+    }
+
+    /// True once a live order's outcome has been observed as terminal.
+    /// Hyperliquid reports the terminal states of an IOC order as
+    /// `filled`, any `*Canceled`/`*Rejected` variant, or no record at
+    /// all when the order never reached the book.
+    fn is_terminal_order_status(status: &str) -> bool {
+        status != "open" && status != "triggered"
+    }
+
+    async fn order_status(&self, client_order_id: &str) -> Result<Option<String>, ExecutionError> {
+        let response = self
+            .http
+            .post(format!("{}/info", self.base_url))
+            .json(&serde_json::json!({
+                "type": "orderStatus",
+                "user": self.public_address(),
+                "oid": client_order_id,
+            }))
+            .send()
+            .await
+            .map_err(|e| ExecutionError(format!("orderStatus request failed: {e}")))?
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|e| ExecutionError(format!("orderStatus response invalid: {e}")))?;
+        let status = response
+            .pointer("/order/status")
+            .and_then(serde_json::Value::as_str)
+            .or_else(|| {
+                response
+                    .pointer("/response/status")
+                    .and_then(serde_json::Value::as_str)
+            })
+            .or_else(|| {
+                response
+                    .pointer("/response/order/status")
+                    .and_then(serde_json::Value::as_str)
+            })
+            .or_else(|| response.get("status").and_then(serde_json::Value::as_str));
+        Ok(status.map(str::to_string))
+    }
+
+    async fn clear_confirmed_pending_order(&self, symbol: &str) -> Result<(), ExecutionError> {
+        if let Some(pending) = self.load_pending_order(symbol).await? {
+            match self.order_status(&pending.client_order_id).await? {
+                // `None` means the exchange has no record of the cloid at
+                // all: the submission never reached the book, so nothing is
+                // left to wait for. A terminal status proves the same in
+                // its own way. Anything still live keeps the marker, so a
+                // second logical order can never be created behind it.
+                None => {
+                    self.clear_ambiguous_submission(symbol).await;
+                }
+                Some(status) if Self::is_terminal_order_status(&status) => {
+                    self.clear_ambiguous_submission(symbol).await;
+                }
+                Some(_) => {}
+            }
+        }
+        Ok(())
+    }
+
+    async fn ensure_pending_order_resolved(&self, symbol: &str) -> Result<(), ExecutionError> {
+        self.clear_confirmed_pending_order(symbol).await?;
+        if self.has_ambiguous_submission(symbol).await {
+            return Err(ExecutionError(
+                "live order outcome is still unresolved; refusing a new order".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn is_halted(&self, symbol: &str) -> Result<bool, ExecutionError> {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM live_execution_holds WHERE wallet_id = $1::uuid AND symbol = $2)",
+        )
+        .bind(&self.wallet_id)
+        .bind(symbol)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| ExecutionError(format!("failed to read live execution hold: {e}")))
+    }
+
+    async fn clear_halt(&self, symbol: &str) -> Result<(), ExecutionError> {
+        sqlx::query("DELETE FROM live_execution_holds WHERE wallet_id = $1::uuid AND symbol = $2")
+            .bind(&self.wallet_id)
+            .bind(symbol)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| ExecutionError(format!("failed to clear live execution hold: {e}")))?;
+        Ok(())
+    }
+
+    async fn position_matches_decision(
+        &self,
+        _session_id: &str,
+        symbol: &str,
+        expected: Option<OpenPosition>,
+    ) -> Result<bool, ExecutionError> {
+        let Some(expected) = expected else {
+            return Ok(self.fetch_exchange_position(symbol).await?.is_none());
+        };
+        let Some(actual) = self.fetch_exchange_position(symbol).await? else {
+            return Ok(false);
+        };
+        Ok(actual.direction == expected.direction
+            && (actual.notional_usd - expected.notional_usd).abs()
+                <= f64::EPSILON.max(expected.notional_usd * 1e-6))
     }
 
     async fn place_order(
@@ -567,12 +794,20 @@ impl LiveExecutionAdapter {
         mid_price: f64,
         reduce_only: bool,
     ) -> Result<(), ExecutionError> {
-        // Keep the exact signed logical order after a transport failure.
-        // A retry reuses its action, nonce, and signature rather than
-        // creating a second identity; reconciliation is the only boundary
-        // that may discard it.
+        // Each PERP has at most one outstanding order attempt, so the
+        // marker is per-symbol rather than a stack. The exact signed
+        // logical order survives a transport failure and a wallet-registry
+        // refresh: a retry reuses its action, nonce, and signature rather
+        // than creating a second identity. Only a confirmed terminal
+        // status (see `clear_confirmed_pending_order`) may discard it.
         let key = (self.wallet_id.clone(), symbol.to_string());
-        let pending = ambiguous_submissions().lock().await.get(&key).cloned();
+        let persisted = self.load_pending_order(symbol).await?;
+        let pending = ambiguous_submissions()
+            .lock()
+            .await
+            .get(&key)
+            .cloned()
+            .or(persisted);
         let pending = match pending {
             Some(pending)
                 if pending.is_buy == is_buy
@@ -582,6 +817,9 @@ impl LiveExecutionAdapter {
             {
                 pending
             }
+            // A different outstanding order on the same PERP. Refuse
+            // rather than overwrite: dropping the marker would allow a
+            // second logical order behind one whose outcome is unknown.
             Some(_) => {
                 return Err(ExecutionError(
                     "previous order submission is ambiguous; reconciliation required".to_string(),
@@ -599,11 +837,13 @@ impl LiveExecutionAdapter {
                     order_type: OrderType::ioc(),
                     cloid: Some(client_order_id()),
                 };
+                let pending_cloid = order.cloid.clone().expect("cloid generated above");
                 let action = OrderAction::single(order);
                 let nonce_ms = Utc::now().timestamp_millis() as u64;
                 let signature = sign_order_action(&self.key, &action, nonce_ms, self.is_mainnet)?;
                 let pending = PendingOrder {
                     action,
+                    client_order_id: pending_cloid,
                     nonce_ms,
                     signature,
                     is_buy,
@@ -611,6 +851,7 @@ impl LiveExecutionAdapter {
                     mid_price,
                     reduce_only,
                 };
+                self.persist_pending_order(symbol, &pending).await?;
                 ambiguous_submissions()
                     .lock()
                     .await
@@ -655,8 +896,7 @@ impl LiveExecutionAdapter {
             .map_err(|e| ExecutionError(format!("exchange response invalid: {e}")))?;
 
         if response.status != "ok" {
-            let key = (self.wallet_id.clone(), symbol.to_string());
-            ambiguous_submissions().lock().await.remove(&key);
+            self.clear_ambiguous_submission(symbol).await;
             return Err(ExecutionError(format!(
                 "exchange rejected order: {:?}",
                 response.response
@@ -689,6 +929,24 @@ impl ExecutionAdapter for LiveExecutionAdapter {
 
     async fn needs_execution_coordination(&self) -> bool {
         true
+    }
+
+    async fn is_halted(&self, symbol: &str) -> Result<bool, ExecutionError> {
+        self.is_halted(symbol).await
+    }
+
+    async fn clear_halt(&self, symbol: &str) -> Result<(), ExecutionError> {
+        self.clear_halt(symbol).await
+    }
+
+    async fn position_matches_decision(
+        &self,
+        session_id: &str,
+        symbol: &str,
+        expected: Option<OpenPosition>,
+    ) -> Result<bool, ExecutionError> {
+        self.position_matches_decision(session_id, symbol, expected)
+            .await
     }
 
     async fn mark_decision_started(&self, symbol: &str) {
@@ -744,11 +1002,7 @@ impl ExecutionAdapter for LiveExecutionAdapter {
             return Ok(existing);
         }
 
-        if self.has_ambiguous_submission(symbol).await {
-            return Err(ExecutionError(
-                "previous order submission is ambiguous; reconciliation required".to_string(),
-            ));
-        }
+        self.ensure_pending_order_resolved(symbol).await?;
 
         // A fixed session size may exceed what the account can actually
         // trade after earlier losses; clamp to the withdrawable balance
@@ -780,7 +1034,7 @@ impl ExecutionAdapter for LiveExecutionAdapter {
                     .to_string(),
             )
         })?;
-        self.clear_ambiguous_submission(symbol).await;
+        self.clear_confirmed_pending_order(symbol).await?;
         if position.direction != direction {
             return Err(ExecutionError(
                 "exchange position did not match submitted open direction".to_string(),
@@ -818,7 +1072,7 @@ impl ExecutionAdapter for LiveExecutionAdapter {
                     "ambiguous close retry did not produce a flat exchange position".to_string(),
                 ));
             }
-            self.clear_ambiguous_submission(symbol).await;
+            self.clear_confirmed_pending_order(symbol).await?;
             self.delete_virtual_position(session_id).await?;
             return Ok(());
         }
@@ -852,7 +1106,7 @@ impl ExecutionAdapter for LiveExecutionAdapter {
                 remaining.notional_usd
             )));
         }
-        self.clear_ambiguous_submission(symbol).await;
+        self.clear_confirmed_pending_order(symbol).await?;
         self.delete_virtual_position(session_id).await?;
 
         tracing::info!(symbol, "confirmed live position close");
@@ -920,9 +1174,10 @@ impl ExecutionAdapter for LiveExecutionAdapter {
             let virtual_position = self.read_virtual_position(&target.session_id).await?;
             let exchange_position = self.fetch_exchange_position(&target.symbol).await?;
             // Reconciliation is the recovery boundary for an ambiguous
-            // submission. Only a successful exchange read permits future
-            // orders for this PERP, regardless of the policy action.
-            self.clear_ambiguous_submission(&target.symbol).await;
+            // submission. Keep it until the exchange reports a terminal
+            // order status; a position snapshot alone is not proof that a
+            // delayed order will not appear later.
+            self.ensure_pending_order_resolved(&target.symbol).await?;
 
             let event = match (virtual_position, exchange_position) {
                 (Some(_), None) => Some(DriftEvent::MissingOnExchange {
@@ -1030,6 +1285,16 @@ mod tests {
             .execute(pool)
             .await
             .unwrap();
+        sqlx::query("DELETE FROM live_order_attempts WHERE wallet_id = $1::uuid")
+            .bind(wallet_id)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM live_execution_holds WHERE wallet_id = $1::uuid")
+            .bind(wallet_id)
+            .execute(pool)
+            .await
+            .unwrap();
         sqlx::query("DELETE FROM wallets WHERE id = $1::uuid")
             .bind(wallet_id)
             .execute(pool)
@@ -1124,7 +1389,8 @@ mod tests {
             .and(path("/info"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "withdrawable": "1000.0",
-                "assetPositions": []
+                "assetPositions": [],
+                "order": { "status": "filled" }
             })))
             .up_to_n_times(1)
             .mount(&server)
@@ -1135,7 +1401,8 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "withdrawable": "1000.0",
                 "universe": [{ "name": "BTC" }],
-                "assetPositions": []
+                "assetPositions": [],
+                "order": { "status": "filled" }
             })))
             .up_to_n_times(1)
             .mount(&server)
@@ -1145,7 +1412,8 @@ mod tests {
             .and(path("/info"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "universe": [{ "name": "BTC" }],
-                "assetPositions": []
+                "assetPositions": [],
+                "order": { "status": "filled" }
             })))
             .up_to_n_times(1)
             .mount(&server)
@@ -1165,7 +1433,8 @@ mod tests {
                 "withdrawable": "1000.0",
                 "assetPositions": [
                     { "position": { "coin": "BTC", "szi": "0.02", "entryPx": "50000" } }
-                ]
+                ],
+                "order": { "status": "filled" }
             })))
             .mount(&server)
             .await;
@@ -1260,7 +1529,8 @@ mod tests {
                 "universe": [{ "name": "BTC" }],
                 "assetPositions": [
                     { "position": { "coin": "BTC", "szi": "0.02", "entryPx": "50000" } }
-                ]
+                ],
+                "order": { "status": "filled" }
             })))
             .up_to_n_times(1)
             .mount(&server)
@@ -1269,7 +1539,8 @@ mod tests {
             .and(path("/info"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "universe": [{ "name": "BTC" }],
-                "assetPositions": []
+                "assetPositions": [],
+                "order": { "status": "filled" }
             })))
             .mount(&server)
             .await;
@@ -1317,7 +1588,8 @@ mod tests {
                 "universe": [{ "name": "BTC" }],
                 "assetPositions": [
                     { "position": { "coin": "BTC", "szi": "0.01", "entryPx": "50000" } }
-                ]
+                ],
+                "order": { "status": "filled" }
             })))
             .mount(&server)
             .await;
@@ -1376,10 +1648,9 @@ mod tests {
 
     #[tokio::test]
     async fn ambiguous_submission_survives_adapter_refresh_and_reuses_the_signed_action() {
-        let pool = PgPoolOptions::new()
-            .connect_lazy(&test_database_url())
-            .unwrap();
+        let pool = pool().await;
         let wallet_id = "00000000-0000-0000-0000-000000000114";
+        reset_wallet_and_position(&pool, wallet_id, "00000000-0000-0000-0000-000000000121").await;
 
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -1387,7 +1658,8 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "withdrawable": "1000.0",
                 "universe": [{ "name": "BTC" }, { "name": "ETH" }],
-                "assetPositions": []
+                "assetPositions": [],
+                "order": { "status": "filled" }
             })))
             .mount(&server)
             .await;
@@ -1482,43 +1754,65 @@ mod tests {
 
     #[tokio::test]
     async fn two_symbols_retain_independent_ambiguity_markers() {
-        let pool = PgPoolOptions::new()
-            .connect_lazy(&test_database_url())
-            .unwrap();
+        let pool = pool().await;
         let wallet_id = "00000000-0000-0000-0000-000000000116";
+        reset_wallet_and_position(&pool, wallet_id, "00000000-0000-0000-0000-000000000122").await;
 
-        let adapter = adapter_against(&MockServer::start().await, pool, wallet_id).await;
+        let adapter = adapter_against(&MockServer::start().await, pool.clone(), wallet_id).await;
         for (symbol, size) in [("BTC", 0.02), ("ETH", 1.0)] {
-            ambiguous_submissions().lock().await.insert(
-                (wallet_id.to_string(), symbol.to_string()),
-                PendingOrder {
-                    action: OrderAction::single(OrderRequest {
-                        asset: 0,
-                        is_buy: true,
-                        price: "50000".to_string(),
-                        size: "0.1".to_string(),
-                        reduce_only: false,
-                        order_type: OrderType::ioc(),
-                        cloid: Some(format!("0x{:032x}", size as u64)),
-                    }),
-                    nonce_ms: 1,
-                    signature: Signature {
-                        r: [0; 32],
-                        s: [0; 32],
-                        v: 27,
-                    },
+            let pending = PendingOrder {
+                action: OrderAction::single(OrderRequest {
+                    asset: 0,
                     is_buy: true,
-                    size,
-                    mid_price: 100.0,
+                    price: "50000".to_string(),
+                    size: "0.1".to_string(),
                     reduce_only: false,
+                    order_type: OrderType::ioc(),
+                    cloid: Some(format!("0x{:032x}", size as u64)),
+                }),
+                client_order_id: format!("0x{:032x}", size as u64),
+                nonce_ms: 1,
+                signature: Signature {
+                    r: [0; 32],
+                    s: [0; 32],
+                    v: 27,
                 },
-            );
+                is_buy: true,
+                size,
+                mid_price: 100.0,
+                reduce_only: false,
+            };
+            ambiguous_submissions()
+                .lock()
+                .await
+                .insert((wallet_id.to_string(), symbol.to_string()), pending.clone());
+            adapter
+                .persist_pending_order(symbol, &pending)
+                .await
+                .unwrap();
         }
 
-        adapter.clear_ambiguous_submission("BTC").await;
-        let pending = ambiguous_submissions().lock().await;
-        assert!(!pending.contains_key(&(wallet_id.to_string(), "BTC".to_string())));
-        assert!(pending.contains_key(&(wallet_id.to_string(), "ETH".to_string())));
+        assert!(adapter.clear_ambiguous_submission("BTC").await);
+        assert!(
+            !sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM live_order_attempts WHERE wallet_id = $1::uuid AND symbol = 'BTC')",
+            )
+            .bind(wallet_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            "clearing BTC must not touch another PERP's durable marker",
+        );
+        assert!(
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM live_order_attempts WHERE wallet_id = $1::uuid AND symbol = 'ETH')",
+            )
+            .bind(wallet_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            "ETH's durable marker survives independently",
+        );
     }
 
     #[tokio::test]
@@ -1600,6 +1894,7 @@ mod tests {
                 "withdrawable": "1000.0",
                 "universe": [{ "name": "BTC" }],
                 "assetPositions": asset_positions,
+            "order": { "status": "filled" },
             })))
             .mount(server)
             .await;
@@ -1806,6 +2101,7 @@ mod tests {
         assert_eq!(outcomes.len(), 1);
         assert_eq!(outcomes[0].action, DriftAction::Halt);
         assert_eq!(outcomes[0].error, None);
+        assert!(ExecutionAdapter::is_halted(&adapter, "BTC").await.unwrap());
 
         // Virtual state is untouched — Halt takes no corrective action.
         let unchanged = adapter
@@ -1814,5 +2110,96 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(unchanged.notional_usd, seeded.notional_usd);
+
+        ExecutionAdapter::clear_halt(&adapter, "BTC").await.unwrap();
+        assert!(!ExecutionAdapter::is_halted(&adapter, "BTC").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn pending_order_survives_process_restart_until_terminal_status() {
+        let pool = pool().await;
+        let wallet_id = "00000000-0000-0000-0000-000000000119";
+        let session_id = "00000000-0000-0000-0000-000000000120";
+        reset_wallet_and_position(&pool, wallet_id, session_id).await;
+
+        let pending = PendingOrder {
+            action: OrderAction::single(OrderRequest {
+                asset: 0,
+                is_buy: true,
+                price: "50000".to_string(),
+                size: "0.02".to_string(),
+                reduce_only: false,
+                order_type: OrderType::ioc(),
+                cloid: Some("0x00000000000000000000000000000123".to_string()),
+            }),
+            client_order_id: "0x00000000000000000000000000000123".to_string(),
+            nonce_ms: 1,
+            signature: Signature {
+                r: [1; 32],
+                s: [2; 32],
+                v: 27,
+            },
+            is_buy: true,
+            size: 0.02,
+            mid_price: 50_000.0,
+            reduce_only: false,
+        };
+
+        let server = MockServer::start().await;
+        let first = adapter_against(&server, pool.clone(), wallet_id).await;
+        first.persist_pending_order("BTC", &pending).await.unwrap();
+        ambiguous_submissions()
+            .lock()
+            .await
+            .insert((wallet_id.to_string(), "BTC".to_string()), pending.clone());
+
+        // Simulate a process restart by rebuilding the adapter and dropping
+        // the in-process marker. The durable row remains the source of truth.
+        ambiguous_submissions()
+            .lock()
+            .await
+            .remove(&(wallet_id.to_string(), "BTC".to_string()));
+        let restarted = adapter_against(&server, pool.clone(), wallet_id).await;
+        assert_eq!(
+            restarted.load_pending_order("BTC").await.unwrap(),
+            Some(pending)
+        );
+
+        Mock::given(method("POST"))
+            .and(path("/info"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "order": { "status": "open" }
+            })))
+            .mount(&server)
+            .await;
+        let error = restarted
+            .ensure_pending_order_resolved("BTC")
+            .await
+            .unwrap_err();
+        assert!(error.0.contains("unresolved"));
+
+        server.reset().await;
+        Mock::given(method("POST"))
+            .and(path("/info"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "order": { "status": "filled" }
+            })))
+            .mount(&server)
+            .await;
+        restarted
+            .ensure_pending_order_resolved("BTC")
+            .await
+            .unwrap();
+        assert!(restarted.load_pending_order("BTC").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn an_unrecorded_pending_order_is_released_but_a_live_one_is_not() {
+        assert!(LiveExecutionAdapter::is_terminal_order_status("filled"));
+        assert!(LiveExecutionAdapter::is_terminal_order_status(
+            "iocCancelRejected"
+        ));
+        assert!(!LiveExecutionAdapter::is_terminal_order_status("open"));
+        assert!(!LiveExecutionAdapter::is_terminal_order_status("triggered"));
     }
 }
