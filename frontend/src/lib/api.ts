@@ -640,6 +640,24 @@ export interface CreateBacktestInput {
   initialBalanceUsd: number;
 }
 
+export interface BacktestError {
+  error: string;
+  earliestStart?: string;
+  latestEnd?: string;
+}
+
+export function formatBacktestError(body: BacktestError): string {
+  if (body.earliestStart) {
+    const local = new Date(body.earliestStart).toLocaleString();
+    return `Start is before the oldest available market data. Earliest valid start: ${local} (${body.earliestStart} UTC).`;
+  }
+  if (body.latestEnd) {
+    const local = new Date(body.latestEnd).toLocaleString();
+    return `End is after the newest available market data. Latest valid end: ${local} (${body.latestEnd} UTC).`;
+  }
+  return body.error;
+}
+
 export async function createBacktest(
   symbol: string,
   input: CreateBacktestInput,
@@ -654,10 +672,31 @@ export async function createBacktest(
     },
   );
   if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    return { ok: false, error: body?.error ?? "Failed to create backtest" };
+    const body = (await res.json().catch(() => null)) as BacktestError | null;
+    return {
+      ok: false,
+      error: body ? formatBacktestError(body) : "Failed to create backtest",
+    };
   }
   return { ok: true, backtest: await res.json() };
+}
+
+export interface MarketDataRange {
+  earliest: string | null;
+  latest: string | null;
+}
+
+export async function fetchMarketDataRange(
+  symbol: string,
+): Promise<MarketDataRange> {
+  const res = await fetch(
+    `${await loadApiUrl()}/perps/${encodeURIComponent(symbol)}/market-data/range`,
+    { credentials: "include" },
+  );
+  if (!res.ok) {
+    throw new Error("Failed to load market data range");
+  }
+  return res.json();
 }
 
 export async function fetchBacktestsForSymbol(
@@ -675,9 +714,12 @@ export async function fetchBacktestsForSymbol(
 }
 
 export async function fetchBacktest(id: string): Promise<BacktestRun | null> {
-  const res = await fetch(`${await loadApiUrl()}/backtests/${encodeURIComponent(id)}`, {
-    credentials: "include",
-  });
+  const res = await fetch(
+    `${await loadApiUrl()}/backtests/${encodeURIComponent(id)}`,
+    {
+      credentials: "include",
+    },
+  );
   if (res.status === 404) {
     return null;
   }
@@ -755,7 +797,9 @@ export interface BacktestTrade {
   closedAt: string;
 }
 
-export async function fetchBacktestTrades(id: string): Promise<BacktestTrade[]> {
+export async function fetchBacktestTrades(
+  id: string,
+): Promise<BacktestTrade[]> {
   const res = await fetch(
     `${await loadApiUrl()}/backtests/${encodeURIComponent(id)}/trades`,
     { credentials: "include" },

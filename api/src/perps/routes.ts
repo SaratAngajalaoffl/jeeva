@@ -5,7 +5,7 @@ import { requireAuth } from "../auth/requireAuth.js";
 import type { HyperliquidClient } from "../hyperliquid/client.js";
 import {
   getMarketDataHistory,
-  getOldestSampleTime,
+  getMarketDataRange,
 } from "../marketData/repository.js";
 import { parseTimeRange } from "../marketData/timeRange.js";
 import { isValidSamplingFrequencySeconds } from "./frequency.js";
@@ -83,15 +83,23 @@ export function createPerpsRouter(
       return;
     }
 
-    const [samples, oldestSampleTime] = await Promise.all([
+    const [samples, marketDataRange] = await Promise.all([
       getMarketDataHistory(pgPool, symbol, range.from, range.to),
-      getOldestSampleTime(pgPool, symbol),
+      getMarketDataRange(pgPool, symbol),
     ]);
     res.status(200).json({
       samples,
       // Lets the frontend disable periods that reach back before any
       // recorded data for this symbol.
-      oldestSampleTime: oldestSampleTime?.toISOString() ?? null,
+      oldestSampleTime: marketDataRange.earliest?.toISOString() ?? null,
+    });
+  });
+
+  router.get("/:symbol/market-data/range", async (req, res) => {
+    const range = await getMarketDataRange(pgPool, req.params.symbol);
+    res.status(200).json({
+      earliest: range.earliest?.toISOString() ?? null,
+      latest: range.latest?.toISOString() ?? null,
     });
   });
 
