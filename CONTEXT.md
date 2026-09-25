@@ -33,7 +33,7 @@ _Avoid_: buy, sell, hold — these imply actions rather than target state, and a
 A PERP's current position, one of `flat | long | short`. Driven purely by the latest Target Direction: a change from `long`→`short` or `short`→`long` closes the existing position and opens the opposite one (no pyramiding — repeating the same direction is a no-op).
 
 **Mock Wallet**:
-A persistent virtual account used in mock mode, configured once with an initial balance when created. Shared across all trading-enabled PERPs (one margin pool), and simply accumulates decision/position/P&L history over time — there is no "session" start/stop concept; enabling trading on a PERP just adds it to the ongoing history.
+A persistent virtual account used in mock mode, configured once with an initial balance when created. Shared across all trading-enabled PERPs (one margin pool), and accumulates wallet-lifetime balance drift over time. `initial_balance_usd` and `current_balance_usd` remain wallet-level values: their difference is portfolio history, including funding and closed trades from prior sessions, and must not be used as a session's realized P&L. Session realized P&L comes from that session's closed trades plus its attributed funding payments.
 _Avoid_: session, mock session — trading is enabled/disabled per PERP, not started/stopped as a session.
 
 **History Window**:
