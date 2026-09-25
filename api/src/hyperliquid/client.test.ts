@@ -138,3 +138,25 @@ describe("HyperliquidClient HIP-3 discovery", () => {
     );
   });
 });
+
+describe("HyperliquidClient unknown markets", () => {
+  // The info endpoint answers an unknown coin with a literal `null` body
+  // (HTTP 200), rather than an error. A malformed or stale symbol must
+  // therefore surface as a typed failure instead of reading fields off a
+  // null body and taking the process down.
+  it("rejects an unknown coin for the order book", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ok(null)));
+    const client = createHyperliquidClient("https://hyperliquid.test");
+    await expect(client.getOrderBook("xyz%3ATSLA")).rejects.toThrow(
+      "unknown market: xyz%3ATSLA",
+    );
+  });
+
+  it("rejects an unknown coin for recent trades", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ok(null)));
+    const client = createHyperliquidClient("https://hyperliquid.test");
+    await expect(client.getRecentTrades("NOTAREALCOIN")).rejects.toThrow(
+      "unknown market: NOTAREALCOIN",
+    );
+  });
+});

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import type { Db } from "mongodb";
 import type { Pool } from "pg";
+import { asyncHandler } from "../asyncHandler.js";
 import { requireAuth } from "../auth/requireAuth.js";
 import type { HyperliquidClient } from "../hyperliquid/client.js";
 import {
@@ -95,17 +96,23 @@ export function createPerpsRouter(
     });
   });
 
-  router.get("/:symbol/orderbook", async (req, res) => {
-    const { symbol } = req.params;
-    const book = await hyperliquidClient.getOrderBook(symbol);
-    res.status(200).json(book);
-  });
+  router.get(
+    "/:symbol/orderbook",
+    asyncHandler(async (req, res) => {
+      const { symbol } = req.params;
+      const book = await hyperliquidClient.getOrderBook(symbol);
+      res.status(200).json(book);
+    }),
+  );
 
-  router.get("/:symbol/trades", async (req, res) => {
-    const { symbol } = req.params;
-    const trades = await hyperliquidClient.getRecentTrades(symbol);
-    res.status(200).json({ trades });
-  });
+  router.get(
+    "/:symbol/trades",
+    asyncHandler(async (req, res) => {
+      const { symbol } = req.params;
+      const trades = await hyperliquidClient.getRecentTrades(symbol);
+      res.status(200).json({ trades });
+    }),
+  );
 
   return router;
 }

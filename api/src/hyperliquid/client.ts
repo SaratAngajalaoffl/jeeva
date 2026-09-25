@@ -32,6 +32,19 @@ export interface ClearinghouseState {
   withdrawableUsd: number;
 }
 
+/**
+ * Raised when Hyperliquid has no market for a requested coin. The info
+ * endpoint answers an unknown coin with a literal `null` body instead of
+ * an error, so a coin-addressed call has to detect that itself rather
+ * than reading fields off the null body.
+ */
+export class UnknownMarketError extends Error {
+  constructor(symbol: string) {
+    super(`unknown market: ${symbol}`);
+    this.name = "UnknownMarketError";
+  }
+}
+
 export interface HyperliquidClient {
   listPerps(): Promise<PerpMeta[]>;
   listPerpStats(): Promise<PerpStats[]>;
@@ -174,7 +187,11 @@ export function createHyperliquidClient(
         throw new Error(`Hyperliquid l2Book request failed: ${res.status}`);
       }
 
-      const body = (await res.json()) as L2BookResponse;
+      const body = (await res.json()) as L2BookResponse | null;
+      if (!body?.levels) {
+        throw new UnknownMarketError(symbol);
+      }
+
       const toLevels = (levels: L2Level[]): OrderBookLevel[] =>
         levels.map((l) => ({ price: Number(l.px), size: Number(l.sz) }));
 
@@ -197,7 +214,10 @@ export function createHyperliquidClient(
         );
       }
 
-      const body = (await res.json()) as RecentTrade[];
+      const body = (await res.json()) as RecentTrade[] | null;
+      if (!Array.isArray(body)) {
+        throw new UnknownMarketError(symbol);
+      }
       return body.map((t) => ({
         time: t.time,
         price: Number(t.px),

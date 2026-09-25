@@ -1,6 +1,9 @@
 import cookieParser from "cookie-parser";
 import cors from "cors";
-import express, { type Express } from "express";
+import express, {
+  type ErrorRequestHandler,
+  type Express,
+} from "express";
 import type { Db } from "mongodb";
 import type { Pool } from "pg";
 import { authRouter } from "./auth/authRoutes.js";
@@ -83,6 +86,22 @@ export function createApp(deps: AppDeps = {}): Express {
     app.use("/trades", createTradesRouter(deps.pgPool));
     app.use(createBacktestsRouter(deps.pgPool));
   }
+
+  // Express 4 does not forward a rejected async handler to the error
+  // middleware, and an unhandled rejection takes the process down. No
+  // single request — a bad symbol, a transient upstream failure — may be
+  // allowed to kill the server, so route every rejection to a response.
+  const handleError: ErrorRequestHandler = (error, _req, res, next) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("unhandled request error:", message);
+    if (res.headersSent) {
+      // Too late to shape a response; let Express's own handler finish.
+      next(error);
+      return;
+    }
+    res.status(500).json({ error: "internal server error" });
+  };
+  app.use(handleError);
 
   return app;
 }
