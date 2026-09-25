@@ -7,10 +7,12 @@ import { isValidInitialBalanceUsd } from "./balance.js";
 import type { HyperliquidClient } from "../hyperliquid/client.js";
 import { isValidPositionSizeUsd } from "../perps/sizing.js";
 import {
+  clearLiveExecutionHold,
   createWallet,
   deleteWallet,
   getWallet,
   getWalletSessionId,
+  listLiveExecutionHolds,
   listWallets,
   WalletAlreadyExistsError,
   WalletInUseError,
@@ -125,6 +127,29 @@ export function createWalletsRouter(
       }
       throw error;
     }
+  });
+
+  // A live wallet can be halted by the engine's drift policy (see
+  // `live_execution_holds`): the decision loop then refuses to place new
+  // orders for that PERP. Both the hold list and the operator's
+  // acknowledgement are exposed here so a halt is visible and clearable
+  // from the dashboard instead of silently strading a PERP.
+  router.get("/:id/holds", async (req, res) => {
+    const holds = await listLiveExecutionHolds(pgPool, req.params.id);
+    res.status(200).json({ holds });
+  });
+
+  router.delete("/:id/holds/:symbol", async (req, res) => {
+    const cleared = await clearLiveExecutionHold(
+      pgPool,
+      req.params.id,
+      req.params.symbol,
+    );
+    if (!cleared) {
+      res.status(404).json({ error: "no hold for this PERP" });
+      return;
+    }
+    res.status(204).send();
   });
 
   router.delete("/:id", async (req, res) => {

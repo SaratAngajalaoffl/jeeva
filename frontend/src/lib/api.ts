@@ -289,6 +289,49 @@ export async function deleteWallet(
   return { ok: true };
 }
 
+/**
+ * A PERP a live wallet is halted on. The engine's drift policy took a
+ * `halt` action, so the decision loop refuses to place new orders for it
+ * until an operator clears the hold.
+ */
+export interface LiveExecutionHold {
+  symbol: string;
+  reason: string;
+  createdAt: string;
+}
+
+export async function fetchLiveExecutionHolds(
+  walletId: string,
+): Promise<LiveExecutionHold[]> {
+  const res = await fetch(
+    `${await loadApiUrl()}/wallets/${encodeURIComponent(walletId)}/holds`,
+    { credentials: "include" },
+  );
+  if (!res.ok) {
+    throw new Error("Failed to load execution holds");
+  }
+  const body = (await res.json()) as { holds: LiveExecutionHold[] };
+  return body.holds;
+}
+
+export async function clearLiveExecutionHold(
+  walletId: string,
+  symbol: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const res = await fetch(
+    `${await loadApiUrl()}/wallets/${encodeURIComponent(walletId)}/holds/${encodeURIComponent(symbol)}`,
+    { method: "DELETE", credentials: "include" },
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    return {
+      ok: false,
+      error: body?.error ?? "Failed to clear execution hold",
+    };
+  }
+  return { ok: true };
+}
+
 export type TradingSessionStatus =
   "active" | "soft_closing" | "hard_closing" | "closed";
 

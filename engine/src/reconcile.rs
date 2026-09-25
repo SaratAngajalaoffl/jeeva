@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::decision::{
-    DecisionLogEntry, DecisionLogWriter, DriftOutcome, ExecutionAdapter, MarketDataHistoryReader,
-    PositionAction, ReconcileTarget, SessionLifecycle,
+    execution_coordinator, DecisionLogEntry, DecisionLogWriter, DriftOutcome, ExecutionAdapter,
+    MarketDataHistoryReader, PositionAction, ReconcileTarget, SessionLifecycle,
 };
 use crate::mode::ModeStore;
 use crate::session::{TradingSessionConfig, TradingSessionStatus};
@@ -154,6 +154,19 @@ async fn close_for_stop_loss(
     execution: &dyn ExecutionAdapter,
     decision_log: &dyn DecisionLogWriter,
 ) {
+    let _guard = if execution.needs_execution_coordination().await {
+        let Some(guard) = execution_coordinator().try_lock(symbol) else {
+            tracing::info!(
+                session_id,
+                symbol,
+                "stop-loss close skipped; execution already in flight"
+            );
+            return;
+        };
+        Some(guard)
+    } else {
+        None
+    };
     let result = execution.close(session_id, symbol, mid_price).await;
     let error = result.as_ref().err().map(|e| e.to_string());
 
@@ -231,6 +244,19 @@ async fn hard_close(
     decision_log: &dyn DecisionLogWriter,
     lifecycle: &dyn SessionLifecycle,
 ) {
+    let _guard = if execution.needs_execution_coordination().await {
+        let Some(guard) = execution_coordinator().try_lock(symbol) else {
+            tracing::info!(
+                session_id,
+                symbol,
+                "hard close skipped; execution already in flight"
+            );
+            return;
+        };
+        Some(guard)
+    } else {
+        None
+    };
     let Some(mid_price) = latest_mid_price(symbol, history).await else {
         return;
     };
@@ -376,6 +402,22 @@ pub async fn run_reconcile_cycle(
         }
 
         let wallet_targets = targets.remove(&wallet_id).unwrap_or_default();
+        let coordinated = adapter.needs_execution_coordination().await;
+        let guards: Vec<_> = if coordinated {
+            wallet_targets
+                .iter()
+                .filter_map(|target| execution_coordinator().try_lock(&target.symbol))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if guards.len() != if coordinated { wallet_targets.len() } else { 0 } {
+            // At least one PERP is already being acted on by its
+            // decision cycle. Skip this wallet pass; the next five-second
+            // reconcile tick will try again.
+            drop(guards);
+            continue;
+        }
 
         match adapter.reconcile(&wallet_targets).await {
             Ok(outcomes) => {
