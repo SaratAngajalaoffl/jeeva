@@ -160,3 +160,37 @@ describe("HyperliquidClient unknown markets", () => {
     );
   });
 });
+
+describe("HyperliquidClient stats with a failing builder DEX", () => {
+  function statsFetch(failing: "xyz" | "default") {
+    return vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body)) as InfoRequest;
+      if (request.type === "perpDexs") return ok([null, { name: "xyz" }]);
+      if (request.type === "metaAndAssetCtxs") {
+        const dex = request.dex ?? "default";
+        if (dex === failing) return new Response("rate limited", { status: 429 });
+        return ok([
+          { universe: [{ name: dex === "xyz" ? "xyz:AAOI" : "BTC" }] },
+          [{ markPx: "10", prevDayPx: "10", dayNtlVlm: "1", openInterest: "1" }],
+        ]);
+      }
+      throw new Error(`unexpected request: ${request.type}`);
+    });
+  }
+
+  it("still lists the other markets when one builder DEX fails", async () => {
+    vi.stubGlobal("fetch", statsFetch("xyz"));
+    const client = createHyperliquidClient("https://hyperliquid.test");
+
+    const stats = await client.listPerpStats();
+
+    expect(stats.map((s) => s.symbol)).toEqual(["BTC"]);
+  });
+
+  it("fails when the default DEX cannot be read", async () => {
+    vi.stubGlobal("fetch", statsFetch("default"));
+    const client = createHyperliquidClient("https://hyperliquid.test");
+
+    await expect(client.listPerpStats()).rejects.toThrow(/429/);
+  });
+});

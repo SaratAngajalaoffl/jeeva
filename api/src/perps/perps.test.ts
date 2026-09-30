@@ -239,3 +239,29 @@ describe("market-data endpoints for an unknown market", () => {
     });
   }
 });
+
+describe("perps listing endpoints when Hyperliquid fails", () => {
+  // Same class of bug as above: `/` and `/stats` call Hyperliquid, and a
+  // rejected promise from a bare async handler crashed the whole process.
+  const failingClient: HyperliquidClient = {
+    ...fakeHyperliquidClient,
+    async listPerps() {
+      throw new Error("Hyperliquid meta request failed: 429");
+    },
+    async listPerpStats() {
+      throw new Error("Hyperliquid metaAndAssetCtxs request failed: 429");
+    },
+  };
+
+  for (const path of ["/perps", "/perps/stats"]) {
+    it(`answers ${path} with 500 instead of crashing`, async () => {
+      const app = createApp({ db, pgPool, hyperliquidClient: failingClient });
+
+      const res = await request(app).get(path).set("Cookie", authCookie());
+
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: "internal server error" });
+      expect((await request(app).get("/health")).status).toBe(200);
+    });
+  }
+});

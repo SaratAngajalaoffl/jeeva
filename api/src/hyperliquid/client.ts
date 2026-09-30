@@ -169,11 +169,19 @@ export function createHyperliquidClient(
 
     async listPerpStats(): Promise<PerpStats[]> {
       const dexes = await perpDexs();
-      const stats = await Promise.all([
+      // The default DEX is required, but one failing builder DEX (rate
+      // limit, transient error) must not take the whole listing down.
+      const [defaultStats, ...builderResults] = await Promise.allSettled([
         statsFor(),
         ...dexes.map((dex) => statsFor(dex.name)),
       ]);
-      return stats.flat();
+      if (defaultStats.status === "rejected") throw defaultStats.reason;
+      return [
+        ...defaultStats.value,
+        ...builderResults.flatMap((result) =>
+          result.status === "fulfilled" ? result.value : [],
+        ),
+      ];
     },
 
     async getOrderBook(symbol: string): Promise<OrderBook> {

@@ -13,6 +13,8 @@ import type {
 } from "@/lib/api";
 import type { ClosedTrade } from "@/lib/api";
 
+const routeParams = vi.hoisted(() => ({ symbol: "BTC" }));
+
 const fetchMarketDataMock = vi.fn<[string], Promise<MarketDataHistory>>();
 const fetchPerpsMock = vi.fn<[], Promise<Perp[]>>();
 const fetchPerpStatsMock = vi.fn<[], Promise<PerpStats[]>>();
@@ -52,7 +54,7 @@ vi.mock("@/lib/api", () => ({
 }));
 
 vi.mock("next/navigation", () => ({
-  useParams: () => ({ symbol: "BTC" }),
+  useParams: () => routeParams,
   usePathname: () => "/dashboard/markets/BTC",
   useRouter: () => ({ push: vi.fn() }),
 }));
@@ -72,6 +74,7 @@ describe("MarketDataPage", () => {
     fetchRecentTradesMock.mockReset().mockResolvedValue([]);
     fetchTradeHistoryMock.mockReset().mockResolvedValue([]);
     updatePerpConfigMock.mockReset();
+    routeParams.symbol = "BTC";
   });
 
   it("renders the market data chart once data loads", async () => {
@@ -104,6 +107,24 @@ describe("MarketDataPage", () => {
       "BTC",
       expect.objectContaining({ from: expect.any(Date) }),
     );
+  });
+
+  it("decodes a percent-encoded HIP-3 symbol from the route", async () => {
+    routeParams.symbol = "xyz%3ATSLA";
+    fetchMarketDataMock.mockResolvedValue({
+      samples: [],
+      oldestSampleTime: null,
+    });
+
+    render(<MarketDataPage />);
+
+    await waitFor(() =>
+      expect(fetchMarketDataMock).toHaveBeenCalledWith(
+        "xyz:TSLA",
+        expect.anything(),
+      ),
+    );
+    expect(screen.getByRole("heading", { name: "xyz:TSLA" })).toBeTruthy();
   });
 
   it("shows an error message when loading fails", async () => {
