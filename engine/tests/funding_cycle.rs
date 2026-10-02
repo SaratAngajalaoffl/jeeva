@@ -248,7 +248,7 @@ async fn credits_the_wallet_for_a_short_when_funding_rate_is_positive() {
 }
 
 #[tokio::test]
-async fn applies_funding_independently_to_multiple_open_positions() {
+async fn applies_funding_independently_to_concurrent_same_symbol_sessions() {
     let execution = FakeExecution::with_positions(vec![
         (
             "session-1".to_string(),
@@ -257,7 +257,7 @@ async fn applies_funding_independently_to_multiple_open_positions() {
         ),
         (
             "session-2".to_string(),
-            "ETH".to_string(),
+            "BTC".to_string(),
             position(Direction::Short, 500.0),
         ),
     ]);
@@ -268,8 +268,23 @@ async fn applies_funding_independently_to_multiple_open_positions() {
 
     let calls = execution.funding_calls.lock().unwrap();
     assert_eq!(calls.len(), 2);
-    assert!(calls.contains(&("BTC".to_string(), -0.2)));
-    assert!(calls.contains(&("ETH".to_string(), 0.1)));
+    assert_eq!(calls[0], ("BTC".to_string(), -0.2));
+    assert_eq!(calls[1], ("BTC".to_string(), 0.1));
+
+    let entries = writer.entries.lock().unwrap();
+    assert_eq!(entries.len(), 2);
+    assert!(entries.iter().any(|entry| {
+        entry.session_id == "session-1"
+            && entry.symbol == "BTC"
+            && entry.direction == Direction::Long
+            && entry.amount_usd == -0.2
+    }));
+    assert!(entries.iter().any(|entry| {
+        entry.session_id == "session-2"
+            && entry.symbol == "BTC"
+            && entry.direction == Direction::Short
+            && entry.amount_usd == 0.1
+    }));
 }
 
 #[tokio::test]

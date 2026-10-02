@@ -1486,10 +1486,10 @@ mod tests {
             .mount(&server)
             .await;
 
-        let pool = PgPoolOptions::new()
-            .connect_lazy("postgres://unused")
-            .unwrap();
-        let adapter = adapter_against(&server, pool, "00000000-0000-0000-0000-0000000000ff").await;
+        let pool = pool().await;
+        let wallet_id = "00000000-0000-0000-0000-0000000000ff";
+        reset_wallet_and_position(&pool, wallet_id, "00000000-0000-0000-0000-0000000000fe").await;
+        let adapter = adapter_against(&server, pool, wallet_id).await;
 
         adapter
             .place_order("xyz:AAOI", true, 1.0, 101.5, false)
@@ -1827,9 +1827,12 @@ mod tests {
             .await;
         Mock::given(method("POST"))
             .and(path("/exchange"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({ "status": "ok", "response": {} })),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "status": "ok",
+                "response": {
+                    "data": { "statuses": [{ "filled": { "avgPx": "51000" } }] }
+                }
+            })))
             .mount(&server)
             .await;
 

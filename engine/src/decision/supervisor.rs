@@ -168,6 +168,7 @@ pub async fn run_decision_cycle(
             let _ = decision_log
                 .write(DecisionLogEntry {
                     symbol,
+                    session_id: Some(session_id),
                     context_summary: "",
                     decision: None,
                     position_action: None,
@@ -192,6 +193,7 @@ pub async fn run_decision_cycle(
         let _ = decision_log
             .write(DecisionLogEntry {
                 symbol,
+                session_id: Some(session_id),
                 context_summary: &context_summary,
                 decision: None,
                 position_action: None,
@@ -212,6 +214,7 @@ pub async fn run_decision_cycle(
         let _ = decision_log
             .write(DecisionLogEntry {
                 symbol,
+                session_id: Some(session_id),
                 context_summary: "hard close: force-flattening position",
                 decision: None,
                 position_action: Some(super::model::PositionAction::Close),
@@ -337,6 +340,7 @@ pub async fn run_decision_cycle(
             let _ = decision_log
                 .write(DecisionLogEntry {
                     symbol,
+                    session_id: Some(session_id),
                     context_summary: &context_summary,
                     decision: Some(&decision),
                     position_action: Some(super::model::PositionAction::NoOp),
@@ -373,6 +377,7 @@ pub async fn run_decision_cycle(
             let _ = decision_log
                 .write(DecisionLogEntry {
                     symbol,
+                    session_id: Some(session_id),
                     context_summary: &context_summary,
                     decision: Some(&decision),
                     position_action: Some(super::model::PositionAction::NoOp),
@@ -418,6 +423,7 @@ pub async fn run_decision_cycle(
             let _ = decision_log
                 .write(DecisionLogEntry {
                     symbol,
+                    session_id: Some(session_id),
                     context_summary: &context_summary,
                     decision: Some(&decision),
                     position_action: Some(super::model::PositionAction::NoOp),
@@ -461,6 +467,7 @@ pub async fn run_decision_cycle(
             let _ = decision_log
                 .write(DecisionLogEntry {
                     symbol,
+                    session_id: Some(session_id),
                     context_summary: &context_summary,
                     decision: Some(&decision),
                     position_action: Some(action),
@@ -487,6 +494,7 @@ pub async fn run_decision_cycle(
             let _ = decision_log
                 .write(DecisionLogEntry {
                     symbol,
+                    session_id: Some(session_id),
                     context_summary: &context_summary,
                     decision: Some(&decision),
                     position_action: Some(action),
@@ -538,6 +546,7 @@ async fn handle_cycle_failure(
     let _ = decision_log
         .write(DecisionLogEntry {
             symbol,
+            session_id: Some(session_id),
             context_summary,
             decision: None,
             position_action: None,
@@ -574,6 +583,7 @@ async fn auto_flatten(
     let _ = decision_log
         .write(DecisionLogEntry {
             symbol,
+            session_id: Some(session_id),
             context_summary: "auto-flatten: 5 consecutive failures",
             decision: None,
             position_action: Some(super::model::PositionAction::Close),
@@ -1042,7 +1052,7 @@ mod tests {
                 .position
                 .lock()
                 .unwrap()
-                .map(|p| ("test-session".to_string(), "BTC".to_string(), p))
+                .map(|p| (String::new(), "BTC".to_string(), p))
                 .into_iter()
                 .collect())
         }

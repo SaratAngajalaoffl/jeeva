@@ -28,11 +28,22 @@ function buildApp() {
   return createApp({ pgPool });
 }
 
-async function seed(symbol: string, time: Date, direction: "long" | "short") {
+async function seed(
+  symbol: string,
+  time: Date,
+  direction: "long" | "short",
+  sessionId: string | null = null,
+) {
   await pgPool.query(
-    `INSERT INTO funding_payments (time, symbol, direction, funding_rate, notional_usd, amount_usd)
-     VALUES ($1, $2, $3, 0.0001, 1000, $4)`,
-    [time, symbol, direction, direction === "long" ? -0.1 : 0.1],
+    `INSERT INTO funding_payments (time, symbol, direction, funding_rate, notional_usd, amount_usd, session_id)
+     VALUES ($1, $2, $3, 0.0001, 1000, $4, $5)`,
+    [
+      time,
+      symbol,
+      direction,
+      direction === "long" ? -0.1 : 0.1,
+      sessionId,
+    ],
   );
 }
 
@@ -79,6 +90,31 @@ describe("GET /funding", () => {
       notionalUsd: 1000,
       amountUsd: -0.1,
     });
+  });
+
+  it("isolates concurrent sessions for the same symbol", async () => {
+    const { rows: sessions } = await pgPool.query<{ id: string }>(
+      "INSERT INTO trading_sessions (symbol) VALUES ('BTC'), ('BTC') RETURNING id",
+    );
+    const now = new Date();
+    await seed("BTC", now, "long", sessions[0].id);
+    await seed("BTC", new Date(now.getTime() - 1000), "short", sessions[1].id);
+
+    const res = await request(buildApp())
+      .get(`/funding?symbol=BTC&sessionId=${sessions[0].id}`)
+      .set("Cookie", authCookie());
+
+    expect(res.status).toBe(200);
+    expect(res.body.payments).toHaveLength(1);
+    expect(res.body.payments[0]).toMatchObject({
+      symbol: "BTC",
+      sessionId: sessions[0].id,
+      direction: "long",
+    });
+
+    await pgPool.query("DELETE FROM trading_sessions WHERE id = ANY($1::uuid[])", [
+      sessions.map((session) => session.id),
+    ]);
   });
 
   it("rejects an invalid time range", async () => {

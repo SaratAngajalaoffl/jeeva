@@ -127,7 +127,7 @@ impl ExecutionAdapter for FakeExecution {
             .position
             .lock()
             .unwrap()
-            .map(|p| ("test-session".to_string(), "BTC".to_string(), p))
+            .map(|p| (String::new(), "BTC".to_string(), p))
             .into_iter()
             .collect())
     }

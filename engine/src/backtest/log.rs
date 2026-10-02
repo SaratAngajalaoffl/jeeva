@@ -59,6 +59,8 @@ impl DecisionLogWriter for BacktestDecisionLogWriter {
         )
         .bind(&self.backtest_run_id)
         .bind(self.clock.get())
+        // Backtest rows are identified by `backtest_run_id`; the shared
+        // live entry's session id does not apply to this writer.
         .bind(entry.symbol)
         .bind(entry.context_summary)
         .bind(target_direction)

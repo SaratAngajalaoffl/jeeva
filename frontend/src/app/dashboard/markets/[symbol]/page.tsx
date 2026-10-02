@@ -222,7 +222,7 @@ export default function MarketDataPage() {
         .catch(() => {
           if (!cancelled) setClosedTrades([]);
         });
-      fetchFundingPayments()
+      fetchFundingPayments({ symbol })
         .then((payments) => {
           if (!cancelled) {
             setFundingPayments(payments.filter((p) => p.symbol === symbol));

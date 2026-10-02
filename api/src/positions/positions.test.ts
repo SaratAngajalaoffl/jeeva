@@ -17,6 +17,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await pgPool.query("DELETE FROM mock_positions");
+  await pgPool.query("DELETE FROM live_positions");
   await pgPool.query("DELETE FROM trading_sessions");
 });
 
@@ -43,44 +44,47 @@ describe("GET /positions", () => {
     expect(res.body.positions).toEqual([]);
   });
 
-  it("returns open positions with their direction, entry price, and notional", async () => {
-    const { rows: sessions } = await pgPool.query(
-      "INSERT INTO trading_sessions (symbol) VALUES ($1), ($2) RETURNING id, symbol",
-      ["BTC", "ETH"],
-    );
-    const btcSessionId = sessions.find((s) => s.symbol === "BTC")!.id;
-    const ethSessionId = sessions.find((s) => s.symbol === "ETH")!.id;
+  it.each(["mock_positions", "live_positions"])(
+    "returns open %s with their direction, entry price, and notional",
+    async (table) => {
+      const { rows: sessions } = await pgPool.query(
+        "INSERT INTO trading_sessions (symbol) VALUES ($1), ($2) RETURNING id, symbol",
+        ["BTC", "ETH"],
+      );
+      const btcSessionId = sessions.find((s) => s.symbol === "BTC")!.id;
+      const ethSessionId = sessions.find((s) => s.symbol === "ETH")!.id;
 
-    await pgPool.query(
-      "INSERT INTO mock_positions (session_id, symbol, direction, entry_price, notional_usd) VALUES ($1, $2, $3, $4, $5)",
-      [btcSessionId, "BTC", "long", 65000, 1000],
-    );
-    await pgPool.query(
-      "INSERT INTO mock_positions (session_id, symbol, direction, entry_price, notional_usd) VALUES ($1, $2, $3, $4, $5)",
-      [ethSessionId, "ETH", "short", 3000, 500],
-    );
+      await pgPool.query(
+        `INSERT INTO ${table} (session_id, symbol, direction, entry_price, notional_usd) VALUES ($1, $2, $3, $4, $5)`,
+        [btcSessionId, "BTC", "long", 65000, 1000],
+      );
+      await pgPool.query(
+        `INSERT INTO ${table} (session_id, symbol, direction, entry_price, notional_usd) VALUES ($1, $2, $3, $4, $5)`,
+        [ethSessionId, "ETH", "short", 3000, 500],
+      );
 
-    const res = await request(buildApp())
-      .get("/positions")
-      .set("Cookie", authCookie());
+      const res = await request(buildApp())
+        .get("/positions")
+        .set("Cookie", authCookie());
 
-    expect(res.status).toBe(200);
-    expect(res.body.positions).toHaveLength(2);
-    expect(res.body.positions).toContainEqual(
-      expect.objectContaining({
-        symbol: "BTC",
-        direction: "long",
-        entryPrice: 65000,
-        notionalUsd: 1000,
-      }),
-    );
-    expect(res.body.positions).toContainEqual(
-      expect.objectContaining({
-        symbol: "ETH",
-        direction: "short",
-        entryPrice: 3000,
-        notionalUsd: 500,
-      }),
-    );
-  });
+      expect(res.status).toBe(200);
+      expect(res.body.positions).toHaveLength(2);
+      expect(res.body.positions).toContainEqual(
+        expect.objectContaining({
+          symbol: "BTC",
+          direction: "long",
+          entryPrice: 65000,
+          notionalUsd: 1000,
+        }),
+      );
+      expect(res.body.positions).toContainEqual(
+        expect.objectContaining({
+          symbol: "ETH",
+          direction: "short",
+          entryPrice: 3000,
+          notionalUsd: 500,
+        }),
+      );
+    },
+  );
 });

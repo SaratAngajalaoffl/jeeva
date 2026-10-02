@@ -29,6 +29,9 @@ fn action_label(action: PositionAction) -> &'static str {
 /// resulted in a position change.
 pub struct DecisionLogEntry<'a> {
     pub symbol: &'a str,
+    /// The live trading session that produced this row. Backtest writers
+    /// ignore it because their rows are keyed by `backtest_run_id`.
+    pub session_id: Option<&'a str>,
     pub context_summary: &'a str,
     pub decision: Option<&'a JevDecision>,
     pub position_action: Option<PositionAction>,
@@ -78,13 +81,14 @@ impl DecisionLogWriter for PostgresDecisionLogWriter {
         sqlx::query(
             r#"
             INSERT INTO decisions (
-                time, symbol, context_summary, target_direction, confidence,
+                time, session_id, symbol, context_summary, target_direction, confidence,
                 prob_long, prob_short, prob_flat, position_action, success, error, auto_flatten,
                 raw_request, raw_response
             )
-            VALUES (now(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb)
+            VALUES (now(), $1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb)
             "#,
         )
+        .bind(entry.session_id)
         .bind(entry.symbol)
         .bind(entry.context_summary)
         .bind(target_direction)

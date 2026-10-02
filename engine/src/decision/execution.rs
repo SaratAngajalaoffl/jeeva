@@ -222,9 +222,9 @@ pub trait ExecutionAdapter: Send + Sync {
         mid_price: f64,
     ) -> Result<(), ExecutionError>;
 
-    /// Every currently open position, with the session that opened it.
-    /// Funding payments are settled wallet-wide but must be attributed
-    /// to that session in the per-session P&L ledger.
+    /// Every currently open position, with its session and symbol ids.
+    /// The funding sweep records payments against the owning session, not
+    /// merely the market (multiple sessions can trade the same symbol).
     async fn list_open_positions(
         &self,
     ) -> Result<Vec<(String, String, OpenPosition)>, ExecutionError>;
