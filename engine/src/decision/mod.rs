@@ -16,9 +16,9 @@ pub use decision_maker::{
 };
 pub use decision_maker_registry::DecisionMakerRegistry;
 pub use execution::{
-    clamp_position_size_usd, fill_price, realized_pnl_usd, DriftAction, DriftEvent, DriftOutcome,
-    DriftPolicy, ExecutionAdapter, ExecutionError, MockExecutionAdapter, OpenPosition,
-    ReconcileTarget,
+    clamp_position_size_usd, execution_coordinator, fill_price, realized_pnl_usd, DriftAction,
+    DriftEvent, DriftOutcome, DriftPolicy, ExecutionAdapter, ExecutionCoordinator, ExecutionError,
+    MockExecutionAdapter, OpenPosition, ReconcileTarget,
 };
 pub use health::{FailureTracker, InMemoryFailureTracker, PerpHealthTracker};
 pub use history::{

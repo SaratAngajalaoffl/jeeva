@@ -66,6 +66,12 @@ struct FakeExecution {
     position: Mutex<Option<OpenPosition>>,
     open_calls: Mutex<Vec<(String, Direction, f64, f64)>>,
     close_calls: Mutex<Vec<String>>,
+    freshness: Mutex<Option<bool>>,
+    /// Position the adapter reports when asked whether a decision is
+    /// still applicable. `None` (the default) means "unchanged".
+    applicable_position: Mutex<Option<Option<OpenPosition>>>,
+    coordinated: bool,
+    halted: bool,
 }
 
 #[async_trait]
@@ -126,6 +132,36 @@ impl ExecutionAdapter for FakeExecution {
 
     async fn apply_funding(&self, _symbol: &str, _amount_usd: f64) -> Result<(), ExecutionError> {
         Ok(())
+    }
+
+    async fn decision_is_fresh(
+        &self,
+        _symbol: &str,
+        _latest_mid_price: f64,
+        _reference_mid_price: f64,
+        _max_age: std::time::Duration,
+    ) -> Result<bool, ExecutionError> {
+        Ok(self.freshness.lock().unwrap().unwrap_or(true))
+    }
+
+    async fn needs_execution_coordination(&self) -> bool {
+        self.coordinated
+    }
+
+    async fn is_halted(&self, _symbol: &str) -> Result<bool, ExecutionError> {
+        Ok(self.halted)
+    }
+
+    async fn position_matches_decision(
+        &self,
+        _session_id: &str,
+        _symbol: &str,
+        expected: Option<OpenPosition>,
+    ) -> Result<bool, ExecutionError> {
+        match *self.applicable_position.lock().unwrap() {
+            Some(actual) => Ok(actual == expected),
+            None => Ok(true),
+        }
     }
 
     async fn reconcile(
@@ -219,6 +255,199 @@ struct NoopLifecycle;
 #[async_trait]
 impl SessionLifecycle for NoopLifecycle {
     async fn mark_closed(&self, _session_id: &str) {}
+}
+
+#[tokio::test]
+async fn stale_live_decision_is_logged_without_placing_an_order() {
+    // A distinct symbol per coordinated test: the execution coordinator
+    // claims are process-wide and nonblocking, so two tests sharing a
+    // symbol would skip each other's cycle.
+    let symbol = "STALE-BTC";
+    let history = FakeHistory::new(vec![sample(100.0)]);
+    let decision_maker = RandomDecisionMaker::with_sequence(vec![TargetDirection::Long]);
+    let execution = FakeExecution {
+        freshness: Mutex::new(Some(false)),
+        coordinated: true,
+        ..FakeExecution::default()
+    };
+    let log = FakeDecisionLog::default();
+
+    run_decision_cycle(
+        "session-1",
+        symbol,
+        &config(),
+        DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+        chrono::Utc::now(),
+        &history,
+        &decision_maker,
+        &execution,
+        &EmptyFunding,
+        &log,
+        &InMemoryFailureTracker::new(),
+        &NoopLifecycle,
+    )
+    .await;
+
+    assert!(execution.open_calls.lock().unwrap().is_empty());
+    let entries = log.entries.lock().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert!(!entries[0].success);
+    assert!(entries[0]
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("stale decision"));
+}
+
+#[tokio::test]
+async fn a_live_decision_is_dropped_when_the_position_size_moved() {
+    let symbol = "DRIFT-BTC";
+    let history = FakeHistory::new(vec![sample(100.0)]);
+    // A target that asks to close the position that was read before Jev
+    // was called, so the cycle is only safe if the re-check accepts it.
+    let decision_maker = RandomDecisionMaker::with_sequence(vec![TargetDirection::Flat]);
+    let execution = FakeExecution {
+        position: Mutex::new(Some(OpenPosition {
+            direction: Direction::Long,
+            entry_price: 100.0,
+            notional_usd: 100.0,
+            opened_at: chrono::Utc::now(),
+        })),
+        // Same direction, but the exchange now reports double the size:
+        // a decision computed against the old position no longer applies.
+        applicable_position: Mutex::new(Some(Some(OpenPosition {
+            direction: Direction::Long,
+            entry_price: 100.0,
+            notional_usd: 200.0,
+            opened_at: chrono::Utc::now(),
+        }))),
+        coordinated: true,
+        ..FakeExecution::default()
+    };
+    let log = FakeDecisionLog::default();
+
+    run_decision_cycle(
+        "session-1",
+        symbol,
+        &config(),
+        DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+        chrono::Utc::now(),
+        &history,
+        &decision_maker,
+        &execution,
+        &EmptyFunding,
+        &log,
+        &InMemoryFailureTracker::new(),
+        &NoopLifecycle,
+    )
+    .await;
+
+    assert!(execution.open_calls.lock().unwrap().is_empty());
+    assert!(execution.close_calls.lock().unwrap().is_empty());
+    let entries = log.entries.lock().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0]
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("position re-check"));
+}
+
+#[tokio::test]
+async fn a_halted_wallet_places_no_order() {
+    let symbol = "HALT-BTC";
+    let history = FakeHistory::new(vec![sample(100.0)]);
+    let decision_maker = RandomDecisionMaker::with_sequence(vec![TargetDirection::Long]);
+    let execution = FakeExecution {
+        coordinated: true,
+        halted: true,
+        ..FakeExecution::default()
+    };
+    let log = FakeDecisionLog::default();
+
+    run_decision_cycle(
+        "session-1",
+        symbol,
+        &config(),
+        DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+        chrono::Utc::now(),
+        &history,
+        &decision_maker,
+        &execution,
+        &EmptyFunding,
+        &log,
+        &InMemoryFailureTracker::new(),
+        &NoopLifecycle,
+    )
+    .await;
+
+    assert!(execution.open_calls.lock().unwrap().is_empty());
+    let entries = log.entries.lock().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0].error.as_deref().unwrap().contains("halted"));
+}
+
+#[tokio::test]
+async fn a_mock_cycle_still_places_its_order_without_a_freshness_re_read() {
+    // Non-live adapters keep their pre-existing behavior: no halt check,
+    // no position re-read, no second history read, so a reader that only
+    // serves the first call still gets its order placed.
+    struct FirstCallOnlyHistory {
+        calls: Mutex<u32>,
+    }
+
+    #[async_trait]
+    impl MarketDataHistoryReader for FirstCallOnlyHistory {
+        async fn recent_samples(
+            &self,
+            _symbol: &str,
+            _limit: u32,
+        ) -> Result<Vec<MarketDataSample>, HistoryError> {
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+            if *calls == 1 {
+                Ok(vec![sample(100.0)])
+            } else {
+                Ok(Vec::new())
+            }
+        }
+    }
+
+    let history = FirstCallOnlyHistory {
+        calls: Mutex::new(0),
+    };
+    let decision_maker = RandomDecisionMaker::with_sequence(vec![TargetDirection::Long]);
+    let execution = FakeExecution {
+        // A mock adapter is never halted, but the flag proves the check
+        // itself is skipped rather than merely returning false.
+        halted: true,
+        applicable_position: Mutex::new(Some(None)),
+        freshness: Mutex::new(Some(false)),
+        ..FakeExecution::default()
+    };
+    let log = FakeDecisionLog::default();
+
+    run_decision_cycle(
+        "session-1",
+        "BTC",
+        &config(),
+        DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+        chrono::Utc::now(),
+        &history,
+        &decision_maker,
+        &execution,
+        &EmptyFunding,
+        &log,
+        &InMemoryFailureTracker::new(),
+        &NoopLifecycle,
+    )
+    .await;
+
+    assert_eq!(*history.calls.lock().unwrap(), 1);
+    assert_eq!(execution.open_calls.lock().unwrap().len(), 1);
+    let entries = log.entries.lock().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0].success);
 }
 
 #[tokio::test]

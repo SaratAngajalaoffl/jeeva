@@ -20,7 +20,7 @@ The interface for obtaining a trading decision. Chosen per PERP (`PerpConfig.dec
 _Avoid_: "mock Jev" or "mock decision maker" (reserve "mock" for the execution axis, see ExecutionAdapter); "JevDecisionSource" (old name, renamed to DecisionMaker since Jev is now reachable through more than one backend).
 
 **ExecutionAdapter**:
-The interface for placing/simulating orders against Hyperliquid. Has two implementations: `MockExecutionAdapter` (simulates fills locally, never touches the real orderbook) and `LiveExecutionAdapter` (places real orders via a Hyperliquid wallet).
+The interface for placing/simulating orders against Hyperliquid. Has two implementations: `MockExecutionAdapter` (simulates fills locally, never touches the real orderbook) and `LiveExecutionAdapter` (places real orders via a Hyperliquid wallet, owns the engine's persisted virtual position state for the wallet, and reconciles it against the exchange on a tighter interval than the decision loop). The two axes of safety that differ per adapter: which checks a decision cycle applies before ordering (Live re-reads the exchange's own state; mock/backtest trust their own authoritative ledger and are unchanged), and whether work is claimed per-PERP across the decision and reconcile loops (Live only).
 _Avoid_: "fake execution" (reserve "fake" for the decision axis, see DecisionMaker)
 
 DecisionMaker and ExecutionAdapter are independent axes — decision maker and execution path can be toggled separately, e.g. TypeSafeJevDecisionMaker decisions against MockExecution for paper-trading with real intelligence.
@@ -28,6 +28,14 @@ DecisionMaker and ExecutionAdapter are independent axes — decision maker and e
 **Target Direction**:
 Jev's decision output for a PERP: one of `long`, `short`, or `flat`. Represents the position direction the engine should be in after this cycle, not a raw action.
 _Avoid_: buy, sell, hold — these imply actions rather than target state, and are not used anywhere in this system.
+
+**Live Execution Hold**:
+A wallet+PERP the engine has stopped trading, taken when the live `ExecutionAdapter`'s drift policy resolves to `halt`. While a hold is in place the decision loop still runs and logs, but places no order for that PERP. The hold is persisted (it survives an engine restart) and only an explicit operator acknowledgement clears it, so a halt can never be forgotten by a restart. Surfaced per wallet in the dashboard.
+_Avoid_: pause, freeze — the session and its decision loop keep running; only order placement is withheld.
+
+**Order Attempt**:
+One signed live order the engine has sent but whose final outcome it has not yet observed, tracked by its client order id until the exchange reports a terminal status for it. A PERP has at most one Order Attempt at a time, and no second order for that PERP is created while one is outstanding.
+_Avoid_: pending order, in-flight order — the point is that the engine cannot yet say what happened to it.
 
 **Position State**:
 A PERP's current position, one of `flat | long | short`. Driven purely by the latest Target Direction: a change from `long`→`short` or `short`→`long` closes the existing position and opens the opposite one (no pyramiding — repeating the same direction is a no-op).

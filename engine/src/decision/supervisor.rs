@@ -10,7 +10,7 @@ use tokio::time::{interval_at, Instant, MissedTickBehavior};
 
 use super::decision_maker::DecisionMaker;
 use super::decision_maker_registry::DecisionMakerRegistry;
-use super::execution::ExecutionAdapter;
+use super::execution::{execution_coordinator, ExecutionAdapter};
 use super::health::FailureTracker;
 use super::history::{build_context, effective_history_window, MarketDataHistoryReader};
 use super::log::{DecisionLogEntry, DecisionLogWriter};
@@ -22,6 +22,7 @@ use crate::session::{SessionStore, TradingSessionConfig, TradingSessionStatus};
 use crate::wallets::WalletRegistry;
 
 const AUTO_FLATTEN_THRESHOLD: u32 = 5;
+const MAX_DECISION_AGE: Duration = Duration::from_secs(30);
 
 /// Default minimum confidence: `0.0`, i.e. every decision is actionable.
 /// Matches pre-threshold behavior, so a deployment that never sets
@@ -139,6 +140,21 @@ pub async fn run_decision_cycle(
     health: &dyn FailureTracker,
     lifecycle: &dyn SessionLifecycle,
 ) {
+    let _execution_guard = if execution.needs_execution_coordination().await {
+        let Some(guard) = execution_coordinator().try_lock(symbol) else {
+            tracing::debug!(
+                symbol,
+                session_id,
+                "execution cycle already in flight; skipping"
+            );
+            return;
+        };
+        Some(guard)
+    } else {
+        None
+    };
+    execution.mark_decision_started(symbol).await;
+
     let samples = match history
         .recent_samples(
             symbol,
@@ -307,6 +323,120 @@ pub async fn run_decision_cycle(
         super::model::PositionAction::NoOp
     };
 
+    if action_requires_execution(action) && execution.needs_execution_coordination().await {
+        // Only live execution needs the post-decision safety checks below.
+        // Mock and backtest execution is authoritative by construction and
+        // keeps its pre-existing behavior, so a second history read can never
+        // suppress an action there.
+        if execution.is_halted(symbol).await.unwrap_or(true) {
+            tracing::warn!(
+                symbol,
+                session_id,
+                "execution halted; skipping decision order"
+            );
+            let _ = decision_log
+                .write(DecisionLogEntry {
+                    symbol,
+                    context_summary: &context_summary,
+                    decision: Some(&decision),
+                    position_action: Some(super::model::PositionAction::NoOp),
+                    error: Some("execution is halted pending operator acknowledgement"),
+                    auto_flatten: false,
+                    raw_request: config
+                        .store_decision_payloads
+                        .then_some(decision.raw_request.as_deref())
+                        .flatten(),
+                    raw_response: config
+                        .store_decision_payloads
+                        .then_some(decision.raw_response.as_deref())
+                        .flatten(),
+                })
+                .await;
+            return;
+        }
+
+        // The position can also change while Jev is making its network
+        // call (an out-of-band close, liquidation, or a prior ambiguous
+        // order). Live execution re-reads the exchange's own state here,
+        // comparing direction and size: a decision computed against a
+        // different position no longer describes what should be done.
+        let position_matches = execution
+            .position_matches_decision(session_id, symbol, current_position)
+            .await
+            .unwrap_or(false);
+        if !position_matches {
+            tracing::warn!(
+                symbol,
+                session_id,
+                "decision is no longer applicable; position changed"
+            );
+            let _ = decision_log
+                .write(DecisionLogEntry {
+                    symbol,
+                    context_summary: &context_summary,
+                    decision: Some(&decision),
+                    position_action: Some(super::model::PositionAction::NoOp),
+                    error: Some("stale decision rejected after position re-check"),
+                    auto_flatten: false,
+                    raw_request: config
+                        .store_decision_payloads
+                        .then_some(decision.raw_request.as_deref())
+                        .flatten(),
+                    raw_response: config
+                        .store_decision_payloads
+                        .then_some(decision.raw_response.as_deref())
+                        .flatten(),
+                })
+                .await;
+            return;
+        }
+
+        // Decision freshness: a decision whose Jev call took too long, or
+        // that was computed against a price which has since moved, is
+        // waited out rather than acted on.
+        let current_mid_price = match history.recent_samples(symbol, 1).await {
+            Ok(samples) => samples.last().map(|sample| sample.mid_price),
+            Err(error) => {
+                tracing::warn!(symbol, session_id, %error, "failed freshness price re-check");
+                None
+            }
+        };
+        let fresh = match current_mid_price {
+            Some(price) => execution
+                .decision_is_fresh(symbol, price, latest_mid_price, MAX_DECISION_AGE)
+                .await
+                .unwrap_or(false),
+            None => false,
+        };
+        if !fresh {
+            let reason = "stale decision rejected after freshness re-check";
+            tracing::warn!(
+                symbol,
+                session_id,
+                "decision is no longer applicable; skipping order"
+            );
+            let _ = decision_log
+                .write(DecisionLogEntry {
+                    symbol,
+                    context_summary: &context_summary,
+                    decision: Some(&decision),
+                    position_action: Some(super::model::PositionAction::NoOp),
+                    error: Some(reason),
+                    auto_flatten: false,
+                    raw_request: config
+                        .store_decision_payloads
+                        .then_some(decision.raw_request.as_deref())
+                        .flatten(),
+                    raw_response: config
+                        .store_decision_payloads
+                        .then_some(decision.raw_response.as_deref())
+                        .flatten(),
+                })
+                .await;
+            return;
+        }
+    }
+
     let execution_result = apply_action(
         execution,
         session_id,
@@ -456,6 +586,10 @@ async fn auto_flatten(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn action_requires_execution(action: super::model::PositionAction) -> bool {
+    !matches!(action, super::model::PositionAction::NoOp)
+}
+
 async fn apply_action(
     execution: &dyn ExecutionAdapter,
     session_id: &str,
@@ -662,7 +796,7 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
 
@@ -843,6 +977,7 @@ mod tests {
     struct FakeExecution {
         position: Mutex<Option<OpenPosition>>,
         close_calls: AtomicUsize,
+        needs_coordination: bool,
     }
 
     impl FakeExecution {
@@ -855,6 +990,7 @@ mod tests {
                     opened_at: chrono::Utc::now(),
                 })),
                 close_calls: AtomicUsize::new(0),
+                needs_coordination: false,
             }
         }
     }
@@ -915,6 +1051,10 @@ mod tests {
             _amount_usd: f64,
         ) -> Result<(), ExecutionError> {
             Ok(())
+        }
+
+        async fn needs_execution_coordination(&self) -> bool {
+            self.needs_coordination
         }
 
         async fn reconcile(
@@ -987,6 +1127,42 @@ mod tests {
         .await;
 
         assert_eq!(health.count("BTC"), 0);
+    }
+
+    #[tokio::test]
+    async fn live_decision_claim_excludes_a_competing_same_symbol_close() {
+        let symbol = "RACE-BTC";
+        let config = sample_config(TradingSessionStatus::SoftClosing, 30.0);
+        let execution = Arc::new(FakeExecution {
+            needs_coordination: true,
+            ..FakeExecution::with_open_position()
+        });
+        let first = execution_coordinator().try_lock(symbol).unwrap();
+        let closes_before = execution.close_calls.load(Ordering::SeqCst);
+
+        run_decision_cycle(
+            &config.id,
+            symbol,
+            &config,
+            DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+            Utc::now(),
+            &FakeHistory,
+            &AlwaysFailingDecisionMaker,
+            execution.as_ref(),
+            &FakeFunding,
+            &NoopDecisionLog,
+            &InMemoryFailureTracker::new(),
+            &FakeLifecycle::default(),
+        )
+        .await;
+
+        assert_eq!(
+            execution.close_calls.load(Ordering::SeqCst),
+            closes_before,
+            "a competing same-symbol decision must be skipped"
+        );
+        assert!(execution_coordinator().try_lock("RACE-ETH").is_some());
+        drop(first);
     }
 
     #[tokio::test]

@@ -7,17 +7,21 @@ import {
   Check,
   Copy,
   Plus,
+  ShieldAlert,
   Trash2,
   Wallet as WalletIcon,
 } from "lucide-react";
 import {
+  clearLiveExecutionHold,
   createWallet,
   deleteWallet,
   fetchFundingPayments,
+  fetchLiveExecutionHolds,
   fetchWallets,
   fetchEngineMode,
   type CreateWalletInput,
   type FundingPayment,
+  type LiveExecutionHold,
   type Wallet,
   type WalletKind,
 } from "@/lib/api";
@@ -136,8 +140,55 @@ function WalletCard({
   );
 }
 
+/**
+ * A live wallet's halted PERPs, with the reason the engine recorded. The
+ * engine refuses to place new orders for a halted PERP, so this is the
+ * operator's view of “the engine stopped trading this and needs a human”.
+ */
+function ExecutionHolds({
+  holds,
+  onAcknowledge,
+}: {
+  holds: LiveExecutionHold[];
+  onAcknowledge: (symbol: string) => void;
+}) {
+  if (holds.length === 0) return null;
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+      <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-destructive">
+        <ShieldAlert size={14} />
+        Execution halted
+      </div>
+      {holds.map((hold) => (
+        <div
+          key={hold.symbol}
+          className="flex flex-wrap items-center justify-between gap-2"
+        >
+          <div className="min-w-0">
+            <span className="text-sm font-medium text-text">
+              {hold.symbol}
+            </span>
+            <span className="block truncate text-xs text-subtext-1">
+              {hold.reason}
+            </span>
+          </div>
+          <Button
+            variant="ghost"
+            className="shrink-0"
+            onClick={() => onAcknowledge(hold.symbol)}
+          >
+            Acknowledge
+          </Button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function WalletPage() {
   const [wallets, setWallets] = useState<Wallet[] | undefined>(undefined);
+  const [holds, setHolds] = useState<Record<string, LiveExecutionHold[]>>({});
   const [fundingPayments, setFundingPayments] = useState<
     FundingPayment[] | null
   >(null);
@@ -163,6 +214,44 @@ export default function WalletPage() {
       .then((s) => setDemoMode(Boolean(s.demoMode)))
       .catch(() => setDemoMode(false));
   }, []);
+
+  useEffect(() => {
+    const liveWallets = (wallets ?? []).filter((w) => w.kind === "live");
+    if (liveWallets.length === 0) {
+      setHolds({});
+      return;
+    }
+    let cancelled = false;
+    Promise.all(
+      liveWallets.map(async (wallet) => {
+        try {
+          return [
+            wallet.id,
+            await fetchLiveExecutionHolds(wallet.id),
+          ] as const;
+        } catch {
+          return [wallet.id, [] as LiveExecutionHold[]] as const;
+        }
+      }),
+    ).then((entries) => {
+      if (!cancelled) setHolds(Object.fromEntries(entries));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [wallets]);
+
+  async function handleAcknowledge(walletId: string, symbol: string) {
+    const result = await clearLiveExecutionHold(walletId, symbol);
+    if (!result.ok) {
+      setLoadError(result.error);
+      return;
+    }
+    setHolds((prev) => ({
+      ...prev,
+      [walletId]: (prev[walletId] ?? []).filter((h) => h.symbol !== symbol),
+    }));
+  }
 
   const totalBalanceUsd = useMemo(
     () =>
@@ -311,7 +400,13 @@ export default function WalletPage() {
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {wallets.map((w) => (
-                <WalletCard key={w.id} wallet={w} onDelete={handleDelete} />
+                <div key={w.id} className="flex flex-col gap-3">
+                  <WalletCard wallet={w} onDelete={handleDelete} />
+                  <ExecutionHolds
+                    holds={holds[w.id] ?? []}
+                    onAcknowledge={(symbol) => handleAcknowledge(w.id, symbol)}
+                  />
+                </div>
               ))}
             </div>
           )}

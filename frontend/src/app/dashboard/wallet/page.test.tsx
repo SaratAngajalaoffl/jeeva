@@ -5,6 +5,7 @@ import type {
   EngineMode,
   EngineModeStatus,
   FundingPayment,
+  LiveExecutionHold,
   Wallet,
 } from "@/lib/api";
 
@@ -24,6 +25,14 @@ const setEngineModeMock =
     [EngineMode],
     Promise<{ ok: true; mode: EngineMode } | { ok: false; error: string }>
   >();
+const fetchLiveExecutionHoldsMock = vi.fn<
+  [string],
+  Promise<LiveExecutionHold[]>
+>();
+const clearLiveExecutionHoldMock = vi.fn<
+  [string, string],
+  Promise<{ ok: true } | { ok: false; error: string }>
+>();
 
 vi.mock("@/lib/api", () => ({
   fetchWallets: (...args: []) => fetchWalletsMock(...args),
@@ -32,6 +41,10 @@ vi.mock("@/lib/api", () => ({
   fetchFundingPayments: (...args: []) => fetchFundingPaymentsMock(...args),
   fetchEngineMode: (...args: []) => fetchEngineModeMock(...args),
   setEngineMode: (...args: [EngineMode]) => setEngineModeMock(...args),
+  fetchLiveExecutionHolds: (...args: [string]) =>
+    fetchLiveExecutionHoldsMock(...args),
+  clearLiveExecutionHold: (...args: [string, string]) =>
+    clearLiveExecutionHoldMock(...args),
   fetchDecisionMakerStatuses: () => new Promise(() => {}),
 }));
 
@@ -52,6 +65,10 @@ describe("WalletPage", () => {
     fetchEngineModeMock.mockReset();
     fetchEngineModeMock.mockResolvedValue({ mode: "mock" });
     setEngineModeMock.mockReset();
+    fetchLiveExecutionHoldsMock.mockReset();
+    fetchLiveExecutionHoldsMock.mockResolvedValue([]);
+    clearLiveExecutionHoldMock.mockReset();
+    clearLiveExecutionHoldMock.mockResolvedValue({ ok: true });
   });
 
   it("shows an empty state and can open the creation form when no wallets exist", async () => {
@@ -183,5 +200,69 @@ describe("WalletPage", () => {
     expect(
       await screen.findByText("No funding payments yet."),
     ).toBeInTheDocument();
+  });
+
+  it("surfaces a live wallet's halted PERP and lets the operator acknowledge it", async () => {
+    fetchWalletsMock.mockResolvedValue([
+      {
+        id: "2",
+        label: "Live main",
+        kind: "live",
+        publicAddress: "0xabc123",
+        initialBalanceUsd: null,
+        currentBalanceUsd: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        activeSessionId: null,
+      },
+    ]);
+    fetchLiveExecutionHoldsMock.mockResolvedValue([
+      {
+        symbol: "BTC",
+        reason: "drift policy halt: SizeMismatch",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    render(<WalletPage />);
+
+    expect(await screen.findByText("Execution halted")).toBeInTheDocument();
+    expect(screen.getByText("drift policy halt: SizeMismatch")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Acknowledge"));
+
+    await waitFor(() =>
+      expect(clearLiveExecutionHoldMock).toHaveBeenCalledWith("2", "BTC"),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText("Execution halted")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("does not show a hold banner for a mock wallet", async () => {
+    fetchWalletsMock.mockResolvedValue([
+      {
+        id: "1",
+        label: "Mock main",
+        kind: "mock",
+        publicAddress: null,
+        initialBalanceUsd: 10000,
+        currentBalanceUsd: 10000,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        activeSessionId: null,
+      },
+    ]);
+    fetchLiveExecutionHoldsMock.mockResolvedValue([
+      {
+        symbol: "BTC",
+        reason: "drift policy halt: SizeMismatch",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    render(<WalletPage />);
+
+    await screen.findByText("Mock main");
+    expect(screen.queryByText("Execution halted")).not.toBeInTheDocument();
+    expect(fetchLiveExecutionHoldsMock).not.toHaveBeenCalled();
   });
 });
