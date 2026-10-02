@@ -1,6 +1,7 @@
 import { Router } from "express";
 import type { Db } from "mongodb";
 import type { Pool } from "pg";
+import { asyncHandler } from "../asyncHandler.js";
 import { requireAuth } from "../auth/requireAuth.js";
 import type { HyperliquidClient } from "../hyperliquid/client.js";
 import {
@@ -23,32 +24,38 @@ export function createPerpsRouter(
   const router = Router();
   router.use(requireAuth);
 
-  router.get("/", async (_req, res) => {
-    const [perps, configs] = await Promise.all([
-      hyperliquidClient.listPerps(),
-      getAllConfigs(db),
-    ]);
+  router.get(
+    "/",
+    asyncHandler(async (_req, res) => {
+      const [perps, configs] = await Promise.all([
+        hyperliquidClient.listPerps(),
+        getAllConfigs(db),
+      ]);
 
-    const configBySymbol = new Map(configs.map((c) => [c.symbol, c]));
-    const merged = perps.map(({ symbol }) => {
-      const config = configBySymbol.get(symbol);
-      return {
-        symbol,
-        samplingEnabled:
-          config?.samplingEnabled ?? DEFAULT_PERP_CONFIG.samplingEnabled,
-        samplingFrequencySeconds:
-          config?.samplingFrequencySeconds ??
-          DEFAULT_PERP_CONFIG.samplingFrequencySeconds,
-      };
-    });
+      const configBySymbol = new Map(configs.map((c) => [c.symbol, c]));
+      const merged = perps.map(({ symbol }) => {
+        const config = configBySymbol.get(symbol);
+        return {
+          symbol,
+          samplingEnabled:
+            config?.samplingEnabled ?? DEFAULT_PERP_CONFIG.samplingEnabled,
+          samplingFrequencySeconds:
+            config?.samplingFrequencySeconds ??
+            DEFAULT_PERP_CONFIG.samplingFrequencySeconds,
+        };
+      });
 
-    res.status(200).json({ perps: merged });
-  });
+      res.status(200).json({ perps: merged });
+    }),
+  );
 
-  router.get("/stats", async (_req, res) => {
-    const stats = await hyperliquidClient.listPerpStats();
-    res.status(200).json({ stats });
-  });
+  router.get(
+    "/stats",
+    asyncHandler(async (_req, res) => {
+      const stats = await hyperliquidClient.listPerpStats();
+      res.status(200).json({ stats });
+    }),
+  );
 
   router.patch("/:symbol", async (req, res) => {
     const { symbol } = req.params;
@@ -95,17 +102,23 @@ export function createPerpsRouter(
     });
   });
 
-  router.get("/:symbol/orderbook", async (req, res) => {
-    const { symbol } = req.params;
-    const book = await hyperliquidClient.getOrderBook(symbol);
-    res.status(200).json(book);
-  });
+  router.get(
+    "/:symbol/orderbook",
+    asyncHandler(async (req, res) => {
+      const { symbol } = req.params;
+      const book = await hyperliquidClient.getOrderBook(symbol);
+      res.status(200).json(book);
+    }),
+  );
 
-  router.get("/:symbol/trades", async (req, res) => {
-    const { symbol } = req.params;
-    const trades = await hyperliquidClient.getRecentTrades(symbol);
-    res.status(200).json({ trades });
-  });
+  router.get(
+    "/:symbol/trades",
+    asyncHandler(async (req, res) => {
+      const { symbol } = req.params;
+      const trades = await hyperliquidClient.getRecentTrades(symbol);
+      res.status(200).json({ trades });
+    }),
+  );
 
   return router;
 }

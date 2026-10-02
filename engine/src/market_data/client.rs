@@ -3,6 +3,7 @@ use serde::Deserialize;
 use std::fmt;
 
 use super::model::MarketDataSample;
+use crate::hyperliquid::{coin, dex};
 
 #[derive(Debug)]
 pub struct MarketDataError(pub String);
@@ -86,11 +87,17 @@ fn parse_f64(value: &str, field: &str) -> Result<f64, MarketDataError> {
 impl MarketDataClient for HyperliquidMarketDataClient {
     async fn fetch_sample(&self, symbol: &str) -> Result<MarketDataSample, MarketDataError> {
         let url = format!("{}/info", self.base_url);
+        let dex = dex(symbol);
+        let coin = coin(symbol);
 
+        let mut request = serde_json::json!({ "type": "metaAndAssetCtxs" });
+        if let Some(dex) = dex {
+            request["dex"] = serde_json::Value::String(dex.to_string());
+        }
         let (meta, asset_ctxs): (MetaPage, Vec<AssetCtx>) = self
             .http
             .post(&url)
-            .json(&serde_json::json!({ "type": "metaAndAssetCtxs" }))
+            .json(&request)
             .send()
             .await
             .map_err(|e| MarketDataError(format!("metaAndAssetCtxs request failed: {e}")))?
@@ -101,7 +108,7 @@ impl MarketDataClient for HyperliquidMarketDataClient {
         let index = meta
             .universe
             .iter()
-            .position(|u| u.name == symbol)
+            .position(|u| coin == crate::hyperliquid::coin(&u.name))
             .ok_or_else(|| MarketDataError(format!("unknown symbol: {symbol}")))?;
         let ctx = asset_ctxs
             .get(index)
@@ -150,5 +157,57 @@ impl MarketDataClient for HyperliquidMarketDataClient {
             spread: best_ask - best_bid,
             mid_price,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use wiremock::matchers::{body_partial_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn fetches_a_hip3_sample_with_consistent_namespacing() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/info"))
+            .and(body_partial_json(json!({
+                "type": "metaAndAssetCtxs",
+                "dex": "xyz"
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                { "universe": [{ "name": "xyz:AAOI" }] },
+                [{
+                    "markPx": "101.5",
+                    "midPx": "101.5",
+                    "openInterest": "1000",
+                    "dayNtlVlm": "250000"
+                }]
+            ])))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/info"))
+            .and(body_partial_json(json!({
+                "type": "l2Book",
+                "coin": "xyz:AAOI"
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "levels": [[{ "px": "101.4" }], [{ "px": "101.6" }]]
+            })))
+            .mount(&server)
+            .await;
+
+        let sample = HyperliquidMarketDataClient::new(server.uri())
+            .fetch_sample("xyz:AAOI")
+            .await
+            .unwrap();
+
+        assert_eq!(sample.symbol, "xyz:AAOI");
+        assert_eq!(sample.price, 101.5);
+        assert_eq!(sample.open_interest, 1000.0);
+        assert_eq!(sample.volume, 250000.0);
+        assert!((sample.spread - 0.2).abs() < 1e-9);
     }
 }

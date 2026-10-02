@@ -125,7 +125,9 @@ const TRADES_LIMIT = 40;
 
 export default function MarketDataPage() {
   const params = useParams<{ symbol: string }>();
-  const symbol = params.symbol;
+  // Next.js hands back the raw (percent-encoded) segment, so a HIP-3
+  // symbol like `xyz:TSLA` arrives as `xyz%3ATSLA`.
+  const symbol = decodeURIComponent(params.symbol);
 
   const [samples, setSamples] = useState<MarketDataPoint[] | null>(null);
   const [range, setRange] = useState<ChartRange>("1d");

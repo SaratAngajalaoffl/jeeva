@@ -63,7 +63,8 @@ function SessionStatusBadge({ status }: { status: TradingSession["status"] }) {
 
 export default function SessionDetailPage() {
   const params = useParams<{ symbol: string; sessionId: string }>();
-  const { symbol, sessionId } = params;
+  const symbol = decodeURIComponent(params.symbol);
+  const { sessionId } = params;
 
   const [session, setSession] = useState<TradingSession | null | undefined>(
     undefined,

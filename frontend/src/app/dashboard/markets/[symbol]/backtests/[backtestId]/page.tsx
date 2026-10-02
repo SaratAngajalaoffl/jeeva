@@ -47,7 +47,8 @@ function StatusBadge({ status }: { status: BacktestRun["status"] }) {
 
 export default function BacktestDetailPage() {
   const params = useParams<{ symbol: string; backtestId: string }>();
-  const { symbol, backtestId } = params;
+  const symbol = decodeURIComponent(params.symbol);
+  const { backtestId } = params;
 
   const [backtest, setBacktest] = useState<BacktestRun | null | undefined>(
     undefined,

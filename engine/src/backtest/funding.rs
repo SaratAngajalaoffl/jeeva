@@ -218,9 +218,40 @@ impl FundingPaymentWriter for BacktestFundingPaymentWriter {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use serde_json::json;
+    use wiremock::matchers::{body_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn t(hour: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 1, 1, hour, 0, 0).unwrap()
+    }
+
+    #[tokio::test]
+    async fn fetches_hip3_funding_history_with_the_namespaced_coin() {
+        let server = MockServer::start().await;
+        let start = t(0);
+        let end = t(8);
+        Mock::given(method("POST"))
+            .and(path("/info"))
+            .and(body_json(json!({
+                "type": "fundingHistory",
+                "coin": "xyz:AAOI",
+                "startTime": start.timestamp_millis(),
+                "endTime": end.timestamp_millis(),
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                { "fundingRate": "0.0002", "time": end.timestamp_millis() },
+                { "fundingRate": "0.0001", "time": start.timestamp_millis() }
+            ])))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let series = HyperliquidHistoricalFundingRateSource::new(server.uri())
+            .fetch("xyz:AAOI", start, end)
+            .await
+            .unwrap();
+        assert_eq!(series, vec![(start, 0.0001), (end, 0.0002)]);
     }
 
     #[test]

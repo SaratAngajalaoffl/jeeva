@@ -205,3 +205,63 @@ describe("PATCH /perps/:symbol", () => {
     });
   });
 });
+
+describe("market-data endpoints for an unknown market", () => {
+  // Regression: a coin Hyperliquid has no market for answers `/info` with
+  // `null`. That used to throw inside the handler, and because Express 4
+  // does not forward a rejected async handler, it killed the API process
+  // instead of returning an error — so a malformed symbol took the whole
+  // dashboard down with it.
+  const failingClient: HyperliquidClient = {
+    ...fakeHyperliquidClient,
+    async getOrderBook(symbol: string) {
+      throw new Error(`unknown market: ${symbol}`);
+    },
+    async getRecentTrades(symbol: string) {
+      throw new Error(`unknown market: ${symbol}`);
+    },
+  };
+
+  for (const path of ["orderbook", "trades"]) {
+    it(`answers ${path} with 500 for an unknown market instead of crashing`, async () => {
+      const app = createApp({ db, pgPool, hyperliquidClient: failingClient });
+
+      const res = await request(app)
+        .get(`/perps/xyz%253ATSLA/${path}`)
+        .set("Cookie", authCookie());
+
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: "internal server error" });
+
+      // The server is still alive and serving other routes.
+      const health = await request(app).get("/health");
+      expect(health.status).toBe(200);
+    });
+  }
+});
+
+describe("perps listing endpoints when Hyperliquid fails", () => {
+  // Same class of bug as above: `/` and `/stats` call Hyperliquid, and a
+  // rejected promise from a bare async handler crashed the whole process.
+  const failingClient: HyperliquidClient = {
+    ...fakeHyperliquidClient,
+    async listPerps() {
+      throw new Error("Hyperliquid meta request failed: 429");
+    },
+    async listPerpStats() {
+      throw new Error("Hyperliquid metaAndAssetCtxs request failed: 429");
+    },
+  };
+
+  for (const path of ["/perps", "/perps/stats"]) {
+    it(`answers ${path} with 500 instead of crashing`, async () => {
+      const app = createApp({ db, pgPool, hyperliquidClient: failingClient });
+
+      const res = await request(app).get(path).set("Cookie", authCookie());
+
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: "internal server error" });
+      expect((await request(app).get("/health")).status).toBe(200);
+    });
+  }
+});

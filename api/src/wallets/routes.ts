@@ -57,6 +57,7 @@ export function createWalletsRouter(
       pgPool,
       hyperliquidClient,
       sizeUsd,
+      symbol,
     );
     res.status(200).json({ wallets });
   });

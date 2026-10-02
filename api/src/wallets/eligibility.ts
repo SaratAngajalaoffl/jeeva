@@ -12,6 +12,7 @@ import {
 export async function getWalletBalanceUsd(
   wallet: Wallet,
   hyperliquidClient: HyperliquidClient,
+  symbol?: string,
 ): Promise<number> {
   if (wallet.kind === "mock") {
     return wallet.currentBalanceUsd ?? 0;
@@ -21,8 +22,11 @@ export async function getWalletBalanceUsd(
     return 0;
   }
 
+  const separator = symbol?.indexOf(":") ?? -1;
+  const dex = separator >= 0 ? symbol?.slice(0, separator) : undefined;
   const state = await hyperliquidClient.getClearinghouseState(
     wallet.publicAddress,
+    dex,
   );
   return state.withdrawableUsd;
 }
@@ -39,6 +43,7 @@ export async function listSelectableWallets(
   pgPool: Pool,
   hyperliquidClient: HyperliquidClient,
   sizeUsd: number,
+  symbol: string,
 ): Promise<Wallet[]> {
   const [mode, wallets] = await Promise.all([
     getEngineMode(db),
@@ -48,7 +53,9 @@ export async function listSelectableWallets(
   const candidates = wallets.filter((wallet) => wallet.kind === mode);
   const [balances, sessionIds] = await Promise.all([
     Promise.all(
-      candidates.map((wallet) => getWalletBalanceUsd(wallet, hyperliquidClient)),
+      candidates.map((wallet) =>
+        getWalletBalanceUsd(wallet, hyperliquidClient, symbol),
+      ),
     ),
     Promise.all(
       candidates.map((wallet) => getWalletSessionId(pgPool, wallet.id)),
@@ -72,6 +79,7 @@ export async function isWalletEligible(
   hyperliquidClient: HyperliquidClient,
   walletId: string,
   sizeUsd: number,
+  symbol: string,
 ): Promise<boolean> {
   const [mode, wallet, sessionId] = await Promise.all([
     getEngineMode(db),
@@ -83,6 +91,10 @@ export async function isWalletEligible(
     return false;
   }
 
-  const balance = await getWalletBalanceUsd(wallet, hyperliquidClient);
+  const balance = await getWalletBalanceUsd(
+    wallet,
+    hyperliquidClient,
+    symbol,
+  );
   return balance >= sizeUsd;
 }
