@@ -142,19 +142,6 @@ export async function getBacktestRun(
   return row ? toBacktestRun(row) : null;
 }
 
-/** Oldest market-data sample available for a symbol, or null if there is none. */
-export async function earliestMarketDataTime(
-  pool: Pool,
-  symbol: string,
-): Promise<string | null> {
-  const result = await pool.query<{ min: Date | null }>(
-    `SELECT MIN(time) AS min FROM market_data WHERE symbol = $1`,
-    [symbol],
-  );
-  const min = result.rows[0]?.min ?? null;
-  return min ? min.toISOString() : null;
-}
-
 export interface BacktestDecisionEntry {
   id: string;
   simTime: string;

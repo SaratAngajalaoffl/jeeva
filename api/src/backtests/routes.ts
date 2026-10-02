@@ -1,6 +1,7 @@
 import { Router } from "express";
 import type { Pool } from "pg";
 import { requireAuth } from "../auth/requireAuth.js";
+import { getMarketDataRange } from "../marketData/repository.js";
 import { isValidFrequencySeconds } from "../perps/frequency.js";
 import { isValidLeverage, isValidPositionSizeUsd } from "../perps/sizing.js";
 import {
@@ -12,7 +13,6 @@ import {
 import type { DecisionMaker } from "../trading-sessions/repository.js";
 import {
   createBacktestRun,
-  earliestMarketDataTime,
   getBacktestRun,
   getBacktestPosition,
   listBacktestDecisions,
@@ -98,12 +98,25 @@ export function createBacktestsRouter(pgPool: Pool): Router {
       return;
     }
 
-    const earliest = await earliestMarketDataTime(pgPool, symbol);
-    if (!earliest || start < new Date(earliest)) {
+    const marketDataRange = await getMarketDataRange(pgPool, symbol);
+    const { earliest, latest } = marketDataRange;
+    if (!earliest || !latest) {
       res.status(400).json({
-        error: earliest
-          ? `startTime predates the oldest available market data for ${symbol} (${earliest})`
-          : `no market data available for ${symbol} yet`,
+        error: `no market data available for ${symbol} yet`,
+      });
+      return;
+    }
+    if (start < new Date(earliest)) {
+      res.status(400).json({
+        error: `startTime predates the oldest available market data for ${symbol}; earliest valid start is ${earliest}`,
+        earliestStart: earliest,
+      });
+      return;
+    }
+    if (end > new Date(latest)) {
+      res.status(400).json({
+        error: `endTime exceeds the newest available market data for ${symbol}; latest valid end is ${latest}`,
+        latestEnd: latest,
       });
       return;
     }
@@ -114,7 +127,8 @@ export function createBacktestsRouter(pgPool: Pool): Router {
       decisionFrequencySeconds,
       leverage,
       positionSizeUsd,
-      historyWindowSamples: historyWindowSamples ?? DEFAULT_HISTORY_WINDOW_SAMPLES,
+      historyWindowSamples:
+        historyWindowSamples ?? DEFAULT_HISTORY_WINDOW_SAMPLES,
       historyFormat: historyFormat ?? DEFAULT_HISTORY_FORMAT,
       storeDecisionPayloads,
       startTime,

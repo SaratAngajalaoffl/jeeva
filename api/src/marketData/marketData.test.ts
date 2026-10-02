@@ -86,6 +86,41 @@ async function seed(symbol: string, time: Date, overrides = {}) {
   );
 }
 
+describe("GET /perps/:symbol/market-data/range", () => {
+  it("rejects unauthenticated requests", async () => {
+    const res = await request(buildApp()).get("/perps/BTC/market-data/range");
+    expect(res.status).toBe(401);
+  });
+
+  it("returns the earliest and latest samples for the requested symbol", async () => {
+    const earliest = new Date("2026-09-20T21:19:00.432Z");
+    const latest = new Date("2026-09-21T18:04:12.789Z");
+    await seed("BTC", latest);
+    await seed("BTC", earliest);
+    await seed("BTC", new Date("2026-09-21T00:00:00.000Z"));
+    await seed("ETH", new Date("2020-01-01T00:00:00.000Z"));
+
+    const res = await request(buildApp())
+      .get("/perps/BTC/market-data/range")
+      .set("Cookie", authCookie());
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      earliest: earliest.toISOString(),
+      latest: latest.toISOString(),
+    });
+  });
+
+  it("returns null bounds when the symbol has no samples", async () => {
+    const res = await request(buildApp())
+      .get("/perps/BTC/market-data/range")
+      .set("Cookie", authCookie());
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ earliest: null, latest: null });
+  });
+});
+
 describe("GET /perps/:symbol/market-data", () => {
   it("rejects unauthenticated requests", async () => {
     const res = await request(buildApp()).get("/perps/BTC/market-data");

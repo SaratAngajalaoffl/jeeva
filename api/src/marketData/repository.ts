@@ -9,15 +9,29 @@ export interface MarketDataPoint {
   midPrice: number;
 }
 
-export async function getOldestSampleTime(
+export interface MarketDataRange {
+  earliest: Date | null;
+  latest: Date | null;
+}
+
+/** Oldest and newest market-data samples available for a symbol. */
+export async function getMarketDataRange(
   pool: Pool,
   symbol: string,
-): Promise<Date | null> {
-  const result = await pool.query<{ time: Date | null }>(
-    `SELECT MIN(time) AS time FROM market_data WHERE symbol = $1`,
+): Promise<MarketDataRange> {
+  const result = await pool.query<{
+    earliest: Date | null;
+    latest: Date | null;
+  }>(
+    `SELECT MIN(time) AS earliest, MAX(time) AS latest
+     FROM market_data
+     WHERE symbol = $1`,
     [symbol],
   );
-  return result.rows[0]?.time ?? null;
+  return {
+    earliest: result.rows[0]?.earliest ?? null,
+    latest: result.rows[0]?.latest ?? null,
+  };
 }
 
 export async function getMarketDataHistory(
