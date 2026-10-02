@@ -183,7 +183,9 @@ impl ExecutionAdapter for BacktestExecutionAdapter {
         Ok(())
     }
 
-    async fn list_open_positions(&self) -> Result<Vec<(String, OpenPosition)>, ExecutionError> {
+    async fn list_open_positions(
+        &self,
+    ) -> Result<Vec<(String, String, OpenPosition)>, ExecutionError> {
         // Scoped to this run's own single position, mirroring
         // `MockExecutionAdapter::list_open_positions`'s per-wallet scoping
         // — one backtest run is one isolated "wallet".
@@ -199,7 +201,7 @@ impl ExecutionAdapter for BacktestExecutionAdapter {
                 .map_err(|e| {
                     ExecutionError(format!("failed to read backtest position symbol: {e}"))
                 })?;
-                vec![(symbol, position)]
+                vec![(self.backtest_run_id.clone(), symbol, position)]
             }
             None => vec![],
         })

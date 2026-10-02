@@ -5,12 +5,12 @@
  * the page stays a layout and these stay testable. Three facts about the
  * data model drive most of it:
  *
- * - A mock wallet is attached to at most one non-closed trading session,
- *   so a session's realised P&L is exactly its wallet's drift from the
- *   initial balance.
- * - Funding payments are settled straight into that balance, so funding
- *   is already *inside* realised P&L — it is reported separately as a
- *   flow, never added on top.
+ * - Session realised P&L comes from the API's session-attributed closed
+ *   trades plus funding; a reused wallet's lifetime balance drift is
+ *   reserved for portfolio reporting.
+ * - Funding payments are settled straight into a wallet balance, but the
+ *   session aggregate includes them directly rather than inheriting all
+ *   of the wallet's history.
  * - `mock_positions` only ever holds long/short rows; a session with no
  *   row is flat.
  */
@@ -21,6 +21,7 @@ import type {
   MarketDataPoint,
   Position,
   TradingSession,
+  TradingSessionRow,
   Wallet,
 } from "./api";
 
@@ -435,8 +436,8 @@ export function buildPositionRows(
 export interface SessionRow {
   session: TradingSession;
   wallet: Wallet | null;
-  /** Wallet drift from its initial balance — closed trades plus funding. */
-  realizedPnlUsd: number | null;
+  /** Closed-trade P&L plus funding, scoped to this session. */
+  realizedPnlUsd: number;
   position: Position | null;
   unrealizedPnlUsd: number | null;
   decisionCount: number;
@@ -446,7 +447,7 @@ export interface SessionRow {
 }
 
 export function buildSessionRows(
-  sessions: TradingSession[],
+  sessions: TradingSessionRow[],
   wallets: Wallet[],
   positions: Position[],
   decisions: DecisionLogEntry[],
@@ -486,10 +487,7 @@ export function buildSessionRows(
       return {
         session,
         wallet,
-        realizedPnlUsd:
-          wallet && wallet.currentBalanceUsd !== null && wallet.initialBalanceUsd !== null
-            ? wallet.currentBalanceUsd - wallet.initialBalanceUsd
-            : null,
+        realizedPnlUsd: session.realizedPnlUsd,
         position,
         unrealizedPnlUsd:
           position && mark !== null ? unrealizedPnlUsd(position, mark) : null,

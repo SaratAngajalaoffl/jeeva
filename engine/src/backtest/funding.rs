@@ -186,6 +186,7 @@ impl BacktestFundingPaymentWriter {
 impl FundingPaymentWriter for BacktestFundingPaymentWriter {
     async fn write(
         &self,
+        _session_id: &str,
         symbol: &str,
         direction: Direction,
         funding_rate: f64,

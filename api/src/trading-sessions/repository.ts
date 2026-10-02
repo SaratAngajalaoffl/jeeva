@@ -89,22 +89,55 @@ function toTradingSession(row: TradingSessionRow): TradingSession {
 const COLUMNS =
   "id, symbol, decision_maker, decision_frequency_seconds, leverage, position_size_usd, history_window_samples, history_format, store_decision_payloads, stop_loss_pct, wallet_id, status, created_at, closed_at";
 
+export interface SessionRow {
+  session: TradingSession;
+  /** Closed-trade P&L plus funding, attributed only to this session. */
+  realizedPnlUsd: number;
+}
+
+const SESSION_PNL_SELECT = `
+  SELECT ${COLUMNS}, COALESCE(trade_pnl.pnl_usd, 0) + COALESCE(funding_pnl.amount_usd, 0) AS session_realized_pnl_usd
+  FROM trading_sessions
+  LEFT JOIN (
+    SELECT session_id, SUM(pnl_usd) AS pnl_usd
+    FROM trade_history
+    GROUP BY session_id
+  ) trade_pnl ON trade_pnl.session_id = trading_sessions.id
+  LEFT JOIN (
+    SELECT session_id, SUM(amount_usd) AS amount_usd
+    FROM funding_payments
+    WHERE session_id IS NOT NULL
+    GROUP BY session_id
+  ) funding_pnl ON funding_pnl.session_id = trading_sessions.id
+`;
+
+interface SessionPnlRow extends TradingSessionRow {
+  session_realized_pnl_usd: string;
+}
+
+function toSessionRow(row: SessionPnlRow): SessionRow {
+  return {
+    session: toTradingSession(row),
+    realizedPnlUsd: Number(row.session_realized_pnl_usd),
+  };
+}
+
 export async function listTradingSessions(
   pool: Pool,
   symbol?: string,
-): Promise<TradingSession[]> {
+): Promise<SessionRow[]> {
   if (symbol) {
-    const result = await pool.query<TradingSessionRow>(
-      `SELECT ${COLUMNS} FROM trading_sessions WHERE symbol = $1 ORDER BY created_at`,
+    const result = await pool.query<SessionPnlRow>(
+      `${SESSION_PNL_SELECT} WHERE symbol = $1 ORDER BY created_at`,
       [symbol],
     );
-    return result.rows.map(toTradingSession);
+    return result.rows.map(toSessionRow);
   }
 
-  const result = await pool.query<TradingSessionRow>(
-    `SELECT ${COLUMNS} FROM trading_sessions ORDER BY created_at`,
+  const result = await pool.query<SessionPnlRow>(
+    `${SESSION_PNL_SELECT} ORDER BY created_at`,
   );
-  return result.rows.map(toTradingSession);
+  return result.rows.map(toSessionRow);
 }
 
 export async function getTradingSession(

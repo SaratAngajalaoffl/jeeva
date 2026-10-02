@@ -63,6 +63,13 @@ mod execution {
             .await
             .unwrap();
 
+        sqlx::query("DELETE FROM mock_positions WHERE session_id IN ($1::uuid, $2::uuid)")
+            .bind("00000000-0000-0000-0000-0000000000e1")
+            .bind("00000000-0000-0000-0000-0000000000e7")
+            .execute(&pool)
+            .await
+            .unwrap();
+
         let adapter = MockExecutionAdapter::new(pool.clone(), 0.0, wallet_id);
         let position = adapter
             .open(
@@ -87,6 +94,39 @@ mod execution {
             .unwrap();
         assert_eq!(fetched, position);
         assert_eq!(wallet_balance(&pool).await, 10_000.0);
+    }
+
+    #[tokio::test]
+    async fn listing_open_positions_preserves_each_sessions_symbol() {
+        let pool = pool().await;
+        let _guard = WALLET_LOCK.lock().await;
+        let wallet_id = reset_wallet(&pool, 10_000.0).await;
+        let session_a = "00000000-0000-0000-0000-0000000000e1";
+        let session_b = "00000000-0000-0000-0000-0000000000e7";
+        sqlx::query("DELETE FROM mock_positions WHERE session_id IN ($1::uuid, $2::uuid)")
+            .bind(session_a)
+            .bind(session_b)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let adapter = MockExecutionAdapter::new(pool.clone(), 0.0, wallet_id);
+        adapter
+            .open(session_a, "TESTLISTA", Direction::Long, 100.0, 1.0, 100.0)
+            .await
+            .unwrap();
+        adapter
+            .open(session_b, "TESTLISTB", Direction::Short, 200.0, 1.0, 200.0)
+            .await
+            .unwrap();
+
+        let mut positions = adapter.list_open_positions().await.unwrap();
+        positions.sort_by(|left, right| left.0.cmp(&right.0));
+        assert_eq!(positions.len(), 2);
+        assert_eq!(positions[0].0, session_a);
+        assert_eq!(positions[0].1, "TESTLISTA");
+        assert_eq!(positions[1].0, session_b);
+        assert_eq!(positions[1].1, "TESTLISTB");
     }
 
     #[tokio::test]

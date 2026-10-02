@@ -31,6 +31,10 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.collection("perpConfigs").deleteMany({ symbol: SYMBOL });
+  await pgPool.query("DELETE FROM trade_history WHERE symbol LIKE 'P&L%'");
+  await pgPool.query("DELETE FROM funding_payments WHERE symbol LIKE 'P&L%'");
+  await pgPool.query("DELETE FROM trading_sessions WHERE symbol LIKE 'P&L%'");
+  await pgPool.query("DELETE FROM wallets WHERE id = '00000000-0000-0000-0000-000000000043'");
   await pgPool.query("DELETE FROM trading_sessions WHERE symbol = $1", [
     SYMBOL,
   ]);
@@ -75,6 +79,48 @@ function createSession(body: Record<string, unknown> = {}) {
       ...body,
     });
 }
+
+describe("GET /trading-sessions", () => {
+  it("scopes realized P&L to each session when a wallet is reused", async () => {
+    const walletId = "00000000-0000-0000-0000-000000000043";
+    await pgPool.query(
+      `INSERT INTO wallets (id, label, kind, initial_balance_usd, current_balance_usd)
+       VALUES ($1, 'Reused', 'mock', 100, 129.6)`,
+      [walletId],
+    );
+    const sessionA = await pgPool.query<{ id: string }>(
+      `INSERT INTO trading_sessions (symbol, wallet_id, status, closed_at)
+       VALUES ('P&L-A', $1, 'closed', now()) RETURNING id`,
+      [walletId],
+    );
+    const sessionB = await pgPool.query<{ id: string }>(
+      `INSERT INTO trading_sessions (symbol, wallet_id)
+       VALUES ('P&L-B', $1) RETURNING id`,
+      [walletId],
+    );
+
+    await pgPool.query(
+      `INSERT INTO trade_history
+         (session_id, symbol, direction, entry_price, notional_usd, opened_at, exit_price, pnl_usd)
+       VALUES ($1, 'P&L-A', 'long', 100, 100, now() - interval '1 hour', 110, 10)`,
+      [sessionA.rows[0].id],
+    );
+    await pgPool.query(
+      `INSERT INTO funding_payments (session_id, symbol, direction, funding_rate, notional_usd, amount_usd)
+       VALUES ($1, 'P&L-A', 'long', 0.0001, 100, -0.2)`,
+      [sessionA.rows[0].id],
+    );
+
+    const res = await request(buildApp())
+      .get("/trading-sessions")
+      .set("Cookie", authCookie());
+
+    expect(res.status).toBe(200);
+    const rows = res.body.sessions;
+    expect(rows.find((row: { id: string }) => row.id === sessionA.rows[0].id).realizedPnlUsd).toBeCloseTo(9.8);
+    expect(rows.find((row: { id: string }) => row.id === sessionB.rows[0].id).realizedPnlUsd).toBe(0);
+  });
+});
 
 describe("POST /perps/:symbol/trading-sessions", () => {
   it("enables sampling for the market so a session is never traded blind", async () => {

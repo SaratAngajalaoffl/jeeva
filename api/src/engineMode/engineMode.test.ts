@@ -35,8 +35,8 @@ afterAll(async () => {
 beforeEach(async () => {
   await engineConfig().deleteMany({});
   await perpConfigs().deleteMany({});
-  await pgPool.query("DELETE FROM trading_sessions");
-  await pgPool.query("DELETE FROM wallets");
+  await pgPool.query("DELETE FROM trading_sessions WHERE symbol = 'BTC'");
+  await pgPool.query("DELETE FROM wallets WHERE label = 'Live'");
 });
 
 function authCookie(): string {

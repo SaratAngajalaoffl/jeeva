@@ -43,12 +43,20 @@ export function createTradingSessionsRouter(
   router.use(requireAuth);
 
   router.get("/perps/:symbol/trading-sessions", async (req, res) => {
-    const sessions = await listTradingSessions(pgPool, req.params.symbol);
+    const rows = await listTradingSessions(pgPool, req.params.symbol);
+    const sessions = rows.map(({ session, realizedPnlUsd }) => ({
+      ...session,
+      realizedPnlUsd,
+    }));
     res.status(200).json({ sessions });
   });
 
   router.get("/trading-sessions", async (_req, res) => {
-    const sessions = await listTradingSessions(pgPool);
+    const rows = await listTradingSessions(pgPool);
+    const sessions = rows.map(({ session, realizedPnlUsd }) => ({
+      ...session,
+      realizedPnlUsd,
+    }));
     res.status(200).json({ sessions });
   });
 

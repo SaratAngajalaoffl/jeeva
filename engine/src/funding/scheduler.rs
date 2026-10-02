@@ -26,7 +26,11 @@ pub async fn run_funding_cycle(
         }
     };
 
-    for (symbol, position) in positions {
+    for (session_id, symbol, position) in positions {
+        if !execution.records_funding_payments() {
+            continue;
+        }
+
         let funding_rate = match rate_source.funding_rate(&symbol).await {
             Ok(rate) => rate,
             Err(error) => {
@@ -45,6 +49,7 @@ pub async fn run_funding_cycle(
 
         if let Err(error) = payment_writer
             .write(
+                &session_id,
                 &symbol,
                 position.direction,
                 funding_rate,

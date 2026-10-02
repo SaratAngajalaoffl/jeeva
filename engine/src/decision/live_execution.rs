@@ -372,6 +372,44 @@ impl LiveExecutionAdapter {
         Ok(())
     }
 
+    /// Records the exchange-confirmed live close at the order's average
+    /// fill price so session P&L reflects the actual closed trade.
+    async fn record_closed_trade(
+        &self,
+        session_id: &str,
+        symbol: &str,
+        position: OpenPosition,
+        exit_price: f64,
+    ) -> Result<(), ExecutionError> {
+        let pnl_usd = super::execution::realized_pnl_usd(
+            position.direction,
+            position.entry_price,
+            exit_price,
+            position.notional_usd,
+        );
+
+        sqlx::query(
+            r#"
+            INSERT INTO trade_history
+                (session_id, symbol, direction, entry_price, notional_usd, opened_at, exit_price, pnl_usd)
+            VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8)
+            "#,
+        )
+        .bind(session_id)
+        .bind(symbol)
+        .bind(position.direction.as_str())
+        .bind(position.entry_price)
+        .bind(position.notional_usd)
+        .bind(position.opened_at)
+        .bind(exit_price)
+        .bind(pnl_usd)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| ExecutionError(format!("failed to record live trade history: {e}")))?;
+
+        Ok(())
+    }
+
     /// Clears this session's virtual position after a confirmed close.
     async fn delete_virtual_position(&self, session_id: &str) -> Result<(), ExecutionError> {
         sqlx::query("DELETE FROM live_positions WHERE session_id = $1::uuid")
@@ -473,6 +511,7 @@ impl LiveExecutionAdapter {
         let size = position.notional_usd / position.entry_price.max(f64::EPSILON);
         self.place_order(symbol, is_buy, size, position.entry_price, true)
             .await
+            .map(|_| ())
     }
 
     /// Attempts to bring the exchange's position for `symbol` in line
@@ -495,6 +534,7 @@ impl LiveExecutionAdapter {
                 let size = target.notional_usd / target.entry_price.max(f64::EPSILON);
                 self.place_order(symbol, is_buy, size, target.entry_price, false)
                     .await
+                    .map(|_| ())
             }
             Some(current) if current.direction != target.direction => {
                 self.flatten_exchange_position(symbol, current).await?;
@@ -502,6 +542,7 @@ impl LiveExecutionAdapter {
                 let size = target.notional_usd / target.entry_price.max(f64::EPSILON);
                 self.place_order(symbol, is_buy, size, target.entry_price, false)
                     .await
+                    .map(|_| ())
             }
             Some(current) => {
                 let delta = target.notional_usd - current.notional_usd;
@@ -517,6 +558,7 @@ impl LiveExecutionAdapter {
                 let reduce_only = delta < 0.0;
                 self.place_order(symbol, is_buy, size, target.entry_price, reduce_only)
                     .await
+                    .map(|_| ())
             }
         }
     }
@@ -721,7 +763,7 @@ impl LiveExecutionAdapter {
             .load_pending_order(symbol)
             .await?
             .ok_or_else(|| ExecutionError("ambiguous order changed during retry".to_string()))?;
-        self.send_signed_order(symbol, &pending).await
+        self.send_signed_order(symbol, &pending).await.map(|_| ())
     }
 
     /// True once a live order's outcome has been observed as terminal.
@@ -839,7 +881,7 @@ impl LiveExecutionAdapter {
         size: f64,
         mid_price: f64,
         reduce_only: bool,
-    ) -> Result<(), ExecutionError> {
+    ) -> Result<Option<f64>, ExecutionError> {
         // Each PERP has at most one outstanding order attempt, so the
         // marker is per-symbol rather than a stack. The exact signed
         // logical order survives a transport failure and a wallet-registry
@@ -912,7 +954,7 @@ impl LiveExecutionAdapter {
         &self,
         symbol: &str,
         pending: &PendingOrder,
-    ) -> Result<(), ExecutionError> {
+    ) -> Result<Option<f64>, ExecutionError> {
         let PendingOrder {
             action,
             nonce_ms,
@@ -949,10 +991,21 @@ impl LiveExecutionAdapter {
             )));
         }
 
+        let average_fill_price = response
+            .response
+            .as_ref()
+            .and_then(|response| response.pointer("/data/statuses/0/filled/avgPx"))
+            .and_then(|average_fill_price| average_fill_price.as_str())
+            .map(str::parse::<f64>)
+            .transpose()
+            .map_err(|_| {
+                ExecutionError("exchange returned an invalid average fill price".to_string())
+            })?;
+
         // Keep the marker through the caller’s post-submit exchange read.
         // A successful HTTP response alone does not prove the order's
         // final state was observed.
-        Ok(())
+        Ok(average_fill_price)
     }
 }
 
@@ -1143,15 +1196,20 @@ impl ExecutionAdapter for LiveExecutionAdapter {
         let is_buy = matches!(position.direction, Direction::Short);
         let size = position.notional_usd / position.entry_price.max(f64::EPSILON);
 
-        self.place_order(symbol, is_buy, size, mid_price, true)
-            .await?;
-
+        let exit_price = self
+            .place_order(symbol, is_buy, size, mid_price, true)
+            .await?
+            .ok_or_else(|| {
+                ExecutionError("live close order did not report an average fill price".to_string())
+            })?;
         if let Some(remaining) = self.fetch_exchange_position(symbol).await? {
             return Err(ExecutionError(format!(
                 "close submitted but exchange still reports {} notional_usd; retaining virtual position",
                 remaining.notional_usd
             )));
         }
+        self.record_closed_trade(session_id, symbol, position, exit_price)
+            .await?;
         self.clear_confirmed_pending_order(symbol).await?;
         self.delete_virtual_position(session_id).await?;
 
@@ -1164,9 +1222,11 @@ impl ExecutionAdapter for LiveExecutionAdapter {
     /// `MockExecutionAdapter::list_open_positions` — used by the funding
     /// sweep, which needs the engine's own record rather than an extra
     /// Hyperliquid round-trip per wallet.
-    async fn list_open_positions(&self) -> Result<Vec<(String, OpenPosition)>, ExecutionError> {
-        let rows = sqlx::query_as::<_, (String, String, f64, f64, DateTime<Utc>)>(
-            "SELECT symbol, direction, entry_price, notional_usd, opened_at FROM live_positions WHERE wallet_id = $1::uuid",
+    async fn list_open_positions(
+        &self,
+    ) -> Result<Vec<(String, String, OpenPosition)>, ExecutionError> {
+        let rows = sqlx::query_as::<_, (String, String, String, f64, f64, DateTime<Utc>)>(
+            "SELECT session_id::text, symbol, direction, entry_price, notional_usd, opened_at FROM live_positions WHERE wallet_id = $1::uuid",
         )
         .bind(&self.wallet_id)
         .fetch_all(&self.pool)
@@ -1176,7 +1236,7 @@ impl ExecutionAdapter for LiveExecutionAdapter {
         Ok(rows
             .into_iter()
             .map(
-                |(symbol, direction, entry_price, notional_usd, opened_at)| {
+                |(session_id, symbol, direction, entry_price, notional_usd, opened_at)| {
                     let position = OpenPosition {
                         direction: if direction == "long" {
                             Direction::Long
@@ -1187,7 +1247,7 @@ impl ExecutionAdapter for LiveExecutionAdapter {
                         notional_usd,
                         opened_at,
                     };
-                    (symbol, position)
+                    (session_id, symbol, position)
                 },
             )
             .collect())
@@ -1199,6 +1259,10 @@ impl ExecutionAdapter for LiveExecutionAdapter {
     /// owns the entire mock wallet ledger).
     async fn apply_funding(&self, _symbol: &str, _amount_usd: f64) -> Result<(), ExecutionError> {
         Ok(())
+    }
+
+    fn records_funding_payments(&self) -> bool {
+        false
     }
 
     /// Detects drift between this wallet's virtual state and its real
@@ -1529,8 +1593,8 @@ mod tests {
             )
             .mount(&server)
             .await;
-        // Remaining /info calls: the post-order position fetch used to
-        // confirm the fill before persisting virtual state.
+        // Post-order position fetch confirms the fill before persisting
+        // virtual state.
         Mock::given(method("POST"))
             .and(path("/info"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -1682,9 +1746,12 @@ mod tests {
             .await;
         Mock::given(method("POST"))
             .and(path("/exchange"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({ "status": "ok", "response": {} })),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "status": "ok",
+                "response": {
+                    "data": { "statuses": [{ "filled": { "avgPx": "51000" } }] }
+                }
+            })))
             .mount(&server)
             .await;
 
@@ -1705,9 +1772,38 @@ mod tests {
             .await
             .unwrap();
 
+        sqlx::query("DELETE FROM trade_history WHERE session_id = $1::uuid")
+            .bind(session_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Seed an unrelated wallet position to prove list_open_positions
+        // returns the session/symbol association rather than a wallet total.
+        sqlx::query(
+            "INSERT INTO live_positions
+               (session_id, symbol, direction, entry_price, notional_usd, opened_at, wallet_id)
+             VALUES ($1::uuid, 'ETH', 'short', 3000, 600, now(), $2::uuid)",
+        )
+        .bind("00000000-0000-0000-0000-0000000000fb")
+        .bind(wallet_id)
+        .execute(&pool)
+        .await
+        .unwrap();
         adapter.close(session_id, "BTC", 51000.0).await.unwrap();
 
         assert_eq!(adapter.get_position(session_id, "BTC").await.unwrap(), None);
+        let positions = adapter.list_open_positions().await.unwrap();
+        assert_eq!(positions.len(), 1);
+        assert_eq!(positions[0].0, "00000000-0000-0000-0000-0000000000fb");
+        assert_eq!(positions[0].1, "ETH");
+        let row = sqlx::query_as::<_, (String, f64)>(
+            "SELECT symbol, pnl_usd FROM trade_history WHERE session_id = $1::uuid",
+        )
+        .bind(session_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row, ("BTC".to_string(), 20.0));
     }
 
     #[tokio::test]

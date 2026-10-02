@@ -23,6 +23,7 @@ pub trait FundingPaymentWriter: Send + Sync {
     #[allow(clippy::too_many_arguments)]
     async fn write(
         &self,
+        session_id: &str,
         symbol: &str,
         direction: Direction,
         funding_rate: f64,
@@ -45,6 +46,7 @@ impl PostgresFundingPaymentWriter {
 impl FundingPaymentWriter for PostgresFundingPaymentWriter {
     async fn write(
         &self,
+        session_id: &str,
         symbol: &str,
         direction: Direction,
         funding_rate: f64,
@@ -53,10 +55,11 @@ impl FundingPaymentWriter for PostgresFundingPaymentWriter {
     ) -> Result<(), FundingWriteError> {
         sqlx::query(
             r#"
-            INSERT INTO funding_payments (time, symbol, direction, funding_rate, notional_usd, amount_usd)
-            VALUES (now(), $1, $2, $3, $4, $5)
+            INSERT INTO funding_payments (time, session_id, symbol, direction, funding_rate, notional_usd, amount_usd)
+            VALUES (now(), $1::uuid, $2, $3, $4, $5, $6)
             "#,
         )
+        .bind(session_id)
         .bind(symbol)
         .bind(direction.as_str())
         .bind(funding_rate)
