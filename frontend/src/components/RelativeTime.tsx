@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { formatCountdown, timeAgo } from "@/lib/format";
+import { formatCountdown, formatDuration, timeAgo } from "@/lib/format";
 
 /**
  * Self-ticking clocks. They keep their own interval so a second-by-second
@@ -48,6 +48,30 @@ export function Countdown({
       title={`Next decision around ${new Date(iso).toLocaleTimeString()}`}
     >
       {formatCountdown(remaining)}
+    </span>
+  );
+}
+
+/** How long a session has run: live while it is open, frozen once it closes. */
+export function Uptime({
+  since,
+  until,
+  className = "",
+}: {
+  since: string;
+  until: string | null;
+  className?: string;
+}) {
+  const now = useTick(1000);
+  const end = until ? new Date(until).getTime() : now;
+  return (
+    <span
+      className={className}
+      title={`Started ${new Date(since).toLocaleString()}${
+        until ? ` · closed ${new Date(until).toLocaleString()}` : ""
+      }`}
+    >
+      {formatDuration(end - new Date(since).getTime())}
     </span>
   );
 }

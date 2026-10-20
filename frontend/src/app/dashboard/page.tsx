@@ -44,6 +44,7 @@ import {
   formatDuration,
   formatPrice,
   formatSignedPct,
+  formatShortDateTime,
   formatSignedUsd,
   formatUsd,
 } from "@/lib/format";
@@ -89,7 +90,7 @@ import PerformanceChart from "@/components/PerformanceChart";
 import RingMeter from "@/components/RingMeter";
 import SegmentedBar from "@/components/SegmentedBar";
 import StackedBarChart from "@/components/StackedBarChart";
-import { Countdown, TimeAgo } from "@/components/RelativeTime";
+import { Countdown, TimeAgo, Uptime } from "@/components/RelativeTime";
 
 const POLL_MS = 15_000;
 const HISTORY_LIMIT = 1000;
@@ -1160,11 +1161,12 @@ const DECISION_MAKER_LABEL = {
 function SessionsTable({ rows }: { rows: SessionRow[] }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[860px] border-collapse text-left text-sm text-text">
+      <table className="w-full min-w-[960px] border-collapse text-left text-sm text-text">
         <thead>
           <tr>
             <th className={TH}>Session</th>
             <th className={TH}>Status</th>
+            <th className={TH}>Running</th>
             <th className={TH}>Decision maker</th>
             <th className={TH}>Cadence</th>
             <th className={TH}>Sizing</th>
@@ -1202,6 +1204,18 @@ function SessionsTable({ rows }: { rows: SessionRow[] }) {
                   <StatusPill tone={SESSION_STATUS_TONE[session.status]}>
                     {SESSION_STATUS_LABEL[session.status]}
                   </StatusPill>
+                </td>
+                <td className={TD}>
+                  <div className="flex flex-col">
+                    <Uptime
+                      since={session.createdAt}
+                      until={session.closedAt}
+                      className="tabular-nums text-subtext-1"
+                    />
+                    <span className="text-[11px] text-subtext-0">
+                      {formatShortDateTime(session.createdAt)}
+                    </span>
+                  </div>
                 </td>
                 <td className={`${TD} text-subtext-1`}>
                   {DECISION_MAKER_LABEL[session.decisionMaker]}

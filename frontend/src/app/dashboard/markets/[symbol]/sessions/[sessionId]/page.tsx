@@ -8,6 +8,8 @@ import PriceVolumeChart, {
   type ChartRange,
 } from "@/components/PriceVolumeChart";
 import { SiteHeader } from "@/components/SiteHeader";
+import { Uptime } from "@/components/RelativeTime";
+import { formatShortDateTime } from "@/lib/format";
 import { Button, Card, Skeleton } from "@/components/ui";
 import {
   fetchDecisions,
@@ -214,6 +216,27 @@ export default function SessionDetailPage() {
           </Card>
         ) : (
           <Card className="flex flex-wrap items-center gap-x-8 gap-y-4 p-5">
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[11px] uppercase tracking-wide text-subtext-0">
+                Started
+              </span>
+              <span
+                className="text-sm font-medium text-text"
+                title={new Date(session.createdAt).toLocaleString()}
+              >
+                {formatShortDateTime(session.createdAt)}
+              </span>
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[11px] uppercase tracking-wide text-subtext-0">
+                {session.closedAt ? "Ran for" : "Running for"}
+              </span>
+              <Uptime
+                since={session.createdAt}
+                until={session.closedAt}
+                className="text-sm font-medium tabular-nums text-text"
+              />
+            </div>
             <div className="flex flex-col gap-0.5">
               <span className="text-[11px] uppercase tracking-wide text-subtext-0">
                 Decision maker

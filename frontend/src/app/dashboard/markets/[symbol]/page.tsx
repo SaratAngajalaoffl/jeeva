@@ -43,6 +43,8 @@ import {
   type TradingSession,
   type Wallet,
 } from "@/lib/api";
+import { Uptime } from "@/components/RelativeTime";
+import { formatShortDateTime } from "@/lib/format";
 import { SiteHeader } from "@/components/SiteHeader";
 import {
   Button,
@@ -775,11 +777,12 @@ function SessionsPanel({
         <p className="text-sm text-subtext-1">No trading sessions yet.</p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] border-collapse text-left text-sm text-text">
+          <table className="w-full min-w-[820px] border-collapse text-left text-sm text-text">
             <thead>
               <tr>
                 <th className={TH}>Session</th>
                 <th className={TH}>Status</th>
+                <th className={TH}>Running</th>
                 <th className={TH}>Decision maker</th>
                 <th className={TH}>Freq</th>
                 <th className={TH}>Leverage</th>
@@ -801,6 +804,18 @@ function SessionsPanel({
                   </td>
                   <td className={TD}>
                     <SessionStatusBadge status={session.status} />
+                  </td>
+                  <td className={TD}>
+                    <div className="flex flex-col">
+                      <Uptime
+                        since={session.createdAt}
+                        until={session.closedAt}
+                        className="tabular-nums"
+                      />
+                      <span className="text-[11px] text-subtext-0">
+                        {formatShortDateTime(session.createdAt)}
+                      </span>
+                    </div>
                   </td>
                   <td className={TD}>{session.decisionMaker}</td>
                   <td className={TD}>{session.decisionFrequencySeconds}s</td>

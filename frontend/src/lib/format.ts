@@ -65,6 +65,16 @@ export function formatDuration(ms: number): string {
   return `${Math.floor(hours / 24)}d ${hours % 24}h`;
 }
 
+/** Compact wall-clock timestamp: "Oct 21, 14:02". */
+export function formatShortDateTime(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 /** Countdown to the next decision tick: 4:07, or "due" once it has passed. */
 export function formatCountdown(ms: number): string {
   if (ms <= 0) return "due";
