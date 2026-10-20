@@ -7,6 +7,7 @@ import express, {
 import type { Db } from "mongodb";
 import type { Pool } from "pg";
 import { authRouter } from "./auth/authRoutes.js";
+import { getAuthConfig } from "./auth/config.js";
 import { createBacktestsRouter } from "./backtests/routes.js";
 import {
   createHyperliquidClient,
@@ -56,7 +57,18 @@ export function createApp(deps: AppDeps = {}): Express {
   app.use(cookieParser());
 
   app.get("/health", (_req, res) => {
-    res.status(200).json({ status: "ok", demoMode: isDemoMode() });
+    if (!isDemoMode()) {
+      res.status(200).json({ status: "ok", demoMode: false });
+      return;
+    }
+    // Demo deployments are public showcases, so the login page shows
+    // the shared credentials. Never exposed outside demo mode.
+    const { username, password } = getAuthConfig();
+    res.status(200).json({
+      status: "ok",
+      demoMode: true,
+      demoCredentials: { username, password },
+    });
   });
 
   app.use("/auth", authRouter);

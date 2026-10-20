@@ -15,6 +15,13 @@ describe("GET /health", () => {
     const app = createApp();
     const res = await request(app).get("/health");
     delete process.env.DEMO_MODE;
-    expect(res.body).toEqual({ status: "ok", demoMode: true });
+    expect(res.body).toEqual({
+      status: "ok",
+      demoMode: true,
+      demoCredentials: {
+        username: process.env.AUTH_USERNAME,
+        password: process.env.AUTH_PASSWORD,
+      },
+    });
   });
 });

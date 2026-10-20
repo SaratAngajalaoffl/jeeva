@@ -3,7 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { fetchDemoMode, login } from "@/lib/api";
+import { fetchDemoCredentials, login, type DemoCredentials } from "@/lib/api";
 import Logo from "@/components/Logo";
 import { Button, Card, Input, Label } from "@/components/ui";
 
@@ -13,10 +13,11 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [demoMode, setDemoMode] = useState(false);
+  const [demoCredentials, setDemoCredentials] =
+    useState<DemoCredentials | null>(null);
 
   useEffect(() => {
-    fetchDemoMode().then(setDemoMode);
+    fetchDemoCredentials().then(setDemoCredentials);
   }, []);
 
   async function handleSubmit(e: FormEvent) {
@@ -72,10 +73,11 @@ export default function LoginPage() {
           <Button type="submit" disabled={submitting}>
             {submitting ? "Signing in..." : "Sign in"}
           </Button>
-          {demoMode && (
+          {demoCredentials && (
             <p className="text-center text-sm text-subtext-1">
-              Demo credentials: <span className="font-medium">admin</span> /{" "}
-              <span className="font-medium">password</span>
+              Demo credentials:{" "}
+              <span className="font-medium">{demoCredentials.username}</span> /{" "}
+              <span className="font-medium">{demoCredentials.password}</span>
             </p>
           )}
         </form>

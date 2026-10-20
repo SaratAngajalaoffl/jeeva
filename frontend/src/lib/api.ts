@@ -52,12 +52,19 @@ export async function checkSession(): Promise<boolean> {
   return res.ok;
 }
 
-/** True when the deployment runs with DEMO_MODE=true. */
-export async function fetchDemoMode(): Promise<boolean> {
+export interface DemoCredentials {
+  username: string;
+  password: string;
+}
+
+/** The deployment's login credentials when it runs with DEMO_MODE=true, else null. */
+export async function fetchDemoCredentials(): Promise<DemoCredentials | null> {
   const res = await fetch(`${await loadApiUrl()}/health`);
-  if (!res.ok) return false;
-  const body: { demoMode?: unknown } = await res.json();
-  return body.demoMode === true;
+  if (!res.ok) return null;
+  const body: { demoMode?: unknown; demoCredentials?: DemoCredentials } =
+    await res.json();
+  if (body.demoMode !== true || !body.demoCredentials) return null;
+  return body.demoCredentials;
 }
 
 // The engine's DecisionMaker implementation for this PERP: `random`
