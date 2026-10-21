@@ -14,6 +14,7 @@ import {
   attachSessionWallet,
   createBacktest,
   createTradingSession,
+  fetchDecisionMakerStatuses,
   fetchDecisions,
   fetchFundingPayments,
   fetchMarketData,
@@ -32,6 +33,7 @@ import {
   type ClosedTrade,
   type DecisionLogEntry,
   type DecisionMaker,
+  type DecisionMakerStatus,
   type HistoryFormat,
   type FundingPayment,
   type MarketDataPoint,
@@ -915,8 +917,6 @@ function SessionsPanel({
   );
 }
 
-const DECISION_MAKERS: DecisionMaker[] = ["random", "typesafe", "openrouter"];
-
 function toDateTimeLocal(date: Date): string {
   const pad = (value: number, length = 2) =>
     String(value).padStart(length, "0");
@@ -945,6 +945,9 @@ function NewSessionForm({
   const router = useRouter();
   const [sessionType, setSessionType] = useState<"live" | "backtest">("live");
   const [decisionMaker, setDecisionMaker] = useState<DecisionMaker>("random");
+  const [decisionMakers, setDecisionMakers] = useState<
+    DecisionMakerStatus[] | null
+  >(null);
   const [decisionFrequencySeconds, setDecisionFrequencySeconds] =
     useState("300");
   const [leverage, setLeverage] = useState("1");
@@ -974,6 +977,36 @@ function NewSessionForm({
       ),
     [marketDataRange],
   );
+
+  // Only offer decision makers the backend has credentials for. `random`
+  // needs none, so it remains the fallback if the status call fails.
+  useEffect(() => {
+    let cancelled = false;
+    fetchDecisionMakerStatuses()
+      .then((statuses) => {
+        if (!cancelled) setDecisionMakers(statuses.filter((s) => s.configured));
+      })
+      .catch(() => {
+        if (!cancelled)
+          setDecisionMakers([
+            {
+              id: "random",
+              label: "Random Decision Maker",
+              configured: true,
+              reachable: true,
+            },
+          ]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (decisionMakers && !decisionMakers.some((d) => d.id === decisionMaker)) {
+      setDecisionMaker(decisionMakers[0]?.id ?? "random");
+    }
+  }, [decisionMakers, decisionMaker]);
 
   useEffect(() => {
     if (sessionType !== "backtest") return;
@@ -1141,12 +1174,17 @@ function NewSessionForm({
         <Select
           value={decisionMaker}
           onChange={(e) => setDecisionMaker(e.target.value as DecisionMaker)}
+          disabled={!decisionMakers}
         >
-          {DECISION_MAKERS.map((kind) => (
-            <option key={kind} value={kind}>
-              {kind}
-            </option>
-          ))}
+          {decisionMakers ? (
+            decisionMakers.map((maker) => (
+              <option key={maker.id} value={maker.id}>
+                {maker.id}
+              </option>
+            ))
+          ) : (
+            <option value={decisionMaker}>Loading…</option>
+          )}
         </Select>
       </label>
       <label className="flex flex-col gap-1">
@@ -1299,7 +1337,7 @@ function NewSessionForm({
         <Button type="button" variant="ghost" onClick={onCancel}>
           Cancel
         </Button>
-        <Button type="submit" loading={submitting}>
+        <Button type="submit" loading={submitting} disabled={!decisionMakers}>
           {submitting
             ? "Creating"
             : sessionType === "backtest"

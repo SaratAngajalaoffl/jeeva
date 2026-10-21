@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   DecisionLogEntry,
+  DecisionMakerStatus,
   FundingPayment,
   MarketDataHistory,
   MarketDataRange,
@@ -30,6 +31,10 @@ const fetchTradingSessionsMock = vi.fn<[string], Promise<TradingSession[]>>();
 const fetchOrderBookMock = vi.fn<[string], Promise<OrderBook>>();
 const fetchRecentTradesMock = vi.fn<[string], Promise<Trade[]>>();
 const updatePerpConfigMock = vi.fn<[string, Partial<Perp>], Promise<Perp>>();
+const fetchDecisionMakerStatusesMock = vi.fn<
+  [],
+  Promise<DecisionMakerStatus[]>
+>();
 const fetchTradeHistoryMock = vi.fn<
   [{ symbol?: string; sessionId?: string }?],
   Promise<ClosedTrade[]>
@@ -55,7 +60,8 @@ vi.mock("@/lib/api", () => ({
   updatePerpConfig: (...args: [string, Partial<Perp>]) =>
     updatePerpConfigMock(...args),
   fetchEngineMode: () => new Promise(() => {}),
-  fetchDecisionMakerStatuses: () => new Promise(() => {}),
+  fetchDecisionMakerStatuses: (...args: []) =>
+    fetchDecisionMakerStatusesMock(...args),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -75,6 +81,9 @@ function expectedDateTimeLocal(iso: string): string {
 
 describe("MarketDataPage", () => {
   beforeEach(() => {
+    fetchDecisionMakerStatusesMock
+      .mockReset()
+      .mockReturnValue(new Promise(() => {}));
     fetchMarketDataMock.mockReset().mockResolvedValue({
       samples: [],
       oldestSampleTime: null,
@@ -243,6 +252,35 @@ describe("MarketDataPage", () => {
       await screen.findByText("Not enough market data yet to run a backtest."),
     ).toBeInTheDocument();
     expect(screen.getByLabelText("Start")).toHaveValue("");
+  });
+
+  it("offers only the decision makers the backend has configured", async () => {
+    fetchDecisionMakerStatusesMock.mockResolvedValue([
+      { id: "random", label: "Random", configured: true, reachable: true },
+      {
+        id: "typesafe",
+        label: "TypeSafe",
+        configured: false,
+        reachable: false,
+      },
+      {
+        id: "openrouter",
+        label: "OpenRouter",
+        configured: true,
+        reachable: true,
+      },
+    ]);
+    render(<MarketDataPage />);
+
+    fireEvent.click(await screen.findByText("New session"));
+    const select = await screen.findByLabelText("Decision maker");
+    await waitFor(() => expect(select).not.toBeDisabled());
+
+    const options = Array.from(
+      select.querySelectorAll("option"),
+      (o) => o.value,
+    );
+    expect(options).toEqual(["random", "openrouter"]);
   });
 
   it("shows an error message when loading fails", async () => {
