@@ -1,5 +1,7 @@
 "use client";
 
+import { ChartLine } from "lucide-react";
+import { EmptyState } from "@/components/ui";
 import {
   CartesianGrid,
   Line,
@@ -44,9 +46,11 @@ export default function PerformanceChart({
 }) {
   if (series.length === 0 || rows.length === 0) {
     return (
-      <p className="text-sm text-subtext-1">
-        No sampled market history in this window yet.
-      </p>
+      <EmptyState
+        icon={ChartLine}
+        title="No sampled market history in this window yet."
+        style={{ minHeight: height }}
+      />
     );
   }
 

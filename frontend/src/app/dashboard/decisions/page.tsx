@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, Clock, XCircle } from "lucide-react";
+import { Brain, CheckCircle2, Clock, Store, XCircle } from "lucide-react";
 import {
   fetchAllTradingSessions,
   fetchDecisions,
@@ -17,7 +17,14 @@ import {
   type TradingSession,
 } from "@/lib/api";
 import { SiteHeader } from "@/components/SiteHeader";
-import { Card, Label, Select, Skeleton, StatTile } from "@/components/ui";
+import {
+  Card,
+  EmptyState,
+  Label,
+  Select,
+  Skeleton,
+  StatTile,
+} from "@/components/ui";
 
 type PositionState = "flat" | "long" | "short";
 
@@ -293,10 +300,12 @@ export default function DecisionsPage() {
               ))}
             </div>
           ) : tradingPerps.length === 0 ? (
-            <Card className="p-6 text-center">
-              <p className="text-sm text-subtext-1">
-                No markets have trading enabled yet.
-              </p>
+            <Card className="p-0">
+              <EmptyState
+                icon={Store}
+                title="No markets have trading enabled yet."
+                description="Enable trading on a market to see its decision maker here."
+              />
             </Card>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -343,8 +352,12 @@ export default function DecisionsPage() {
               </div>
             </Card>
           ) : decisions.length === 0 ? (
-            <Card className="p-6 text-center">
-              <p className="text-sm text-subtext-1">No decisions yet.</p>
+            <Card className="p-0">
+              <EmptyState
+                icon={Brain}
+                title="No decisions yet."
+                description="Decisions appear here as soon as a session makes one."
+              />
             </Card>
           ) : (
             <Card className="overflow-x-auto p-0">

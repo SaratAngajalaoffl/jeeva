@@ -8,8 +8,10 @@ import {
   AlertTriangle,
   ArrowDownRight,
   ArrowUpRight,
+  Bot,
   CheckCircle2,
   Coins,
+  HeartPulse,
   Minus,
   Radio,
   Wallet as WalletIcon,
@@ -78,6 +80,7 @@ import { DecisionMakerStatusList } from "@/components/DecisionMakerStatusList";
 import {
   Card,
   ChartCard,
+  EmptyState,
   Select,
   Skeleton,
   StatTile,
@@ -712,9 +715,7 @@ function OverviewContent({
           }
         >
           {sampledSymbols.length === 0 ? (
-            <p className="text-sm text-subtext-1">
-              No markets are being sampled yet.
-            </p>
+            <EmptyState icon={Radio} title="No markets are being sampled yet." />
           ) : (
             <ul className="flex flex-col divide-y divide-surface-1">
               {sampledSymbols.map((symbol, i) => {
@@ -905,9 +906,11 @@ function OverviewContent({
         }
       >
         {sessionRows.length === 0 ? (
-          <p className="text-sm text-subtext-1">
-            No trading sessions yet — start one from a market&apos;s page.
-          </p>
+          <EmptyState
+            icon={Bot}
+            title="No trading sessions yet."
+            description="Start one from a market's page."
+          />
         ) : (
           <SessionsTable rows={sessionRows} />
         )}
@@ -920,7 +923,7 @@ function OverviewContent({
           subtitle={`Auto-flatten fires at ${AUTO_FLATTEN_THRESHOLD} consecutive failures`}
         >
           {health.length === 0 ? (
-            <p className="text-sm text-subtext-1">No health reports yet.</p>
+            <EmptyState icon={HeartPulse} title="No health reports yet." />
           ) : unhealthy.length === 0 ? (
             <p className="flex items-center gap-2 text-sm text-emerald-400">
               <CheckCircle2 size={16} />
@@ -1006,7 +1009,7 @@ function OverviewContent({
         }
       >
         {feed.length === 0 ? (
-          <p className="text-sm text-subtext-1">Nothing has happened yet.</p>
+          <EmptyState icon={Activity} title="Nothing has happened yet." />
         ) : (
           <ul className="flex flex-col divide-y divide-surface-1">
             {feed.map((event, i) => (

@@ -49,12 +49,14 @@ import { SiteHeader } from "@/components/SiteHeader";
 import {
   Button,
   Card,
+  EmptyState,
   IconButton,
   Input,
   Label,
   Select,
   Skeleton,
 } from "@/components/ui";
+import { Bot, Brain, Coins } from "lucide-react";
 
 const TH =
   "border-b border-surface-1 py-2 pr-4 text-left text-xs font-medium uppercase tracking-wide text-subtext-0";
@@ -600,7 +602,11 @@ export default function MarketDataPage() {
               {!decisions ? (
                 <p className="p-5 text-sm text-subtext-1">Loading...</p>
               ) : decisions.length === 0 ? (
-                <p className="p-5 text-sm text-subtext-1">No decisions yet.</p>
+                <EmptyState
+                  icon={Brain}
+                  title="No decisions yet."
+                  description="Decisions appear here as soon as a session makes one."
+                />
               ) : (
                 <table className="w-full min-w-[560px] border-collapse text-left text-sm text-text">
                   <thead>
@@ -658,9 +664,11 @@ export default function MarketDataPage() {
               {!fundingPayments ? (
                 <p className="p-5 text-sm text-subtext-1">Loading...</p>
               ) : fundingPayments.length === 0 ? (
-                <p className="p-5 text-sm text-subtext-1">
-                  No funding payments yet.
-                </p>
+                <EmptyState
+                  icon={Coins}
+                  title="No funding payments yet."
+                  description="Funding is settled periodically while a position is open."
+                />
               ) : (
                 <table className="w-full min-w-[520px] border-collapse text-left text-sm text-text">
                   <thead>
@@ -774,7 +782,11 @@ function SessionsPanel({
       {!sessions ? (
         <p className="text-sm text-subtext-1">Loading...</p>
       ) : sessions.length === 0 ? (
-        <p className="text-sm text-subtext-1">No trading sessions yet.</p>
+        <EmptyState
+          icon={Bot}
+          title="No trading sessions yet."
+          description="Start a new session to run a decision maker on this market."
+        />
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[820px] border-collapse text-left text-sm text-text">

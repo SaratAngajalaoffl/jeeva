@@ -1,5 +1,7 @@
 "use client";
 
+import { ChartPie } from "lucide-react";
+import { EmptyState } from "@/components/ui";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { CHART, TOOLTIP_STYLE } from "@/lib/viz";
 
@@ -29,7 +31,7 @@ export default function DonutChart({
   const total = slices.reduce((sum, s) => sum + s.value, 0);
 
   if (total === 0) {
-    return <p className="text-sm text-subtext-1">{emptyLabel}</p>;
+    return <EmptyState icon={ChartPie} title={emptyLabel} />;
   }
 
   return (

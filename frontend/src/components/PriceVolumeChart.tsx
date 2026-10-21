@@ -1,5 +1,7 @@
 "use client";
 
+import { ChartCandlestick } from "lucide-react";
+import { EmptyState } from "@/components/ui";
 import { useId, useMemo } from "react";
 import {
   Area,
@@ -214,9 +216,11 @@ export default function PriceVolumeChart({
           onRangeChange={onRangeChange}
           oldestSampleTime={oldestSampleTime}
         />
-        <p className="text-sm" style={{ color: MUTED_TEXT }}>
-          No data in the selected period.
-        </p>
+        <EmptyState
+          icon={ChartCandlestick}
+          title="No data in the selected period."
+          description="Try a wider range, or check back once the market has been sampled."
+        />
       </div>
     );
   }

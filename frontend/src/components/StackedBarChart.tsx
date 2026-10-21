@@ -1,5 +1,7 @@
 "use client";
 
+import { ChartColumnStacked } from "lucide-react";
+import { EmptyState } from "@/components/ui";
 import {
   Bar,
   BarChart,
@@ -36,7 +38,9 @@ export default function StackedBarChart({
   );
 
   if (!hasData) {
-    return <p className="text-sm text-subtext-1">{emptyLabel}</p>;
+    return (
+      <EmptyState icon={ChartColumnStacked} title={emptyLabel} style={{ minHeight: height }} />
+    );
   }
 
   return (

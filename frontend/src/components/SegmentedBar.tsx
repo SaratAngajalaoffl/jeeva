@@ -1,5 +1,7 @@
 "use client";
 
+import { ChartBarStacked } from "lucide-react";
+import { EmptyState } from "@/components/ui";
 import { CHART } from "@/lib/viz";
 
 export interface Segment {
@@ -32,7 +34,7 @@ export default function SegmentedBar({
   const total = visible.reduce((sum, s) => sum + s.value, 0);
 
   if (total <= 0) {
-    return <p className="text-sm text-subtext-1">{emptyLabel}</p>;
+    return <EmptyState icon={ChartBarStacked} title={emptyLabel} className="py-6" />;
   }
 
   return (

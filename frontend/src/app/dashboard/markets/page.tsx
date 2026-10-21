@@ -20,6 +20,7 @@ import { SiteHeader } from "@/components/SiteHeader";
 import {
   Button,
   Card,
+  EmptyState,
   IconButton,
   Input,
   Label,
@@ -27,6 +28,7 @@ import {
   Skeleton,
   StatTile,
 } from "@/components/ui";
+import { Store } from "lucide-react";
 import Modal from "@/components/Modal";
 import Sparkline from "@/components/Sparkline";
 import { SamplingIcon, ViewIcon } from "@/components/icons";
@@ -280,8 +282,8 @@ export default function MarketsPage() {
               </span>
             </div>
             {samplingMarkets.length === 0 ? (
-              <Card className="p-5">
-                <p className="text-sm text-subtext-1">No markets yet.</p>
+              <Card className="p-0">
+                <EmptyState icon={Store} title="No markets yet." />
               </Card>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -304,8 +306,8 @@ export default function MarketsPage() {
               </span>
             </div>
             {tradingMarkets.length === 0 ? (
-              <Card className="p-5">
-                <p className="text-sm text-subtext-1">No markets yet.</p>
+              <Card className="p-0">
+                <EmptyState icon={Store} title="No markets yet." />
               </Card>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

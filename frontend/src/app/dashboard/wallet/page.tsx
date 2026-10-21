@@ -5,6 +5,7 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   Check,
+  Coins,
   Copy,
   Plus,
   ShieldAlert,
@@ -30,6 +31,7 @@ import Modal from "@/components/Modal";
 import {
   Button,
   Card,
+  EmptyState,
   Input,
   Label,
   Select,
@@ -377,25 +379,29 @@ export default function WalletPage() {
               ))}
             </div>
           ) : wallets.length === 0 ? (
-            <Card className="flex flex-col items-center gap-3 p-10 text-center">
-              <WalletIcon size={28} className="text-subtext-0" />
-              <p className="text-sm text-subtext-1">
-                No wallets yet. Add a mock wallet to start trading in
-                simulation{demoMode
-                  ? " — this deployment is paper-trading only"
-                  : ", or a live wallet once you're ready to trade for real"}
-              </p>
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  resetForm();
-                  setShowCreate(true);
-                }}
-                className="gap-1.5"
-              >
-                <Plus size={16} />
-                Add wallet
-              </Button>
+            <Card className="p-0">
+              <EmptyState
+                icon={WalletIcon}
+                title="No wallets yet."
+                description={`Add a mock wallet to start trading in simulation${
+                  demoMode
+                    ? " — this deployment is paper-trading only."
+                    : ", or a live wallet once you're ready to trade for real."
+                }`}
+                action={
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      resetForm();
+                      setShowCreate(true);
+                    }}
+                    className="gap-1.5"
+                  >
+                    <Plus size={16} />
+                    Add wallet
+                  </Button>
+                }
+              />
             </Card>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -425,10 +431,12 @@ export default function WalletPage() {
               </div>
             </Card>
           ) : fundingPayments.length === 0 ? (
-            <Card className="p-6 text-center">
-              <p className="text-sm text-subtext-1">
-                No funding payments yet.
-              </p>
+            <Card className="p-0">
+              <EmptyState
+                icon={Coins}
+                title="No funding payments yet."
+                description="Funding is settled periodically while a position is open."
+              />
             </Card>
           ) : (
             <Card className="overflow-x-auto p-0">

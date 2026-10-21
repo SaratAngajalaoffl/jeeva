@@ -1,5 +1,7 @@
 "use client";
 
+import { ChartLine } from "lucide-react";
+import { EmptyState } from "@/components/ui";
 import { useId } from "react";
 import {
   Area,
@@ -42,7 +44,9 @@ export default function LineChart({
   const gradientId = useId();
 
   if (points.length === 0) {
-    return <p className="text-sm text-subtext-1">{emptyLabel}</p>;
+    return (
+      <EmptyState icon={ChartLine} title={emptyLabel} style={{ minHeight: height }} />
+    );
   }
 
   return (

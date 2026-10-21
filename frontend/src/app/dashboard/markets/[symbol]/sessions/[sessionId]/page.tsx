@@ -10,7 +10,8 @@ import PriceVolumeChart, {
 import { SiteHeader } from "@/components/SiteHeader";
 import { Uptime } from "@/components/RelativeTime";
 import { formatShortDateTime } from "@/lib/format";
-import { Button, Card, Skeleton } from "@/components/ui";
+import { Button, Card, EmptyState, Skeleton } from "@/components/ui";
+import { Brain, Coins } from "lucide-react";
 import {
   fetchDecisions,
   fetchFundingPayments,
@@ -409,7 +410,11 @@ export default function SessionDetailPage() {
             ) : !decisions ? (
               <p className="text-sm text-subtext-1">Loading...</p>
             ) : decisions.length === 0 ? (
-              <p className="text-sm text-subtext-1">No decisions yet.</p>
+              <EmptyState
+                icon={Brain}
+                title="No decisions yet."
+                description="Decisions appear here as soon as this session makes one."
+              />
             ) : (
               <table className="w-full min-w-[560px] border-collapse text-left text-sm text-text">
                 <thead>
@@ -491,7 +496,11 @@ export default function SessionDetailPage() {
             ) : !fundingPayments ? (
               <p className="text-sm text-subtext-1">Loading...</p>
             ) : fundingPayments.length === 0 ? (
-              <p className="text-sm text-subtext-1">No funding payments yet.</p>
+              <EmptyState
+                icon={Coins}
+                title="No funding payments yet."
+                description="Funding is settled periodically while a position is open."
+              />
             ) : (
               <table className="w-full min-w-[520px] border-collapse text-left text-sm text-text">
                 <thead>

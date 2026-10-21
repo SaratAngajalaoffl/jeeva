@@ -1,4 +1,5 @@
 import type { ButtonHTMLAttributes, HTMLAttributes, InputHTMLAttributes, SelectHTMLAttributes } from "react";
+import type { LucideIcon } from "lucide-react";
 
 export function Card({ className = "", ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
@@ -199,6 +200,38 @@ export function PageHeading({
   return (
     <div className="flex items-center justify-between">
       <h1 className="text-xl font-semibold tracking-tight text-text">{title}</h1>
+      {action}
+    </div>
+  );
+}
+
+export function EmptyState({
+  icon: Icon,
+  title,
+  description,
+  action,
+  className = "",
+  style,
+}: {
+  icon: LucideIcon;
+  title: React.ReactNode;
+  description?: React.ReactNode;
+  action?: React.ReactNode;
+  className?: string;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <div
+      className={`flex flex-1 flex-col items-center justify-center gap-3 px-4 py-10 text-center ${className}`}
+      style={style}
+    >
+      <div className="flex h-12 w-12 items-center justify-center rounded-full border border-surface-1 bg-surface-1/60 text-overlay-2">
+        <Icon className="h-5 w-5" strokeWidth={1.75} aria-hidden />
+      </div>
+      <div className="flex max-w-sm flex-col gap-1">
+        <p className="text-sm font-medium text-subtext-1">{title}</p>
+        {description && <p className="text-xs text-overlay-2">{description}</p>}
+      </div>
       {action}
     </div>
   );

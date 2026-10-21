@@ -1,5 +1,7 @@
 "use client";
 
+import { ChartColumn } from "lucide-react";
+import { EmptyState } from "@/components/ui";
 import {
   Bar,
   BarChart as RechartsBarChart,
@@ -33,9 +35,7 @@ export default function BarChart({ title, unit, bars }: BarChartProps) {
         <h3 className="mb-2 text-sm font-medium" style={{ color: PRIMARY_TEXT }}>
           {title}
         </h3>
-        <p className="text-sm" style={{ color: MUTED_TEXT }}>
-          No data yet.
-        </p>
+        <EmptyState icon={ChartColumn} title="No data yet." />
       </div>
     );
   }
