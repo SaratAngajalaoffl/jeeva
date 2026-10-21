@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { fetchDemoCredentials, login, type DemoCredentials } from "@/lib/api";
+import { HeartbeatLoader } from "@/components/HeartbeatLoader";
 import Logo from "@/components/Logo";
 import { Button, Card, Input, Label } from "@/components/ui";
 
@@ -13,6 +14,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [entering, setEntering] = useState(false);
   const [demoCredentials, setDemoCredentials] =
     useState<DemoCredentials | null>(null);
 
@@ -31,7 +33,12 @@ export default function LoginPage() {
       setError(result.error);
       return;
     }
+    setEntering(true);
     router.push("/dashboard");
+  }
+
+  if (entering) {
+    return <HeartbeatLoader fullScreen label="Opening dashboard" />;
   }
 
   return (
@@ -70,8 +77,8 @@ export default function LoginPage() {
               {error}
             </p>
           )}
-          <Button type="submit" disabled={submitting}>
-            {submitting ? "Signing in..." : "Sign in"}
+          <Button type="submit" loading={submitting}>
+            {submitting ? "Signing in" : "Sign in"}
           </Button>
           {demoCredentials && (
             <p className="text-center text-sm text-subtext-1">

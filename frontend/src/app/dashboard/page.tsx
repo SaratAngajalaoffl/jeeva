@@ -75,6 +75,7 @@ import {
   seriesColor,
   STATUS,
 } from "@/lib/viz";
+import { HeartbeatLoader } from "@/components/HeartbeatLoader";
 import { SiteHeader } from "@/components/SiteHeader";
 import { DecisionMakerStatusList } from "@/components/DecisionMakerStatusList";
 import {
@@ -280,7 +281,7 @@ export default function DashboardPage() {
   }, [chartedKey, rangeMs]);
 
   if (checking) {
-    return null;
+    return <HeartbeatLoader fullScreen label="Checking session" />;
   }
 
   async function handleLogout() {

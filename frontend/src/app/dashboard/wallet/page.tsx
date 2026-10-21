@@ -36,6 +36,7 @@ import {
   Label,
   Select,
   Skeleton,
+  TableSkeleton,
   StatTile,
 } from "@/components/ui";
 
@@ -423,12 +424,8 @@ export default function WalletPage() {
             Recent funding payments
           </h2>
           {!fundingPayments ? (
-            <Card className="p-0">
-              <div className="flex flex-col gap-px p-4">
-                {Array.from({ length: 4 }).map((_, i) => (
-                  <Skeleton key={i} className="h-9 w-full" />
-                ))}
-              </div>
+            <Card className="p-5">
+              <TableSkeleton rows={4} columns={5} label="Loading funding payments" />
             </Card>
           ) : fundingPayments.length === 0 ? (
             <Card className="p-0">
@@ -546,8 +543,8 @@ export default function WalletPage() {
                 </label>
               </>
             )}
-            <Button type="submit" disabled={submitting}>
-              {submitting ? "Creating..." : "Create wallet"}
+            <Button type="submit" loading={submitting}>
+              {submitting ? "Creating" : "Create wallet"}
             </Button>
           </form>
         </Modal>

@@ -4,7 +4,12 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { SiteHeader } from "@/components/SiteHeader";
-import { Card, Skeleton } from "@/components/ui";
+import {
+  Card,
+  DetailListSkeleton,
+  StatStripSkeleton,
+  TableSkeleton,
+} from "@/components/ui";
 import {
   fetchBacktest,
   fetchBacktestDecisions,
@@ -53,7 +58,9 @@ export default function BacktestDetailPage() {
   const [backtest, setBacktest] = useState<BacktestRun | null | undefined>(
     undefined,
   );
-  const [position, setPosition] = useState<BacktestPosition | null>(null);
+  const [position, setPosition] = useState<
+    BacktestPosition | null | undefined
+  >(undefined);
   const [decisions, setDecisions] = useState<BacktestDecisionEntry[] | null>(
     null,
   );
@@ -72,7 +79,7 @@ export default function BacktestDetailPage() {
         });
       fetchBacktestPosition(backtestId)
         .then((p) => !cancelled && setPosition(p))
-        .catch(() => {});
+        .catch(() => !cancelled && setPosition((prev) => prev ?? null));
       fetchBacktestDecisions(backtestId)
         .then((d) => !cancelled && setDecisions(d))
         .catch(() => !cancelled && setDecisions([]));
@@ -113,7 +120,7 @@ export default function BacktestDetailPage() {
           </Card>
         ) : backtest === undefined ? (
           <Card className="p-5">
-            <Skeleton className="h-24 w-full" />
+            <StatStripSkeleton count={7} label="Loading backtest" />
           </Card>
         ) : (
           <>
@@ -200,7 +207,9 @@ export default function BacktestDetailPage() {
           <h2 className="mb-3 text-sm font-semibold text-text">
             Open position (as of latest replayed step)
           </h2>
-          {!position ? (
+          {position === undefined ? (
+            <DetailListSkeleton label="Loading position" />
+          ) : !position ? (
             <p className="text-sm text-subtext-1">No open position.</p>
           ) : (
             <dl className="grid max-w-sm grid-cols-2 gap-y-2 text-sm">
@@ -236,7 +245,7 @@ export default function BacktestDetailPage() {
           </h2>
           <div className="overflow-x-auto">
             {!decisions ? (
-              <p className="text-sm text-subtext-1">Loading...</p>
+              <TableSkeleton columns={6} label="Loading decisions" />
             ) : decisions.length === 0 ? (
               <p className="text-sm text-subtext-1">No decisions yet.</p>
             ) : (
@@ -301,7 +310,7 @@ export default function BacktestDetailPage() {
           </h2>
           <div className="overflow-x-auto">
             {!trades ? (
-              <p className="text-sm text-subtext-1">Loading...</p>
+              <TableSkeleton columns={6} label="Loading closed trades" />
             ) : trades.length === 0 ? (
               <p className="text-sm text-subtext-1">No closed trades yet.</p>
             ) : (

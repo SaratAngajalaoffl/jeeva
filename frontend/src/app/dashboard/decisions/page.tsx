@@ -23,6 +23,7 @@ import {
   Label,
   Select,
   Skeleton,
+  TableSkeleton,
   StatTile,
 } from "@/components/ui";
 
@@ -344,12 +345,8 @@ export default function DecisionsPage() {
           </div>
 
           {!decisions ? (
-            <Card className="p-0">
-              <div className="flex flex-col gap-px p-4">
-                {Array.from({ length: 6 }).map((_, i) => (
-                  <Skeleton key={i} className="h-9 w-full" />
-                ))}
-              </div>
+            <Card className="p-5">
+              <TableSkeleton rows={6} columns={6} label="Loading decisions" />
             </Card>
           ) : decisions.length === 0 ? (
             <Card className="p-0">

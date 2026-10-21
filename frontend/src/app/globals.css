@@ -320,6 +320,73 @@ html {
   animation: jv-bar 1.1s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+/* Heartbeat loader -------------------------------------------------------- */
+
+/* The traces use pathLength=1, so dash lengths are fractions of the line.
+   Both dashes start just before the path and travel until fully past its
+   end, heads in step, so the loop restarts on an empty trace. */
+@keyframes jv-heartbeat-pulse {
+  from {
+    stroke-dashoffset: 0.22;
+  }
+  to {
+    stroke-dashoffset: -1.28;
+  }
+}
+.jv-heartbeat-pulse {
+  stroke-dasharray: 0.22 1.5;
+  animation: jv-heartbeat-pulse 1.6s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+  filter: drop-shadow(0 0 4px rgb(255 59 59 / 0.8));
+}
+
+@keyframes jv-heartbeat-trail {
+  from {
+    stroke-dashoffset: 0.5;
+  }
+  to {
+    stroke-dashoffset: -1;
+  }
+}
+.jv-heartbeat-trail {
+  stroke-dasharray: 0.5 1.5;
+  animation: jv-heartbeat-trail 1.6s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+  filter: blur(2px);
+}
+
+/* The wordmark gives a small double-thump in time with the QRS spike. */
+@keyframes jv-heartbeat-logo {
+  0%,
+  30%,
+  60%,
+  100% {
+    transform: scale(1);
+  }
+  38% {
+    transform: scale(1.06);
+  }
+  48% {
+    transform: scale(1.02);
+  }
+}
+.jv-heartbeat-logo {
+  animation: jv-heartbeat-logo 1.6s ease-out infinite;
+  transform-origin: center;
+}
+
+@keyframes jv-heartbeat-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.2;
+  }
+  30% {
+    opacity: 1;
+  }
+}
+.jv-heartbeat-dot {
+  animation: jv-heartbeat-dot 1.2s ease-in-out infinite;
+}
+
 /* Reduced motion ---------------------------------------------------------- */
 
 @media (prefers-reduced-motion: reduce) {
@@ -344,5 +411,9 @@ html {
   }
   .jv-bar {
     transform: none !important;
+  }
+  .jv-heartbeat-pulse,
+  .jv-heartbeat-trail {
+    stroke-dasharray: none !important;
   }
 }

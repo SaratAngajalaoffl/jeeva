@@ -55,6 +55,7 @@ import {
   Label,
   Select,
   Skeleton,
+  TableSkeleton,
 } from "@/components/ui";
 import { Bot, Brain, Coins } from "lucide-react";
 
@@ -81,16 +82,22 @@ function formatVolume(volume: number | null | undefined): string {
 function HeaderStat({
   label,
   value,
+  loading = false,
 }: {
   label: string;
   value: React.ReactNode;
+  loading?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-0.5">
       <span className="text-[11px] uppercase tracking-wide text-subtext-0">
         {label}
       </span>
-      <span className="text-sm font-medium text-text">{value}</span>
+      {loading ? (
+        <Skeleton className="my-0.5 h-4 w-16" />
+      ) : (
+        <span className="text-sm font-medium text-text">{value}</span>
+      )}
     </div>
   );
 }
@@ -154,8 +161,10 @@ export default function MarketDataPage() {
   const [oldestSampleTime, setOldestSampleTime] = useState<
     string | null | undefined
   >(undefined);
-  const [perp, setPerp] = useState<Perp | null>(null);
-  const [stats, setStats] = useState<PerpStats | null>(null);
+  // `undefined` until the first fetch settles, `null` when the market is
+  // missing from the response.
+  const [perp, setPerp] = useState<Perp | null | undefined>(undefined);
+  const [stats, setStats] = useState<PerpStats | null | undefined>(undefined);
   const [positions, setPositions] = useState<Position[] | null>(null);
   const [closedTrades, setClosedTrades] = useState<ClosedTrade[] | null>(null);
   const [decisions, setDecisions] = useState<DecisionLogEntry[] | null>(null);
@@ -198,13 +207,17 @@ export default function MarketDataPage() {
           if (!cancelled)
             setPerp(perps.find((p) => p.symbol === symbol) ?? null);
         })
-        .catch(() => {});
+        .catch(() => {
+          if (!cancelled) setPerp((prev) => prev ?? null);
+        });
       fetchPerpStats()
         .then((stats) => {
           if (!cancelled)
             setStats(stats.find((s) => s.symbol === symbol) ?? null);
         })
-        .catch(() => {});
+        .catch(() => {
+          if (!cancelled) setStats((prev) => prev ?? null);
+        });
       fetchPositions()
         .then((positions) => {
           if (!cancelled) {
@@ -364,9 +377,14 @@ export default function MarketDataPage() {
         {error && <p className="text-sm text-destructive">{error}</p>}
 
         <Card className="flex flex-wrap items-center gap-x-8 gap-y-4 p-5">
-          <HeaderStat label="Mark price" value={formatPrice(stats?.price)} />
+          <HeaderStat
+            label="Mark price"
+            loading={stats === undefined}
+            value={formatPrice(stats?.price)}
+          />
           <HeaderStat
             label="24h change"
+            loading={stats === undefined}
             value={
               stats ? (
                 <span
@@ -386,18 +404,22 @@ export default function MarketDataPage() {
           />
           <HeaderStat
             label="24h volume"
+            loading={stats === undefined}
             value={formatVolume(stats?.volumeUsd)}
           />
           <HeaderStat
             label="Open interest"
+            loading={stats === undefined}
             value={formatVolume(stats?.openInterestUsd)}
           />
           <HeaderStat
             label="Sampling freq"
+            loading={perp === undefined}
             value={perp ? `${perp.samplingFrequencySeconds}s` : "-"}
           />
           <HeaderStat
             label="Aggregate P&amp;L"
+            loading={!positions || stats === undefined}
             value={
               totalPnl === null ? (
                 "-"
@@ -523,7 +545,12 @@ export default function MarketDataPage() {
           {detailTab === "position" && (
             <div className="overflow-x-auto">
               {!positions ? (
-                <p className="p-5 text-sm text-subtext-1">Loading...</p>
+                <TableSkeleton
+                  rows={2}
+                  columns={7}
+                  label="Loading positions"
+                  className="p-5"
+                />
               ) : positions.length === 0 ? (
                 <p className="p-5 text-sm text-subtext-1">No open positions.</p>
               ) : (
@@ -600,7 +627,11 @@ export default function MarketDataPage() {
           {detailTab === "decisions" && (
             <div className="overflow-x-auto">
               {!decisions ? (
-                <p className="p-5 text-sm text-subtext-1">Loading...</p>
+                <TableSkeleton
+                  columns={6}
+                  label="Loading decisions"
+                  className="p-5"
+                />
               ) : decisions.length === 0 ? (
                 <EmptyState
                   icon={Brain}
@@ -662,7 +693,11 @@ export default function MarketDataPage() {
           {detailTab === "funding" && (
             <div className="overflow-x-auto">
               {!fundingPayments ? (
-                <p className="p-5 text-sm text-subtext-1">Loading...</p>
+                <TableSkeleton
+                  columns={4}
+                  label="Loading funding payments"
+                  className="p-5"
+                />
               ) : fundingPayments.length === 0 ? (
                 <EmptyState
                   icon={Coins}
@@ -780,7 +815,7 @@ function SessionsPanel({
       </div>
       {actionError && <p className="text-sm text-destructive">{actionError}</p>}
       {!sessions ? (
-        <p className="text-sm text-subtext-1">Loading...</p>
+        <TableSkeleton rows={3} columns={7} label="Loading sessions" />
       ) : sessions.length === 0 ? (
         <EmptyState
           icon={Bot}
@@ -1264,9 +1299,9 @@ function NewSessionForm({
         <Button type="button" variant="ghost" onClick={onCancel}>
           Cancel
         </Button>
-        <Button type="submit" disabled={submitting}>
+        <Button type="submit" loading={submitting}>
           {submitting
-            ? "Creating..."
+            ? "Creating"
             : sessionType === "backtest"
               ? "Run backtest"
               : "Create session"}
@@ -1317,7 +1352,15 @@ function OrderBookRow({
 
 function OrderBookPanel({ book }: { book: OrderBook | null }) {
   if (!book) {
-    return <p className="p-5 text-sm text-subtext-1">Loading...</p>;
+    return (
+      <TableSkeleton
+        rows={12}
+        columns={3}
+        dense
+        label="Loading order book"
+        className="px-5 pb-5 pt-3"
+      />
+    );
   }
   if (book.bids.length === 0 && book.asks.length === 0) {
     return <p className="p-5 text-sm text-subtext-1">No order book data.</p>;
@@ -1375,7 +1418,15 @@ function OrderBookPanel({ book }: { book: OrderBook | null }) {
 
 function TradesPanel({ trades }: { trades: Trade[] | null }) {
   if (!trades) {
-    return <p className="p-5 text-sm text-subtext-1">Loading...</p>;
+    return (
+      <TableSkeleton
+        rows={12}
+        columns={3}
+        dense
+        label="Loading trades"
+        className="px-5 pb-5 pt-3"
+      />
+    );
   }
   if (trades.length === 0) {
     return <p className="p-5 text-sm text-subtext-1">No recent trades.</p>;
@@ -1449,8 +1500,8 @@ function SamplingForm({
         <Button type="button" variant="ghost" onClick={onCancel}>
           Cancel
         </Button>
-        <Button type="submit" disabled={submitting}>
-          {submitting ? "Enabling..." : "Enable sampling"}
+        <Button type="submit" loading={submitting}>
+          {submitting ? "Enabling" : "Enable sampling"}
         </Button>
       </div>
     </form>

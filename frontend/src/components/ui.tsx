@@ -10,19 +10,51 @@ export function Card({ className = "", ...props }: HTMLAttributes<HTMLDivElement
   );
 }
 
+/** Inline busy indicator, sized to sit beside a line of text. */
+export function Spinner({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      aria-hidden
+      viewBox="0 0 24 24"
+      fill="none"
+      className={`h-4 w-4 shrink-0 animate-spin motion-reduce:animate-none ${className}`}
+    >
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity={0.25} strokeWidth={3} />
+      <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth={3} strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function Button({
   className = "",
   variant = "primary",
+  loading = false,
+  disabled,
+  children,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "ghost" }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: "primary" | "ghost";
+  /** Disables the button and shows a spinner before its label. */
+  loading?: boolean;
+}) {
   const base =
-    "inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50";
+    "inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50";
   const variants = {
     primary: "bg-ember text-primary-foreground hover:bg-ember/90",
     ghost:
       "border border-surface-1 bg-transparent text-text hover:border-ember/60 hover:text-ember",
   };
-  return <button className={`${base} ${variants[variant]} ${className}`} {...props} />;
+  return (
+    <button
+      className={`${base} ${variants[variant]} ${className}`}
+      disabled={disabled || loading}
+      aria-busy={loading || undefined}
+      {...props}
+    >
+      {loading && <Spinner />}
+      {children}
+    </button>
+  );
 }
 
 export function Input({ className = "", ...props }: InputHTMLAttributes<HTMLInputElement>) {
@@ -174,9 +206,27 @@ export function StatusPill({
 export function Skeleton({ className = "" }: { className?: string }) {
   return (
     <div
+      aria-hidden
       className={`relative overflow-hidden rounded-md bg-surface-1 ${className}`}
     >
-      <div className="absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-surface-2/60 to-transparent" />
+      <div className="absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-surface-2/60 to-transparent motion-reduce:animate-none" />
+    </div>
+  );
+}
+
+/** Wraps a group of skeletons so screen readers hear one "loading" cue. */
+function SkeletonGroup({
+  label,
+  className = "",
+  children,
+}: {
+  label: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div role="status" aria-label={label} aria-busy className={className}>
+      {children}
     </div>
   );
 }
@@ -187,6 +237,102 @@ export function StatTileSkeleton() {
       <Skeleton className="h-3 w-20" />
       <Skeleton className="h-7 w-16" />
     </Card>
+  );
+}
+
+// Fixed, uneven widths so placeholder rows read as text rather than a grid.
+const CELL_WIDTHS = ["w-24", "w-16", "w-20", "w-12", "w-28", "w-14", "w-10"];
+
+/** Placeholder for a data table: a header band plus shimmering rows. */
+export function TableSkeleton({
+  rows = 5,
+  columns = 5,
+  dense = false,
+  label = "Loading table",
+  className = "",
+}: {
+  rows?: number;
+  columns?: number;
+  /** Tighter rows for compact panels like the order book. */
+  dense?: boolean;
+  label?: string;
+  className?: string;
+}) {
+  const grid = { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` };
+  return (
+    <SkeletonGroup label={label} className={`flex flex-col ${className}`}>
+      <div className="grid gap-4 border-b border-surface-1 pb-2" style={grid}>
+        {Array.from({ length: columns }).map((_, c) => (
+          <Skeleton key={c} className="h-2.5 w-12" />
+        ))}
+      </div>
+      {Array.from({ length: rows }).map((_, r) => (
+        <div
+          key={r}
+          className={`grid items-center gap-4 border-b border-surface-1/60 last:border-0 ${
+            dense ? "py-1.5" : "py-3"
+          }`}
+          style={grid}
+        >
+          {Array.from({ length: columns }).map((_, c) => (
+            <Skeleton
+              key={c}
+              className={`${dense ? "h-3" : "h-3.5"} max-w-full ${
+                CELL_WIDTHS[(r + c * 3) % CELL_WIDTHS.length]
+              }`}
+            />
+          ))}
+        </div>
+      ))}
+    </SkeletonGroup>
+  );
+}
+
+/** Placeholder for a two-column label/value list. */
+export function DetailListSkeleton({
+  rows = 4,
+  label = "Loading details",
+  className = "",
+}: {
+  rows?: number;
+  label?: string;
+  className?: string;
+}) {
+  return (
+    <SkeletonGroup
+      label={label}
+      className={`grid max-w-sm grid-cols-2 gap-y-3 ${className}`}
+    >
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="contents">
+          <Skeleton className="h-3.5 w-20" />
+          <Skeleton className={`ml-auto h-3.5 ${CELL_WIDTHS[i % CELL_WIDTHS.length]}`} />
+        </div>
+      ))}
+    </SkeletonGroup>
+  );
+}
+
+/** Placeholder for a horizontal strip of small label-over-value stats. */
+export function StatStripSkeleton({
+  count = 6,
+  label = "Loading summary",
+}: {
+  count?: number;
+  label?: string;
+}) {
+  return (
+    <SkeletonGroup
+      label={label}
+      className="flex flex-wrap items-center gap-x-8 gap-y-4"
+    >
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="flex flex-col gap-1.5">
+          <Skeleton className="h-2.5 w-16" />
+          <Skeleton className={`h-4 ${CELL_WIDTHS[i % CELL_WIDTHS.length]}`} />
+        </div>
+      ))}
+    </SkeletonGroup>
   );
 }
 

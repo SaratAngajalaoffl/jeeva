@@ -700,8 +700,8 @@ function SamplingForm({
         <Button type="button" variant="ghost" onClick={onCancel}>
           Cancel
         </Button>
-        <Button type="submit" disabled={submitting}>
-          {submitting ? "Enabling..." : "Enable sampling"}
+        <Button type="submit" loading={submitting}>
+          {submitting ? "Enabling" : "Enable sampling"}
         </Button>
       </div>
     </form>

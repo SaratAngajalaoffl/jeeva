@@ -10,7 +10,15 @@ import PriceVolumeChart, {
 import { SiteHeader } from "@/components/SiteHeader";
 import { Uptime } from "@/components/RelativeTime";
 import { formatShortDateTime } from "@/lib/format";
-import { Button, Card, EmptyState, Skeleton } from "@/components/ui";
+import {
+  Button,
+  Card,
+  DetailListSkeleton,
+  EmptyState,
+  Skeleton,
+  StatStripSkeleton,
+  TableSkeleton,
+} from "@/components/ui";
 import { Brain, Coins } from "lucide-react";
 import {
   fetchDecisions,
@@ -78,7 +86,9 @@ export default function SessionDetailPage() {
     string | null | undefined
   >(undefined);
   const [stats, setStats] = useState<PerpStats | null>(null);
-  const [position, setPosition] = useState<Position | null>(null);
+  const [position, setPosition] = useState<Position | null | undefined>(
+    undefined,
+  );
   const [decisions, setDecisions] = useState<DecisionLogEntry[] | null>(null);
   const [fundingPayments, setFundingPayments] = useState<
     FundingPayment[] | null
@@ -213,7 +223,7 @@ export default function SessionDetailPage() {
           </Card>
         ) : session === undefined ? (
           <Card className="p-5">
-            <Skeleton className="h-24 w-full" />
+            <StatStripSkeleton count={7} label="Loading session" />
           </Card>
         ) : (
           <Card className="flex flex-wrap items-center gap-x-8 gap-y-4 p-5">
@@ -368,6 +378,8 @@ export default function SessionDetailPage() {
           <h2 className="mb-3 text-sm font-semibold text-text">Position</h2>
           {sectionErrors.position ? (
             <p className="text-sm text-destructive">{sectionErrors.position}</p>
+          ) : position === undefined ? (
+            <DetailListSkeleton label="Loading position" />
           ) : !position ? (
             <p className="text-sm text-subtext-1">No open position.</p>
           ) : (
@@ -408,7 +420,7 @@ export default function SessionDetailPage() {
                 {sectionErrors.decisions}
               </p>
             ) : !decisions ? (
-              <p className="text-sm text-subtext-1">Loading...</p>
+              <TableSkeleton columns={6} label="Loading decisions" />
             ) : decisions.length === 0 ? (
               <EmptyState
                 icon={Brain}
@@ -494,7 +506,7 @@ export default function SessionDetailPage() {
                 {sectionErrors.funding}
               </p>
             ) : !fundingPayments ? (
-              <p className="text-sm text-subtext-1">Loading...</p>
+              <TableSkeleton columns={4} label="Loading funding payments" />
             ) : fundingPayments.length === 0 ? (
               <EmptyState
                 icon={Coins}
