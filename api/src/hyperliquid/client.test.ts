@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createHyperliquidClient } from "./client.js";
+import { createHyperliquidClient, HyperliquidRateLimitError } from "./client.js";
 
 interface InfoRequest {
   type: string;
@@ -192,5 +192,19 @@ describe("HyperliquidClient stats with a failing builder DEX", () => {
     const client = createHyperliquidClient("https://hyperliquid.test");
 
     await expect(client.listPerpStats()).rejects.toThrow(/429/);
+  });
+});
+
+describe("HyperliquidClient rate limiting", () => {
+  it("raises HyperliquidRateLimitError on a 429", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("rate limited", { status: 429 })),
+    );
+    const client = createHyperliquidClient("https://hyperliquid.test");
+
+    await expect(client.getOrderBook("BTC")).rejects.toBeInstanceOf(
+      HyperliquidRateLimitError,
+    );
   });
 });

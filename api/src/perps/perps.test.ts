@@ -5,7 +5,10 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../app.js";
 import { SESSION_COOKIE_NAME } from "../auth/config.js";
 import { signSessionToken } from "../auth/session.js";
-import type { HyperliquidClient } from "../hyperliquid/client.js";
+import {
+  HyperliquidRateLimitError,
+  type HyperliquidClient,
+} from "../hyperliquid/client.js";
 import { DEFAULT_PERP_CONFIG } from "./repository.js";
 
 const MONGO_URL =
@@ -264,4 +267,23 @@ describe("perps listing endpoints when Hyperliquid fails", () => {
       expect((await request(app).get("/health")).status).toBe(200);
     });
   }
+});
+
+describe("perps listing endpoints when Hyperliquid rate-limits", () => {
+  const rateLimitedClient: HyperliquidClient = {
+    ...fakeHyperliquidClient,
+    async listPerpStats() {
+      throw new HyperliquidRateLimitError("metaAndAssetCtxs");
+    },
+  };
+
+  it("answers 503 with Retry-After instead of 500", async () => {
+    const app = createApp({ db, pgPool, hyperliquidClient: rateLimitedClient });
+
+    const res = await request(app).get("/perps/stats").set("Cookie", authCookie());
+
+    expect(res.status).toBe(503);
+    expect(res.headers["retry-after"]).toBe("30");
+    expect(res.body).toEqual({ error: "upstream rate limited" });
+  });
 });

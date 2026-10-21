@@ -45,6 +45,23 @@ export class UnknownMarketError extends Error {
   }
 }
 
+/**
+ * Raised when Hyperliquid answers 429. Its rate limit is per IP and
+ * rolling, so the caller should back off rather than report a server
+ * fault.
+ */
+export class HyperliquidRateLimitError extends Error {
+  constructor(requestType: string) {
+    super(`Hyperliquid ${requestType} request failed: 429`);
+    this.name = "HyperliquidRateLimitError";
+  }
+}
+
+function requestFailed(requestType: unknown, res: Response): Error {
+  if (res.status === 429) return new HyperliquidRateLimitError(String(requestType));
+  return new Error(`Hyperliquid ${requestType} request failed: ${res.status}`);
+}
+
 export interface HyperliquidClient {
   listPerps(): Promise<PerpMeta[]>;
   listPerpStats(): Promise<PerpStats[]>;
@@ -103,7 +120,7 @@ export function createHyperliquidClient(
       body: JSON.stringify(request),
     });
     if (!res.ok) {
-      throw new Error(`Hyperliquid ${request.type} request failed: ${res.status}`);
+      throw requestFailed(request.type, res);
     }
     return res.json();
   }
@@ -192,7 +209,7 @@ export function createHyperliquidClient(
       });
 
       if (!res.ok) {
-        throw new Error(`Hyperliquid l2Book request failed: ${res.status}`);
+        throw requestFailed("l2Book", res);
       }
 
       const body = (await res.json()) as L2BookResponse | null;
@@ -217,9 +234,7 @@ export function createHyperliquidClient(
       });
 
       if (!res.ok) {
-        throw new Error(
-          `Hyperliquid recentTrades request failed: ${res.status}`,
-        );
+        throw requestFailed("recentTrades", res);
       }
 
       const body = (await res.json()) as RecentTrade[] | null;
@@ -246,9 +261,7 @@ export function createHyperliquidClient(
       });
 
       if (!res.ok) {
-        throw new Error(
-          `Hyperliquid clearinghouseState request failed: ${res.status}`,
-        );
+        throw requestFailed("clearinghouseState", res);
       }
 
       const body = (await res.json()) as ClearinghouseStateResponse;

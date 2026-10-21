@@ -9,8 +9,10 @@ import type { Pool } from "pg";
 import { authRouter } from "./auth/authRoutes.js";
 import { getAuthConfig } from "./auth/config.js";
 import { createBacktestsRouter } from "./backtests/routes.js";
+import { createCachedHyperliquidClient } from "./hyperliquid/cache.js";
 import {
   createHyperliquidClient,
+  HyperliquidRateLimitError,
   type HyperliquidClient,
 } from "./hyperliquid/client.js";
 import { createDecisionMakersRouter } from "./decisionMakers/routes.js";
@@ -75,7 +77,9 @@ export function createApp(deps: AppDeps = {}): Express {
   app.use("/decision-makers", createDecisionMakersRouter());
 
   if (deps.db && deps.pgPool) {
-    const hyperliquidClient = deps.hyperliquidClient ?? createHyperliquidClient();
+    const hyperliquidClient =
+      deps.hyperliquidClient ??
+      createCachedHyperliquidClient(createHyperliquidClient());
     app.use(
       "/perps",
       createPerpsRouter(deps.db, hyperliquidClient, deps.pgPool),
@@ -109,6 +113,13 @@ export function createApp(deps: AppDeps = {}): Express {
     if (res.headersSent) {
       // Too late to shape a response; let Express's own handler finish.
       next(error);
+      return;
+    }
+    if (error instanceof HyperliquidRateLimitError) {
+      // Hyperliquid's limit is a rolling per-minute window, so a short
+      // retry hint is enough for the dashboard to recover on its own.
+      res.set("Retry-After", "30");
+      res.status(503).json({ error: "upstream rate limited" });
       return;
     }
     res.status(500).json({ error: "internal server error" });
