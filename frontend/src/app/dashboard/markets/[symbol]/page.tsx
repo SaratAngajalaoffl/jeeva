@@ -4,10 +4,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import PriceVolumeChart, {
-  chartRangeMs,
+  chartRangeFrom,
   type ChartRange,
+  type ChartSelection,
   type TradeMarker,
 } from "@/components/PriceVolumeChart";
+import DecisionHistoryPanel from "@/components/DecisionHistoryPanel";
 import Modal from "@/components/Modal";
 import { SamplingIcon } from "@/components/icons";
 import {
@@ -15,7 +17,6 @@ import {
   createBacktest,
   createTradingSession,
   fetchDecisionMakerStatuses,
-  fetchDecisions,
   fetchFundingPayments,
   fetchMarketData,
   fetchMarketDataRange,
@@ -31,7 +32,6 @@ import {
   softCloseTradingSession,
   updatePerpConfig,
   type ClosedTrade,
-  type DecisionLogEntry,
   type DecisionMaker,
   type DecisionMakerStatus,
   type HistoryFormat,
@@ -59,7 +59,7 @@ import {
   Skeleton,
   TableSkeleton,
 } from "@/components/ui";
-import { Bot, Brain, Coins } from "lucide-react";
+import { Bot, Coins } from "lucide-react";
 
 const TH =
   "border-b border-surface-1 py-2 pr-4 text-left text-xs font-medium uppercase tracking-wide text-subtext-0";
@@ -160,6 +160,9 @@ export default function MarketDataPage() {
 
   const [samples, setSamples] = useState<MarketDataPoint[] | null>(null);
   const [range, setRange] = useState<ChartRange>("1d");
+  // A window dragged out on the chart; it zooms the chart and scopes the
+  // decision and funding history below to the same period.
+  const [selection, setSelection] = useState<ChartSelection | null>(null);
   const [oldestSampleTime, setOldestSampleTime] = useState<
     string | null | undefined
   >(undefined);
@@ -169,7 +172,6 @@ export default function MarketDataPage() {
   const [stats, setStats] = useState<PerpStats | null | undefined>(undefined);
   const [positions, setPositions] = useState<Position[] | null>(null);
   const [closedTrades, setClosedTrades] = useState<ClosedTrade[] | null>(null);
-  const [decisions, setDecisions] = useState<DecisionLogEntry[] | null>(null);
   const [fundingPayments, setFundingPayments] = useState<
     FundingPayment[] | null
   >(null);
@@ -193,8 +195,8 @@ export default function MarketDataPage() {
     setOrderBook(null);
 
     function poll() {
-      const rangeMs = chartRangeMs(range);
-      fetchMarketData(symbol, { from: new Date(Date.now() - rangeMs) })
+      const from = chartRangeFrom(range);
+      fetchMarketData(symbol, { from })
         .then((s) => {
           if (!cancelled) {
             setSamples(s.samples);
@@ -227,28 +229,12 @@ export default function MarketDataPage() {
           }
         })
         .catch(() => {});
-      fetchDecisions({ symbol })
-        .then((d) => {
-          if (!cancelled) setDecisions(d);
-        })
-        .catch(() => {
-          if (!cancelled) setDecisions([]);
-        });
-      fetchTradeHistory({ symbol, from: new Date(Date.now() - rangeMs) })
+      fetchTradeHistory({ symbol, from })
         .then((t) => {
           if (!cancelled) setClosedTrades(t);
         })
         .catch(() => {
           if (!cancelled) setClosedTrades([]);
-        });
-      fetchFundingPayments({ symbol })
-        .then((payments) => {
-          if (!cancelled) {
-            setFundingPayments(payments.filter((p) => p.symbol === symbol));
-          }
-        })
-        .catch(() => {
-          if (!cancelled) setFundingPayments([]);
         });
       fetchTradingSessions(symbol)
         .then((s) => {
@@ -288,6 +274,38 @@ export default function MarketDataPage() {
       clearInterval(id);
     };
   }, [symbol, range]);
+
+  useEffect(() => {
+    setSelection(null);
+  }, [symbol, range]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    function poll() {
+      fetchFundingPayments({
+        symbol,
+        from: selection ? new Date(selection.from) : chartRangeFrom(range),
+        to: selection ? new Date(selection.to) : new Date(),
+        limit: 1000,
+      })
+        .then((payments) => {
+          if (!cancelled) {
+            setFundingPayments(payments.filter((p) => p.symbol === symbol));
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setFundingPayments([]);
+        });
+    }
+
+    poll();
+    const id = setInterval(poll, POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [symbol, range, selection]);
 
   async function applyPatch(patch: Partial<Omit<Perp, "symbol">>) {
     if (!perp) return;
@@ -471,6 +489,8 @@ export default function MarketDataPage() {
                 pricePoints={samples.map((s) => ({ x: s.time, y: s.price }))}
                 volumePoints={samples.map((s) => ({ x: s.time, y: s.volume }))}
                 markers={tradeMarkers}
+                selection={selection}
+                onSelectionChange={setSelection}
               />
             )}
           </div>
@@ -627,69 +647,12 @@ export default function MarketDataPage() {
           )}
 
           {detailTab === "decisions" && (
-            <div className="overflow-x-auto">
-              {!decisions ? (
-                <TableSkeleton
-                  columns={6}
-                  label="Loading decisions"
-                  className="p-5"
-                />
-              ) : decisions.length === 0 ? (
-                <EmptyState
-                  icon={Brain}
-                  title="No decisions yet."
-                  description="Decisions appear here as soon as a session makes one."
-                />
-              ) : (
-                <table className="w-full min-w-[560px] border-collapse text-left text-sm text-text">
-                  <thead>
-                    <tr>
-                      <th className={TH}>Time</th>
-                      <th className={TH}>Session</th>
-                      <th className={TH}>Direction</th>
-                      <th className={TH}>Confidence</th>
-                      <th className={TH}>Action</th>
-                      <th className={TH}>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {decisions.slice(0, 20).map((d, i) => (
-                      <tr key={i} className="hover:bg-surface-0/60">
-                        <td className={TD}>
-                          {new Date(d.time).toLocaleString()}
-                        </td>
-                        <td className={TD}>
-                          {d.sessionId ? (
-                            <Link
-                              href={`/dashboard/markets/${symbol}/sessions/${d.sessionId}`}
-                              className="text-ember hover:underline"
-                            >
-                              {d.sessionId.slice(0, 8)}
-                            </Link>
-                          ) : (
-                            "-"
-                          )}
-                        </td>
-                        <td className={TD}>{d.targetDirection ?? "-"}</td>
-                        <td className={TD}>
-                          {d.confidence !== null
-                            ? d.confidence.toFixed(2)
-                            : "-"}
-                        </td>
-                        <td className={TD}>{d.positionAction ?? "no_op"}</td>
-                        <td className={TD}>
-                          {d.success ? (
-                            <span className="text-emerald-400">ok</span>
-                          ) : (
-                            <span className="text-destructive">error</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
+            <DecisionHistoryPanel
+              symbol={symbol}
+              sessions={sessions}
+              range={range}
+              selection={selection}
+            />
           )}
 
           {detailTab === "funding" && (

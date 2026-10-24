@@ -2,6 +2,8 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   DecisionLogEntry,
+  DecisionPage,
+  DecisionPageQuery,
   FundingPayment,
   MarketDataHistory,
   PerpStats,
@@ -16,8 +18,7 @@ const fetchMarketDataMock = vi.fn<
 const fetchPerpStatsMock = vi.fn<[], Promise<PerpStats[]>>();
 const fetchPositionsMock = vi.fn<[], Promise<Position[]>>();
 const fetchDecisionsMock = vi.fn<
-  [{ sessionId?: string }],
-  Promise<DecisionLogEntry[]>
+  (query: DecisionPageQuery) => Promise<DecisionLogEntry[]>
 >();
 const fetchFundingPaymentsMock = vi.fn<
   [{ sessionId?: string }],
@@ -30,8 +31,12 @@ vi.mock("@/lib/api", () => ({
     fetchMarketDataMock(...args),
   fetchPerpStats: () => fetchPerpStatsMock(),
   fetchPositions: () => fetchPositionsMock(),
-  fetchDecisions: (...args: [{ sessionId?: string }]) =>
-    fetchDecisionsMock(...args),
+  // The panel pages decisions; tests stub just the rows and derive the total.
+  fetchDecisionPage: (query: DecisionPageQuery): Promise<DecisionPage> =>
+    fetchDecisionsMock(query).then((decisions) => ({
+      decisions,
+      total: decisions.length,
+    })),
   fetchFundingPayments: (...args: [{ sessionId?: string }]) =>
     fetchFundingPaymentsMock(...args),
   fetchTradingSessions: (...args: [string]) =>
@@ -146,12 +151,16 @@ describe("SessionDetailPage", () => {
     await waitFor(() =>
       expect(screen.getByText("Market data")).toBeInTheDocument(),
     );
-    expect(fetchDecisionsMock).toHaveBeenCalledWith({ sessionId: session.id });
-    expect(fetchFundingPaymentsMock).toHaveBeenCalledWith({
-      sessionId: session.id,
-    });
+    expect(fetchDecisionsMock).toHaveBeenCalledWith(
+      expect.objectContaining({ symbol: "HYPE", sessionId: session.id }),
+    );
+    expect(fetchFundingPaymentsMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: session.id }),
+    );
     expect((await screen.findAllByText("long")).length).toBeGreaterThan(0);
-    expect(await screen.findByText("opened")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("cell", { name: "opened" }),
+    ).toBeInTheDocument();
     expect(await screen.findByText("-0.0500")).toBeInTheDocument();
   });
 

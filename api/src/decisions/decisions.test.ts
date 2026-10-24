@@ -205,4 +205,119 @@ describe("GET /decisions", () => {
       .set("Cookie", authCookie());
     expect(res.status).toBe(400);
   });
+  it("pages with offset and reports the total match count", async () => {
+    const now = new Date();
+    for (let i = 0; i < 5; i++) {
+      await seed("BTC", new Date(now.getTime() - i * 1000), {
+        confidence: i / 10,
+      });
+    }
+
+    const res = await request(buildApp())
+      .get("/decisions?limit=2&offset=2")
+      .set("Cookie", authCookie());
+
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(5);
+    expect(
+      res.body.decisions.map((d: { confidence: number }) => d.confidence),
+    ).toEqual([0.2, 0.3]);
+  });
+
+  it("filters by direction, action, status and confidence", async () => {
+    const now = new Date();
+    await seed("BTC", new Date(now.getTime() - 1000), {
+      targetDirection: "short",
+      positionAction: "no_op",
+      confidence: 0.6,
+    });
+    await seed("BTC", new Date(now.getTime() - 2000), {
+      targetDirection: "short",
+      positionAction: "opened",
+      confidence: 0.8,
+    });
+    await seed("BTC", new Date(now.getTime() - 3000), {
+      targetDirection: "long",
+      positionAction: "opened",
+      confidence: 0.9,
+    });
+    await seed("BTC", new Date(now.getTime() - 4000), {
+      targetDirection: null,
+      positionAction: null,
+      confidence: null,
+      success: false,
+      error: "boom",
+    });
+
+    const get = (query: string) =>
+      request(buildApp())
+        .get(`/decisions?${query}`)
+        .set("Cookie", authCookie());
+
+    const short = await get("direction=short");
+    expect(short.body.total).toBe(2);
+
+    const shortOpened = await get("direction=short&action=opened");
+    expect(shortOpened.body.decisions).toHaveLength(1);
+    expect(shortOpened.body.decisions[0].confidence).toBe(0.8);
+
+    const errors = await get("status=error");
+    expect(errors.body.total).toBe(1);
+    expect(errors.body.decisions[0].error).toBe("boom");
+
+    const confident = await get("minConfidence=0.7&maxConfidence=0.85");
+    expect(confident.body.total).toBe(1);
+    expect(confident.body.decisions[0].confidence).toBe(0.8);
+  });
+
+  it("sorts by confidence, leaving confidence-less rows last", async () => {
+    const now = new Date();
+    await seed("BTC", new Date(now.getTime() - 1000), { confidence: 0.5 });
+    await seed("BTC", new Date(now.getTime() - 2000), { confidence: null });
+    await seed("BTC", new Date(now.getTime() - 3000), { confidence: 0.9 });
+
+    const desc = await request(buildApp())
+      .get("/decisions?sort=confidence&order=desc")
+      .set("Cookie", authCookie());
+    expect(
+      desc.body.decisions.map((d: { confidence: number | null }) => d.confidence),
+    ).toEqual([0.9, 0.5, null]);
+
+    const asc = await request(buildApp())
+      .get("/decisions?sort=confidence&order=asc")
+      .set("Cookie", authCookie());
+    expect(
+      asc.body.decisions.map((d: { confidence: number | null }) => d.confidence),
+    ).toEqual([0.5, 0.9, null]);
+  });
+
+  it("sorts by time ascending", async () => {
+    const now = new Date();
+    await seed("BTC", new Date(now.getTime() - 1000), { confidence: 0.1 });
+    await seed("BTC", new Date(now.getTime() - 2000), { confidence: 0.2 });
+
+    const res = await request(buildApp())
+      .get("/decisions?order=asc")
+      .set("Cookie", authCookie());
+    expect(
+      res.body.decisions.map((d: { confidence: number }) => d.confidence),
+    ).toEqual([0.2, 0.1]);
+  });
+
+  it.each([
+    "offset=-1",
+    "offset=1.5",
+    "direction=up",
+    "action=bought",
+    "status=maybe",
+    "minConfidence=2",
+    "minConfidence=0.8&maxConfidence=0.2",
+    "sort=symbol",
+    "order=sideways",
+  ])("rejects an invalid query: %s", async (query) => {
+    const res = await request(buildApp())
+      .get(`/decisions?${query}`)
+      .set("Cookie", authCookie());
+    expect(res.status).toBe(400);
+  });
 });

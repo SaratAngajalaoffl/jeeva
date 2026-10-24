@@ -4,9 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import PriceVolumeChart, {
-  chartRangeMs,
+  chartRangeFrom,
   type ChartRange,
+  type ChartSelection,
 } from "@/components/PriceVolumeChart";
+import DecisionHistoryPanel from "@/components/DecisionHistoryPanel";
 import { SiteHeader } from "@/components/SiteHeader";
 import { Uptime } from "@/components/RelativeTime";
 import { formatShortDateTime } from "@/lib/format";
@@ -19,9 +21,8 @@ import {
   StatStripSkeleton,
   TableSkeleton,
 } from "@/components/ui";
-import { Brain, Coins } from "lucide-react";
+import { Coins } from "lucide-react";
 import {
-  fetchDecisions,
   fetchFundingPayments,
   fetchMarketData,
   fetchPerpStats,
@@ -29,7 +30,6 @@ import {
   fetchTradingSessions,
   hardCloseTradingSession,
   softCloseTradingSession,
-  type DecisionLogEntry,
   type FundingPayment,
   type MarketDataPoint,
   type PerpStats,
@@ -82,6 +82,9 @@ export default function SessionDetailPage() {
   );
   const [samples, setSamples] = useState<MarketDataPoint[] | null>(null);
   const [range, setRange] = useState<ChartRange>("1d");
+  // A window dragged out on the chart; it zooms the chart and scopes the
+  // decision and funding history below to the same period.
+  const [selection, setSelection] = useState<ChartSelection | null>(null);
   const [oldestSampleTime, setOldestSampleTime] = useState<
     string | null | undefined
   >(undefined);
@@ -89,7 +92,6 @@ export default function SessionDetailPage() {
   const [position, setPosition] = useState<Position | null | undefined>(
     undefined,
   );
-  const [decisions, setDecisions] = useState<DecisionLogEntry[] | null>(null);
   const [fundingPayments, setFundingPayments] = useState<
     FundingPayment[] | null
   >(null);
@@ -97,7 +99,6 @@ export default function SessionDetailPage() {
   const [sectionErrors, setSectionErrors] = useState<{
     marketData?: string;
     position?: string;
-    decisions?: string;
     funding?: string;
   }>({});
   const [busy, setBusy] = useState(false);
@@ -114,7 +115,7 @@ export default function SessionDetailPage() {
     function poll() {
       refresh();
       fetchMarketData(symbol, {
-        from: new Date(Date.now() - chartRangeMs(range)),
+        from: chartRangeFrom(range),
       })
         .then((s) => {
           setSamples(s.samples);
@@ -143,34 +144,48 @@ export default function SessionDetailPage() {
             position: "Failed to load position.",
           })),
         );
-      fetchDecisions({ sessionId })
-        .then((entries) => {
-          setDecisions(entries);
-          setSectionErrors((prev) => ({ ...prev, decisions: undefined }));
-        })
-        .catch(() =>
-          setSectionErrors((prev) => ({
-            ...prev,
-            decisions: "Failed to load decision history.",
-          })),
-        );
-      fetchFundingPayments({ sessionId })
-        .then((payments) => {
-          setFundingPayments(payments);
-          setSectionErrors((prev) => ({ ...prev, funding: undefined }));
-        })
-        .catch(() =>
-          setSectionErrors((prev) => ({
-            ...prev,
-            funding: "Failed to load funding history.",
-          })),
-        );
     }
 
     poll();
     const id = setInterval(poll, POLL_MS);
     return () => clearInterval(id);
   }, [symbol, sessionId, range]);
+
+  useEffect(() => {
+    setSelection(null);
+  }, [symbol, sessionId, range]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    function poll() {
+      fetchFundingPayments({
+        sessionId,
+        from: selection ? new Date(selection.from) : chartRangeFrom(range),
+        to: selection ? new Date(selection.to) : new Date(),
+        limit: 1000,
+      })
+        .then((payments) => {
+          if (cancelled) return;
+          setFundingPayments(payments);
+          setSectionErrors((prev) => ({ ...prev, funding: undefined }));
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setSectionErrors((prev) => ({
+            ...prev,
+            funding: "Failed to load funding history.",
+          }));
+        });
+    }
+
+    poll();
+    const id = setInterval(poll, POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [sessionId, range, selection]);
 
   const pnl = useMemo(() => {
     if (!position || !stats) return null;
@@ -364,6 +379,8 @@ export default function SessionDetailPage() {
             oldestSampleTime={oldestSampleTime}
             pricePoints={samples.map((s) => ({ x: s.time, y: s.price }))}
             volumePoints={samples.map((s) => ({ x: s.time, y: s.volume }))}
+            selection={selection}
+            onSelectionChange={setSelection}
           />
         ) : (
           <Card className="p-5">
@@ -410,90 +427,16 @@ export default function SessionDetailPage() {
           )}
         </Card>
 
-        <Card className="p-5">
-          <h2 className="mb-3 text-sm font-semibold text-text">
+        <Card className="p-0">
+          <h2 className="px-5 pt-5 text-sm font-semibold text-text">
             Decision history
           </h2>
-          <div className="overflow-x-auto">
-            {sectionErrors.decisions ? (
-              <p className="text-sm text-destructive">
-                {sectionErrors.decisions}
-              </p>
-            ) : !decisions ? (
-              <TableSkeleton columns={6} label="Loading decisions" />
-            ) : decisions.length === 0 ? (
-              <EmptyState
-                icon={Brain}
-                title="No decisions yet."
-                description="Decisions appear here as soon as this session makes one."
-              />
-            ) : (
-              <table className="w-full min-w-[560px] border-collapse text-left text-sm text-text">
-                <thead>
-                  <tr>
-                    <th className={TH}>Time</th>
-                    <th className={TH}>Direction</th>
-                    <th className={TH}>Confidence</th>
-                    <th className={TH}>Action</th>
-                    <th className={TH}>Status</th>
-                    <th className={TH}>Payload</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {decisions.slice(0, 50).map((d, i) => (
-                    <tr key={i} className="hover:bg-surface-0/60">
-                      <td className={TD}>
-                        {new Date(d.time).toLocaleString()}
-                      </td>
-                      <td className={TD}>{d.targetDirection ?? "-"}</td>
-                      <td className={TD}>
-                        {d.confidence !== null ? d.confidence.toFixed(2) : "-"}
-                      </td>
-                      <td className={TD}>{d.positionAction ?? "no_op"}</td>
-                      <td className={TD}>
-                        {d.success ? (
-                          <span className="text-emerald-400">ok</span>
-                        ) : (
-                          <div className="text-destructive">
-                            <span>error</span>
-                            {d.error && (
-                              <div
-                                className="mt-1 max-w-xs whitespace-pre-wrap text-xs"
-                                title={d.error}
-                              >
-                                {d.error}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </td>
-                      <td className={TD}>
-                        {d.rawRequest || d.rawResponse ? (
-                          <details>
-                            <summary className="cursor-pointer text-subtext-0">
-                              view
-                            </summary>
-                            <pre className="mt-1 max-w-xs overflow-x-auto whitespace-pre-wrap text-xs text-subtext-1">
-                              {JSON.stringify(
-                                {
-                                  request: d.rawRequest,
-                                  response: d.rawResponse,
-                                },
-                                null,
-                                2,
-                              )}
-                            </pre>
-                          </details>
-                        ) : (
-                          "-"
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
+          <DecisionHistoryPanel
+            symbol={symbol}
+            sessionId={sessionId}
+            range={range}
+            selection={selection}
+          />
         </Card>
 
         <Card className="p-5">

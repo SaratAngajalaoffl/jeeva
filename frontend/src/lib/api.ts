@@ -531,6 +531,49 @@ export async function fetchDecisions(
   return body.decisions;
 }
 
+export interface DecisionPageQuery {
+  symbol?: string;
+  sessionId?: string;
+  direction?: "long" | "short" | "flat";
+  action?: "no_op" | "opened" | "closed" | "closed_and_opened";
+  status?: "ok" | "error";
+  minConfidence?: number;
+  maxConfidence?: number;
+  sort?: "time" | "confidence";
+  order?: "asc" | "desc";
+  from?: Date;
+  to?: Date;
+  limit: number;
+  offset: number;
+}
+
+export interface DecisionPage {
+  decisions: DecisionLogEntry[];
+  /** Every decision matching the filters, across all pages. */
+  total: number;
+}
+
+export async function fetchDecisionPage(
+  query: DecisionPageQuery,
+): Promise<DecisionPage> {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined || value === "") continue;
+    params.set(
+      key,
+      value instanceof Date ? value.toISOString() : String(value),
+    );
+  }
+  const res = await fetch(
+    `${await loadApiUrl()}/decisions?${params.toString()}`,
+    { credentials: "include" },
+  );
+  if (!res.ok) {
+    throw new Error("Failed to load decision history");
+  }
+  return res.json();
+}
+
 export interface FundingPayment {
   time: string;
   sessionId: string | null;
