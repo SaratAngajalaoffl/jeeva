@@ -9,7 +9,7 @@ import { isValidLeverage, isValidPositionSizeUsd } from "../perps/sizing.js";
 import { isWalletEligible } from "../wallets/eligibility.js";
 import {
   isValidHistoryFormat,
-  isValidHistoryWindowSamples,
+  isValidHistoryWindowSeconds,
 } from "./historyWindow.js";
 import { isValidStopLossPct } from "./stopLoss.js";
 import {
@@ -67,7 +67,7 @@ export function createTradingSessionsRouter(
       decisionFrequencySeconds,
       leverage,
       positionSizeUsd,
-      historyWindowSamples,
+      historyWindowSeconds,
       historyFormat,
       storeDecisionPayloads,
       stopLossPct,
@@ -79,8 +79,8 @@ export function createTradingSessionsRouter(
       !isValidFrequencySeconds(decisionFrequencySeconds) ||
       !isValidLeverage(leverage) ||
       !isValidPositionSizeUsd(positionSizeUsd) ||
-      (historyWindowSamples !== undefined &&
-        !isValidHistoryWindowSamples(historyWindowSamples)) ||
+      (historyWindowSeconds !== undefined &&
+        !isValidHistoryWindowSeconds(historyWindowSeconds)) ||
       (historyFormat !== undefined && !isValidHistoryFormat(historyFormat)) ||
       (storeDecisionPayloads !== undefined &&
         typeof storeDecisionPayloads !== "boolean") ||
@@ -115,22 +115,24 @@ export function createTradingSessionsRouter(
     }
 
     try {
+      // A market can't be traded blind: enabling trading for it (by
+      // opening a session) must also turn sampling on, so price history
+      // is being collected for every market with an active session. Done
+      // before the session exists so the engine never sees the session
+      // without sampling and hard-closes it as a violation.
+      await updatePerpConfig(db, symbol, { samplingEnabled: true });
       const session = await createTradingSession(pgPool, {
         symbol,
         decisionMaker,
         decisionFrequencySeconds,
         leverage,
         positionSizeUsd,
-        historyWindowSamples,
+        historyWindowSeconds,
         historyFormat,
         storeDecisionPayloads,
         stopLossPct: stopLossPct ?? null,
         walletId: resolvedWalletId,
       });
-      // A market can't be traded blind: enabling trading for it (by
-      // opening a session) must also turn sampling on, so price history
-      // is being collected for every market with an active session.
-      await updatePerpConfig(db, symbol, { samplingEnabled: true });
       res.status(201).json(session);
     } catch (error) {
       if (error instanceof WalletInUseError) {
@@ -157,7 +159,7 @@ export function createTradingSessionsRouter(
       decisionFrequencySeconds,
       leverage,
       positionSizeUsd,
-      historyWindowSamples,
+      historyWindowSeconds,
       historyFormat,
       storeDecisionPayloads,
       stopLossPct,
@@ -170,8 +172,8 @@ export function createTradingSessionsRouter(
       (leverage !== undefined && !isValidLeverage(leverage)) ||
       (positionSizeUsd !== undefined &&
         !isValidPositionSizeUsd(positionSizeUsd)) ||
-      (historyWindowSamples !== undefined &&
-        !isValidHistoryWindowSamples(historyWindowSamples)) ||
+      (historyWindowSeconds !== undefined &&
+        !isValidHistoryWindowSeconds(historyWindowSeconds)) ||
       (historyFormat !== undefined && !isValidHistoryFormat(historyFormat)) ||
       (storeDecisionPayloads !== undefined &&
         typeof storeDecisionPayloads !== "boolean") ||
@@ -188,7 +190,7 @@ export function createTradingSessionsRouter(
       decisionFrequencySeconds,
       leverage,
       positionSizeUsd,
-      historyWindowSamples,
+      historyWindowSeconds,
       historyFormat,
       storeDecisionPayloads,
     };

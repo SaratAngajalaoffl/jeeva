@@ -311,7 +311,7 @@ describe("MarketDataPage", () => {
         decisionFrequencySeconds: 60,
         leverage: 2,
         positionSizeUsd: 500,
-        historyWindowSamples: 1000,
+        historyWindowSeconds: 86400,
         historyFormat: "summary",
         storeDecisionPayloads: false,
         walletId: null,

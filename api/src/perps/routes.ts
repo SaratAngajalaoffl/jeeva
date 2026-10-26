@@ -9,6 +9,7 @@ import {
   getMarketDataRange,
 } from "../marketData/repository.js";
 import { parseTimeRange } from "../marketData/timeRange.js";
+import { hardCloseTradingSessionsForSymbol } from "../trading-sessions/repository.js";
 import { isValidSamplingFrequencySeconds } from "./frequency.js";
 import {
   DEFAULT_PERP_CONFIG,
@@ -57,29 +58,45 @@ export function createPerpsRouter(
     }),
   );
 
-  router.patch("/:symbol", async (req, res) => {
-    const { symbol } = req.params;
-    const { samplingEnabled, samplingFrequencySeconds } = req.body ?? {};
+  router.patch(
+    "/:symbol",
+    asyncHandler(async (req, res) => {
+      const { symbol } = req.params;
+      const { samplingEnabled, samplingFrequencySeconds } = req.body ?? {};
 
-    const isValidToggle = (value: unknown) =>
-      value === undefined || typeof value === "boolean";
-    const isValidFrequency = (value: unknown) =>
-      value === undefined || isValidSamplingFrequencySeconds(value);
+      const isValidToggle = (value: unknown) =>
+        value === undefined || typeof value === "boolean";
+      const isValidFrequency = (value: unknown) =>
+        value === undefined || isValidSamplingFrequencySeconds(value);
 
-    if (
-      !isValidToggle(samplingEnabled) ||
-      !isValidFrequency(samplingFrequencySeconds)
-    ) {
-      res.status(400).json({ error: "invalid request" });
-      return;
-    }
+      if (
+        !isValidToggle(samplingEnabled) ||
+        !isValidFrequency(samplingFrequencySeconds)
+      ) {
+        res.status(400).json({ error: "invalid request" });
+        return;
+      }
 
-    const updated = await updatePerpConfig(db, symbol, {
-      samplingEnabled,
-      samplingFrequencySeconds,
-    });
-    res.status(200).json(updated);
-  });
+      const updated = await updatePerpConfig(db, symbol, {
+        samplingEnabled,
+        samplingFrequencySeconds,
+      });
+      // A market can't be traded blind: with sampling off, every session
+      // still trading it is force-flattened and closed (the engine also
+      // enforces this, as a backstop for writes that bypass the API).
+      if (samplingEnabled === false) {
+        const closed = await hardCloseTradingSessionsForSymbol(pgPool, symbol);
+        if (closed.length > 0) {
+          console.warn(
+            `sampling disabled for ${symbol}; hard-closing sessions ${closed
+              .map((session) => session.id)
+              .join(", ")}`,
+          );
+        }
+      }
+      res.status(200).json(updated);
+    }),
+  );
 
   router.get("/:symbol/market-data", async (req, res) => {
     const { symbol } = req.params;

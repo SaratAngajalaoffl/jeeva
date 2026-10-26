@@ -11,7 +11,7 @@ export interface BacktestRun {
   decisionFrequencySeconds: number;
   leverage: number;
   positionSizeUsd: number;
-  historyWindowSamples: number;
+  historyWindowSeconds: number;
   historyFormat: HistoryFormat;
   storeDecisionPayloads: boolean;
   startTime: string;
@@ -31,7 +31,7 @@ interface BacktestRunRow {
   decision_frequency_seconds: string;
   leverage: string;
   position_size_usd: string;
-  history_window_samples: number;
+  history_window_seconds: number;
   history_format: HistoryFormat;
   store_decision_payloads: boolean;
   start_time: Date;
@@ -52,7 +52,7 @@ function toBacktestRun(row: BacktestRunRow): BacktestRun {
     decisionFrequencySeconds: Number(row.decision_frequency_seconds),
     leverage: Number(row.leverage),
     positionSizeUsd: Number(row.position_size_usd),
-    historyWindowSamples: row.history_window_samples,
+    historyWindowSeconds: row.history_window_seconds,
     historyFormat: row.history_format,
     storeDecisionPayloads: row.store_decision_payloads,
     startTime: row.start_time.toISOString(),
@@ -68,7 +68,7 @@ function toBacktestRun(row: BacktestRunRow): BacktestRun {
 
 const COLUMNS =
   "id, symbol, decision_maker, decision_frequency_seconds, leverage, position_size_usd, " +
-  "history_window_samples, history_format, store_decision_payloads, start_time, end_time, " +
+  "history_window_seconds, history_format, store_decision_payloads, start_time, end_time, " +
   "initial_balance_usd, current_balance_usd, status, error, created_at, completed_at";
 
 export interface CreateBacktestRunInput {
@@ -77,7 +77,7 @@ export interface CreateBacktestRunInput {
   decisionFrequencySeconds: number;
   leverage: number;
   positionSizeUsd: number;
-  historyWindowSamples: number;
+  historyWindowSeconds: number;
   historyFormat: HistoryFormat;
   storeDecisionPayloads?: boolean;
   startTime: string;
@@ -92,7 +92,7 @@ export async function createBacktestRun(
   const result = await pool.query<BacktestRunRow>(
     `INSERT INTO backtest_runs
        (symbol, decision_maker, decision_frequency_seconds, leverage, position_size_usd,
-        history_window_samples, history_format, store_decision_payloads, start_time, end_time,
+        history_window_seconds, history_format, store_decision_payloads, start_time, end_time,
         initial_balance_usd, current_balance_usd, status)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, 'pending')
      RETURNING ${COLUMNS}`,
@@ -102,7 +102,7 @@ export async function createBacktestRun(
       input.decisionFrequencySeconds,
       input.leverage,
       input.positionSizeUsd,
-      input.historyWindowSamples,
+      input.historyWindowSeconds,
       input.historyFormat,
       input.storeDecisionPayloads ?? false,
       input.startTime,

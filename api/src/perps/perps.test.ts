@@ -209,6 +209,68 @@ describe("PATCH /perps/:symbol", () => {
   });
 });
 
+describe("PATCH /perps/:symbol turning sampling off", () => {
+  const SYMBOL = "SAMPLINGOFFTEST";
+  const OTHER = "SAMPLINGONTEST";
+
+  beforeEach(async () => {
+    await pgPool.query(
+      "DELETE FROM trading_sessions WHERE symbol IN ($1, $2)",
+      [SYMBOL, OTHER],
+    );
+  });
+
+  async function insertSession(symbol: string, status: string) {
+    const result = await pgPool.query<{ id: string }>(
+      `INSERT INTO trading_sessions
+         (symbol, decision_maker, decision_frequency_seconds, leverage, position_size_usd, status, closed_at)
+       VALUES ($1, 'random', 300, 1, 100, $2, CASE WHEN $2 = 'closed' THEN now() END)
+       RETURNING id`,
+      [symbol, status],
+    );
+    return result.rows[0].id;
+  }
+
+  async function statusOf(id: string) {
+    const result = await pgPool.query<{ status: string }>(
+      "SELECT status FROM trading_sessions WHERE id = $1",
+      [id],
+    );
+    return result.rows[0].status;
+  }
+
+  it("hard-closes every session still trading that market", async () => {
+    const active = await insertSession(SYMBOL, "active");
+    const softClosing = await insertSession(SYMBOL, "soft_closing");
+    const closed = await insertSession(SYMBOL, "closed");
+    const elsewhere = await insertSession(OTHER, "active");
+
+    const res = await request(buildApp())
+      .patch(`/perps/${SYMBOL}`)
+      .set("Cookie", authCookie())
+      .send({ samplingEnabled: false });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ symbol: SYMBOL, samplingEnabled: false });
+    expect(await statusOf(active)).toBe("hard_closing");
+    expect(await statusOf(softClosing)).toBe("hard_closing");
+    expect(await statusOf(closed)).toBe("closed");
+    expect(await statusOf(elsewhere)).toBe("active");
+  });
+
+  it("leaves sessions alone for any other change", async () => {
+    const active = await insertSession(SYMBOL, "active");
+
+    const res = await request(buildApp())
+      .patch(`/perps/${SYMBOL}`)
+      .set("Cookie", authCookie())
+      .send({ samplingEnabled: true, samplingFrequencySeconds: 120 });
+
+    expect(res.status).toBe(200);
+    expect(await statusOf(active)).toBe("active");
+  });
+});
+
 describe("market-data endpoints for an unknown market", () => {
   // Regression: a coin Hyperliquid has no market for answers `/info` with
   // `null`. That used to throw inside the handler, and because Express 4
@@ -280,7 +342,9 @@ describe("perps listing endpoints when Hyperliquid rate-limits", () => {
   it("answers 503 with Retry-After instead of 500", async () => {
     const app = createApp({ db, pgPool, hyperliquidClient: rateLimitedClient });
 
-    const res = await request(app).get("/perps/stats").set("Cookie", authCookie());
+    const res = await request(app)
+      .get("/perps/stats")
+      .set("Cookie", authCookie());
 
     expect(res.status).toBe(503);
     expect(res.headers["retry-after"]).toBe("30");

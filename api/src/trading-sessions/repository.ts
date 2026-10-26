@@ -1,7 +1,7 @@
 import type { Pool } from "pg";
 import {
   DEFAULT_HISTORY_FORMAT,
-  DEFAULT_HISTORY_WINDOW_SAMPLES,
+  DEFAULT_HISTORY_WINDOW_SECONDS,
   type HistoryFormat,
 } from "./historyWindow.js";
 
@@ -20,8 +20,8 @@ export interface TradingSession {
   decisionFrequencySeconds: number;
   leverage: number;
   positionSizeUsd: number;
-  /** How many recent market-data samples the engine reads for this session's decision context. */
-  historyWindowSamples: number;
+  /** How far back (seconds, ending at each cycle) the engine reads market data for this session's decision context. */
+  historyWindowSeconds: number;
   /** Whether that window reaches the decision maker raw, or averaged into a min/max/avg summary. */
   historyFormat: HistoryFormat;
   /** Whether every decision cycle's raw Jev request/response JSON is persisted, not just the parsed fields. */
@@ -57,7 +57,7 @@ interface TradingSessionRow {
   decision_frequency_seconds: string;
   leverage: string;
   position_size_usd: string;
-  history_window_samples: number;
+  history_window_seconds: number;
   history_format: HistoryFormat;
   store_decision_payloads: boolean;
   stop_loss_pct: string | null;
@@ -75,7 +75,7 @@ function toTradingSession(row: TradingSessionRow): TradingSession {
     decisionFrequencySeconds: Number(row.decision_frequency_seconds),
     leverage: Number(row.leverage),
     positionSizeUsd: Number(row.position_size_usd),
-    historyWindowSamples: row.history_window_samples,
+    historyWindowSeconds: row.history_window_seconds,
     historyFormat: row.history_format,
     storeDecisionPayloads: row.store_decision_payloads,
     stopLossPct: row.stop_loss_pct === null ? null : Number(row.stop_loss_pct),
@@ -87,7 +87,7 @@ function toTradingSession(row: TradingSessionRow): TradingSession {
 }
 
 const COLUMNS =
-  "id, symbol, decision_maker, decision_frequency_seconds, leverage, position_size_usd, history_window_samples, history_format, store_decision_payloads, stop_loss_pct, wallet_id, status, created_at, closed_at";
+  "id, symbol, decision_maker, decision_frequency_seconds, leverage, position_size_usd, history_window_seconds, history_format, store_decision_payloads, stop_loss_pct, wallet_id, status, created_at, closed_at";
 
 export interface SessionRow {
   session: TradingSession;
@@ -158,7 +158,7 @@ export interface CreateTradingSessionInput {
   decisionFrequencySeconds: number;
   leverage: number;
   positionSizeUsd: number;
-  historyWindowSamples?: number;
+  historyWindowSeconds?: number;
   historyFormat?: HistoryFormat;
   storeDecisionPayloads?: boolean;
   stopLossPct?: number | null;
@@ -189,7 +189,7 @@ export async function createTradingSession(
     const result = await pool.query<TradingSessionRow>(
       `INSERT INTO trading_sessions
          (symbol, decision_maker, decision_frequency_seconds, leverage, position_size_usd,
-          history_window_samples, history_format, store_decision_payloads, stop_loss_pct, wallet_id, status)
+          history_window_seconds, history_format, store_decision_payloads, stop_loss_pct, wallet_id, status)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'active')
        RETURNING ${COLUMNS}`,
       [
@@ -198,7 +198,7 @@ export async function createTradingSession(
         input.decisionFrequencySeconds,
         input.leverage,
         input.positionSizeUsd,
-        input.historyWindowSamples ?? DEFAULT_HISTORY_WINDOW_SAMPLES,
+        input.historyWindowSeconds ?? DEFAULT_HISTORY_WINDOW_SECONDS,
         input.historyFormat ?? DEFAULT_HISTORY_FORMAT,
         input.storeDecisionPayloads ?? false,
         input.stopLossPct ?? null,
@@ -216,7 +216,7 @@ export type TradingSessionConfigPatch = Partial<
     | "decisionFrequencySeconds"
     | "leverage"
     | "positionSizeUsd"
-    | "historyWindowSamples"
+    | "historyWindowSeconds"
     | "historyFormat"
     | "storeDecisionPayloads"
     | "stopLossPct"
@@ -236,7 +236,7 @@ export function mergeTradingSessionConfig(
   decisionFrequencySeconds: number;
   leverage: number;
   positionSizeUsd: number;
-  historyWindowSamples: number;
+  historyWindowSeconds: number;
   historyFormat: HistoryFormat;
   storeDecisionPayloads: boolean;
   stopLossPct: number | null;
@@ -247,8 +247,8 @@ export function mergeTradingSessionConfig(
       patch.decisionFrequencySeconds ?? existing.decisionFrequencySeconds,
     leverage: patch.leverage ?? existing.leverage,
     positionSizeUsd: patch.positionSizeUsd ?? existing.positionSizeUsd,
-    historyWindowSamples:
-      patch.historyWindowSamples ?? existing.historyWindowSamples,
+    historyWindowSeconds:
+      patch.historyWindowSeconds ?? existing.historyWindowSeconds,
     historyFormat: patch.historyFormat ?? existing.historyFormat,
     storeDecisionPayloads:
       patch.storeDecisionPayloads ?? existing.storeDecisionPayloads,
@@ -277,7 +277,7 @@ export async function updateTradingSessionConfig(
          decision_frequency_seconds = $3,
          leverage = $4,
          position_size_usd = $5,
-         history_window_samples = $6,
+         history_window_seconds = $6,
          history_format = $7,
          store_decision_payloads = $8,
          stop_loss_pct = $9
@@ -289,7 +289,7 @@ export async function updateTradingSessionConfig(
       merged.decisionFrequencySeconds,
       merged.leverage,
       merged.positionSizeUsd,
-      merged.historyWindowSamples,
+      merged.historyWindowSeconds,
       merged.historyFormat,
       merged.storeDecisionPayloads,
       merged.stopLossPct,
@@ -352,4 +352,22 @@ export async function hardCloseTradingSession(
     [id],
   );
   return result.rows[0] ? toTradingSession(result.rows[0]) : null;
+}
+
+/**
+ * Requests a hard close for every session still trading `symbol` — what
+ * turning a market's sampling off implies, since no market may be traded
+ * without fresh price history.
+ */
+export async function hardCloseTradingSessionsForSymbol(
+  pool: Pool,
+  symbol: string,
+): Promise<TradingSession[]> {
+  const result = await pool.query<TradingSessionRow>(
+    `UPDATE trading_sessions SET status = 'hard_closing'
+     WHERE symbol = $1 AND status IN ('active', 'soft_closing')
+     RETURNING ${COLUMNS}`,
+    [symbol],
+  );
+  return result.rows.map(toTradingSession);
 }

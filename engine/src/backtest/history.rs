@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
-use crate::decision::{HistoryError, MarketDataHistoryReader};
+use crate::decision::{read_window, HistoryError, HistorySample, MarketDataHistoryReader};
 use crate::market_data::MarketDataSample;
 
 use super::clock::SimClock;
@@ -62,5 +63,18 @@ impl MarketDataHistoryReader for ReplayMarketDataHistoryReader {
                 },
             )
             .collect())
+    }
+
+    async fn samples_in_window(
+        &self,
+        symbol: &str,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<Vec<HistorySample>, HistoryError> {
+        // `to` is already the replay's simulated "now"; capping it at the
+        // clock anyway keeps the no-lookahead guarantee local to this
+        // reader rather than trusting every caller.
+        let to = to.min(self.clock.get());
+        read_window(&self.pool, symbol, from, to).await
     }
 }

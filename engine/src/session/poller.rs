@@ -31,7 +31,7 @@ fn row_to_session(row: SessionRow) -> Option<TradingSessionConfig> {
         decision_frequency_seconds,
         leverage,
         position_size_usd,
-        history_window_samples,
+        history_window_seconds,
         history_format,
         wallet_id,
         status,
@@ -62,7 +62,7 @@ fn row_to_session(row: SessionRow) -> Option<TradingSessionConfig> {
         // Clamped rather than rejected: a window outside the readable
         // range is a config mistake, not a reason to stop trading a
         // session entirely.
-        history_window_samples: effective_history_window(history_window_samples.max(0) as u32),
+        history_window_seconds: effective_history_window(history_window_seconds.max(0) as u32),
         history_format,
         wallet_id,
         status,
@@ -79,7 +79,7 @@ async fn refresh(pool: &PgPool, store: &SessionStore) {
     let rows = match sqlx::query_as::<_, SessionRow>(
         r#"
         SELECT id::text, symbol, decision_maker, decision_frequency_seconds,
-               leverage, position_size_usd, history_window_samples,
+               leverage, position_size_usd, history_window_seconds,
                history_format, wallet_id::text, status, store_decision_payloads,
                stop_loss_pct
         FROM trading_sessions
@@ -203,7 +203,7 @@ mod tests {
             30.0,
             5.0,
             250.0,
-            500,
+            3600,
             "raw".to_string(),
             Some("w1".to_string()),
             "soft_closing".to_string(),
@@ -214,7 +214,7 @@ mod tests {
         assert_eq!(session.id, "s1");
         assert_eq!(session.decision_maker, DecisionMakerKind::OpenRouter);
         assert_eq!(session.status, TradingSessionStatus::SoftClosing);
-        assert_eq!(session.history_window_samples, 500);
+        assert_eq!(session.history_window_seconds, 3600);
         assert_eq!(session.history_format, HistoryFormat::Raw);
         assert_eq!(session.wallet_id.as_deref(), Some("w1"));
         assert!(session.store_decision_payloads);
@@ -239,6 +239,9 @@ mod tests {
         // The column's CHECK constraint makes 0 unreachable in practice;
         // the engine still degrades to the smallest readable window
         // rather than refusing to run the session.
-        assert_eq!(row_to_session(row).unwrap().history_window_samples, 1);
+        assert_eq!(
+            row_to_session(row).unwrap().history_window_seconds,
+            crate::decision::MIN_HISTORY_WINDOW_SECONDS
+        );
     }
 }

@@ -55,7 +55,7 @@ mod tests {
             decision_frequency_seconds: 300.0,
             leverage: 1.0,
             position_size_usd: 100.0,
-            history_window_samples: 500,
+            history_window_seconds: 3600,
             history_format: HistoryFormat::Raw,
             wallet_id: None,
             status: TradingSessionStatus::Active,

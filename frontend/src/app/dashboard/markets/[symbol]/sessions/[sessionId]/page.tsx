@@ -12,6 +12,7 @@ import DecisionHistoryPanel from "@/components/DecisionHistoryPanel";
 import { SiteHeader } from "@/components/SiteHeader";
 import { Uptime } from "@/components/RelativeTime";
 import { formatShortDateTime } from "@/lib/format";
+import { formatHistoryWindow } from "@/lib/historyWindow";
 import {
   Button,
   Card,
@@ -300,7 +301,7 @@ export default function SessionDetailPage() {
                 History window
               </span>
               <span className="text-sm font-medium text-text">
-                {session.historyWindowSamples} samples ({session.historyFormat})
+                {formatHistoryWindow(session.historyWindowSeconds)} ({session.historyFormat})
               </span>
             </div>
             <div className="flex flex-col gap-0.5">

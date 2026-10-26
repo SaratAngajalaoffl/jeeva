@@ -5,7 +5,7 @@ An AI-assisted trading application that uses a DecisionMaker backed by Jev (a Ty
 ## Language
 
 **PERP**:
-A perpetual futures market on Hyperliquid (e.g. BTC-PERP). Each PERP has two independent switches: **trading enabled** (whether the decision loop consults its configured DecisionMaker and places/mock-places orders for it) and **sampling enabled** (whether the market-data loop records its price/OI/volume/spread history). Sampling runs independently of trading, so a PERP can be sampled without trading; the reverse is prevented — enabling trading for a market automatically enables sampling for it too, so no market is ever traded blind. A PERP's **decision maker** (see DecisionMaker) is a third, independent per-PERP setting, chosen when trading is enabled.
+A perpetual futures market on Hyperliquid (e.g. BTC-PERP). Each PERP has two independent switches: **trading enabled** (whether the decision loop consults its configured DecisionMaker and places/mock-places orders for it) and **sampling enabled** (whether the market-data loop records its price/OI/volume/spread history). Sampling runs independently of trading, so a PERP can be sampled without trading; the reverse is prevented — enabling trading for a market automatically enables sampling for it too, and disabling sampling hard-closes every session still trading it (enforced by the API, with an engine-side guard as a backstop), so no market is ever traded blind. A PERP's **decision maker** (see DecisionMaker) is a third, independent per-PERP setting, chosen when trading is enabled.
 
 **Jev**:
 The TypeSafe System One model that answers structured questions (Choice/Score/Noul) against a text `state`, used here to decide the target direction. Not a chat/agent loop — a single evaluation call. Reachable through more than one DecisionMaker backend (see DecisionMaker).
@@ -45,11 +45,11 @@ A persistent virtual account used in mock mode, configured once with an initial 
 _Avoid_: session, mock session — trading is enabled/disabled per PERP, not started/stopped as a session.
 
 **History Window**:
-How much sampled market data a Trading Session reads and hands to its DecisionMaker each cycle, as a number of most-recent samples (1–1000, `trading_sessions.history_window_samples`). Per-session, not per-PERP, so two sessions on the same PERP can reason over different amounts of history.
-_Avoid_: lookback, timeframe — this counts samples, not wall-clock time.
+How much sampled market data a Trading Session reads and hands to its DecisionMaker each cycle, as a span of wall-clock time ending at the cycle (1 minute–30 days, `trading_sessions.history_window_seconds`). Only samples recorded inside the window are read — if sampling stopped, the window drains rather than replaying old data, and a cycle with an empty window is skipped. A window holding more than 1000 samples is thinned evenly across its span. Per-session, not per-PERP, so two sessions on the same PERP can reason over different amounts of history.
+_Avoid_: "last N samples" — a sample count goes stale silently when sampling stops.
 
 **History Format**:
-How that History Window is rendered into the DecisionMaker's `state`: `summary` (per-field min/max/average across the window — the compact default) or `raw` (every sample as its own data point, oldest first). A property of the session (`trading_sessions.history_format`), independent of the window's size, so any window can be sent either way. A raw window costs roughly 40 tokens per sample.
+How that History Window is rendered into the DecisionMaker's `state`: `summary` (per-field min/max/average across the window — the compact default) or `raw` (every sample as its own timestamped data point, oldest first). Either way the state opens with the window, the as-of time, the span the samples actually cover and the age of the latest sample. A property of the session (`trading_sessions.history_format`), independent of the window's size, so any window can be sent either way. A raw window costs roughly 50 tokens per sample.
 _Avoid_: "full history" — the window is always bounded; `raw` changes the rendering, not the amount read.
 
 **Decision Payload Storage**:

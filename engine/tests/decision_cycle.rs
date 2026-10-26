@@ -1,9 +1,10 @@
 use std::sync::Mutex;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use engine::decision::{
     run_decision_cycle, DecisionLogEntry, DecisionLogWriter, Direction, DriftOutcome,
-    ExecutionAdapter, ExecutionError, HistoryError, InMemoryFailureTracker,
+    ExecutionAdapter, ExecutionError, HistoryError, HistorySample, InMemoryFailureTracker,
     MarketDataHistoryReader, OpenPosition, RandomDecisionMaker, ReconcileTarget, SessionLifecycle,
     TargetDirection, DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
 };
@@ -21,17 +22,35 @@ impl FundingHistoryReader for EmptyFunding {
 }
 
 struct FakeHistory {
-    samples: Vec<MarketDataSample>,
-    /// Every `limit` the cycle asked for, so tests can assert the
-    /// session's configured window actually reaches the reader.
-    requested_limits: Mutex<Vec<u32>>,
+    samples: Vec<HistorySample>,
+    /// The span (in seconds) of every window the cycle asked for, so
+    /// tests can assert the session's configured window reaches the
+    /// reader.
+    requested_windows: Mutex<Vec<i64>>,
 }
 
 impl FakeHistory {
+    /// Samples one second apart, the latest recorded just now — always
+    /// inside any window a cycle run right after this reads.
     fn new(samples: Vec<MarketDataSample>) -> Self {
+        let now = Utc::now();
+        let count = samples.len() as i64;
+        Self::at(
+            samples
+                .into_iter()
+                .enumerate()
+                .map(|(i, sample)| HistorySample {
+                    time: now - chrono::Duration::seconds(count - 1 - i as i64),
+                    sample,
+                })
+                .collect(),
+        )
+    }
+
+    fn at(samples: Vec<HistorySample>) -> Self {
         Self {
             samples,
-            requested_limits: Mutex::new(Vec::new()),
+            requested_windows: Mutex::new(Vec::new()),
         }
     }
 }
@@ -43,8 +62,29 @@ impl MarketDataHistoryReader for FakeHistory {
         _symbol: &str,
         limit: u32,
     ) -> Result<Vec<MarketDataSample>, HistoryError> {
-        self.requested_limits.lock().unwrap().push(limit);
-        Ok(self.samples.clone())
+        let skip = self.samples.len().saturating_sub(limit as usize);
+        Ok(self.samples[skip..]
+            .iter()
+            .map(|point| point.sample.clone())
+            .collect())
+    }
+
+    async fn samples_in_window(
+        &self,
+        _symbol: &str,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<Vec<HistorySample>, HistoryError> {
+        self.requested_windows
+            .lock()
+            .unwrap()
+            .push((to - from).num_seconds());
+        Ok(self
+            .samples
+            .iter()
+            .filter(|point| point.time > from && point.time <= to)
+            .cloned()
+            .collect())
     }
 }
 
@@ -57,6 +97,15 @@ impl MarketDataHistoryReader for EmptyHistory {
         _symbol: &str,
         _limit: u32,
     ) -> Result<Vec<MarketDataSample>, HistoryError> {
+        Ok(vec![])
+    }
+
+    async fn samples_in_window(
+        &self,
+        _symbol: &str,
+        _from: DateTime<Utc>,
+        _to: DateTime<Utc>,
+    ) -> Result<Vec<HistorySample>, HistoryError> {
         Ok(vec![])
     }
 }
@@ -178,6 +227,7 @@ struct LoggedEntry {
     success: bool,
     direction: Option<String>,
     error: Option<String>,
+    context_summary: String,
 }
 
 #[derive(Default)]
@@ -192,6 +242,7 @@ impl DecisionLogWriter for FakeDecisionLog {
             success: entry.error.is_none(),
             direction: entry.decision.map(|d| d.direction.as_str().to_string()),
             error: entry.error.map(|e| e.to_string()),
+            context_summary: entry.context_summary.to_string(),
         });
         Ok(())
     }
@@ -243,7 +294,7 @@ fn config() -> TradingSessionConfig {
         decision_frequency_seconds: 60.0,
         leverage: 2.0,
         position_size_usd: 500.0,
-        history_window_samples: 250,
+        history_window_seconds: 3600,
         history_format: engine::decision::HistoryFormat::Summary,
         wallet_id: None,
         status: TradingSessionStatus::Active,
@@ -412,6 +463,20 @@ async fn a_mock_cycle_still_places_its_order_without_a_freshness_re_read() {
             } else {
                 Ok(Vec::new())
             }
+        }
+
+        async fn samples_in_window(
+            &self,
+            _symbol: &str,
+            _from: DateTime<Utc>,
+            to: DateTime<Utc>,
+        ) -> Result<Vec<HistorySample>, HistoryError> {
+            Ok(self
+                .recent_samples("BTC", 1)
+                .await?
+                .into_iter()
+                .map(|sample| HistorySample { time: to, sample })
+                .collect())
         }
     }
 
@@ -727,7 +792,7 @@ async fn reads_the_sessions_configured_history_window() {
     let log = FakeDecisionLog::default();
 
     let config = TradingSessionConfig {
-        history_window_samples: 42,
+        history_window_seconds: 7200,
         ..config()
     };
 
@@ -747,7 +812,7 @@ async fn reads_the_sessions_configured_history_window() {
     )
     .await;
 
-    assert_eq!(*history.requested_limits.lock().unwrap(), vec![42]);
+    assert_eq!(*history.requested_windows.lock().unwrap(), vec![7200]);
 }
 
 #[tokio::test]
@@ -758,7 +823,7 @@ async fn clamps_an_out_of_range_history_window_before_reading() {
     let log = FakeDecisionLog::default();
 
     let config = TradingSessionConfig {
-        history_window_samples: 0,
+        history_window_seconds: 0,
         ..config()
     };
 
@@ -778,7 +843,7 @@ async fn clamps_an_out_of_range_history_window_before_reading() {
     )
     .await;
 
-    assert_eq!(*history.requested_limits.lock().unwrap(), vec![1]);
+    assert_eq!(*history.requested_windows.lock().unwrap(), vec![60]);
 }
 
 #[tokio::test]
@@ -811,7 +876,9 @@ async fn raw_history_format_sends_every_sample_to_the_decision_maker() {
 
     let states = decision_maker.states.lock().unwrap();
     assert_eq!(states.len(), 1);
-    assert!(states[0].contains("price_history=raw (oldest first, 3 samples"));
+    assert!(states[0].contains("window=last 1h"));
+    assert!(states[0].contains("3 samples from"));
+    assert!(states[0].contains("price_history=raw (oldest first"));
     assert!(states[0].contains("price=90.00"));
     assert!(states[0].contains("price=100.00"));
     assert!(states[0].contains("price=110.00"));
@@ -844,4 +911,95 @@ async fn summary_history_format_sends_the_averaged_rendering() {
     assert_eq!(states.len(), 1);
     assert!(states[0].contains("avg=100.00"));
     assert!(!states[0].contains("price_history=raw"));
+}
+
+#[tokio::test]
+async fn never_decides_on_samples_older_than_the_window() {
+    // Sampling stopped two hours ago: the market still has history, but
+    // none of it is inside the session's one-hour window, so the
+    // decision maker must not be consulted with it.
+    let stopped_at = Utc::now() - chrono::Duration::hours(2);
+    let history = FakeHistory::at(vec![HistorySample {
+        time: stopped_at,
+        sample: sample(100.0),
+    }]);
+    let decision_maker = RandomDecisionMaker::with_sequence(vec![TargetDirection::Long]);
+    let execution = FakeExecution::default();
+    let log = FakeDecisionLog::default();
+
+    run_decision_cycle(
+        "session-1",
+        "BTC",
+        &config(),
+        DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+        Utc::now(),
+        &history,
+        &decision_maker,
+        &execution,
+        &EmptyFunding,
+        &log,
+        &InMemoryFailureTracker::new(),
+        &NoopLifecycle,
+    )
+    .await;
+
+    assert!(execution.open_calls.lock().unwrap().is_empty());
+    let entries = log.entries.lock().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(
+        entries[0].error.as_deref(),
+        Some("no market data in the history window")
+    );
+    assert!(entries[0]
+        .context_summary
+        .starts_with("BTC: no market data in the last 1h"));
+}
+
+#[tokio::test]
+async fn a_hard_close_still_flattens_when_the_window_is_empty() {
+    // Turning sampling off is what hard-closes the session, so by the
+    // time it's flattened the window may already be empty; the close
+    // must still go through at the latest known price.
+    struct RecordingLifecycle(Mutex<Vec<String>>);
+
+    #[async_trait]
+    impl SessionLifecycle for RecordingLifecycle {
+        async fn mark_closed(&self, session_id: &str) {
+            self.0.lock().unwrap().push(session_id.to_string());
+        }
+    }
+
+    let history = FakeHistory::at(vec![HistorySample {
+        time: Utc::now() - chrono::Duration::hours(2),
+        sample: sample(100.0),
+    }]);
+    let decision_maker = RandomDecisionMaker::with_sequence(vec![TargetDirection::Long]);
+    let execution = FakeExecution::default();
+    let log = FakeDecisionLog::default();
+    let lifecycle = RecordingLifecycle(Mutex::new(Vec::new()));
+
+    let config = TradingSessionConfig {
+        status: TradingSessionStatus::HardClosing,
+        ..config()
+    };
+
+    run_decision_cycle(
+        "session-1",
+        "BTC",
+        &config,
+        DEFAULT_MIN_CONFIDENCE_TO_SHIFT,
+        Utc::now(),
+        &history,
+        &decision_maker,
+        &execution,
+        &EmptyFunding,
+        &log,
+        &InMemoryFailureTracker::new(),
+        &lifecycle,
+    )
+    .await;
+
+    assert_eq!(execution.close_calls.lock().unwrap().len(), 1);
+    assert_eq!(*lifecycle.0.lock().unwrap(), vec!["session-1".to_string()]);
+    assert!(history.requested_windows.lock().unwrap().is_empty());
 }

@@ -74,7 +74,7 @@ flowchart LR
 
 Each tick of a trading-enabled PERP's loop does the following, in order:
 
-1. **Read recent market history** for that PERP (up to the session's configured history window — 1000 samples by default, tunable per session from the dashboard) from TimescaleDB.
+1. **Read recent market history** for that PERP from TimescaleDB — only samples recorded within the session's configured history window (the last 24 hours by default, tunable per session from the dashboard). If nothing was sampled in that window, the cycle is skipped rather than deciding on stale data.
 2. **Read the current position** (flat/long/short) from the configured `ExecutionAdapter`.
 3. **Summarize state and ask the DecisionMaker** for a target direction (see [What Jev sees](#what-jev-sees) below).
 4. **Diff target vs. current position**:
@@ -94,7 +94,8 @@ A run of 5 consecutive failures on any step (market data, decision maker, or exe
 Jev never sees raw database rows by default — the engine builds a compact text summary of everything relevant and asks a single structured **Choice** question (`long` / `short` / `flat`). For example, the `state` text sent looks like:
 
 ```
-BTC: price=64213.50 (change over last 1000 samples: +1.84%, min=62900.10, max=64580.00, avg=63750.22),
+BTC: window=last 1d (as_of=2026-09-19T18:44:00Z, 1000 samples from 2026-09-18T18:44:30Z to 2026-09-19T18:43:57Z, latest_sample_age_seconds=3);
+price=64213.50 (change over window: +1.84%, min=62900.10, max=64580.00, avg=63750.22),
 open_interest=182340.00 (min=178000.00, max=185200.00, avg=181500.00),
 volume=942310.00 (min=810000.00, max=1050000.00, avg=925000.00),
 spread=0.0120 (min=0.0080, max=0.0210, avg=0.0130),
@@ -103,19 +104,20 @@ position=long (opened_at=2026-09-19T18:02:11Z, held_for_minutes=42.0, entry_pric
 funding_rate=0.000031 (as_of=2026-09-19T18:00:00Z)
 ```
 
-That's: the latest price plus min/max/average over the whole sampled window, the same stats for open interest/volume/spread, the current position (or `flat`) with how long it's been held and its unrealized P&L, and the most recent real funding rate. Jev responds with a choice (`long`/`short`/`flat`), a confidence, and a probability for each of the three outcomes — all of which get written to the decision log.
+That's: which window was read and how fresh its latest sample is, the latest price plus min/max/average over the whole window, the same stats for open interest/volume/spread, the current position (or `flat`) with how long it's been held and its unrealized P&L, and the most recent real funding rate. Jev responds with a choice (`long`/`short`/`flat`), a confidence, and a probability for each of the three outcomes — all of which get written to the decision log.
 
-Averaging the window away is compact but discards its shape — trend, spikes, the order moves happened in. Sessions can instead be configured with a **history format** of `raw`, which sends every sample in the window as its own data point (oldest first), alongside the same position and funding lines:
+Averaging the window away is compact but discards its shape — trend, spikes, the order moves happened in. Sessions can instead be configured with a **history format** of `raw`, which sends every sample in the window as its own timestamped data point (oldest first), alongside the same window, position and funding lines:
 
 ```
-BTC: price_history=raw (oldest first, 3 samples, change +10.09%):
-[price=64200.00,mid_price=64200.50,open_interest=182100.00,volume=940000.00,spread=0.0120;
- price=64213.50,mid_price=64214.00,open_interest=182340.00,volume=942310.00,spread=0.0119;
- price=70680.00,mid_price=70680.10,open_interest=183000.00,volume=980000.00,spread=0.0140];
+BTC: window=last 3m (as_of=2026-09-19T18:44:00Z, 3 samples from 2026-09-19T18:41:00Z to 2026-09-19T18:43:00Z, latest_sample_age_seconds=60);
+price_history=raw (oldest first, change +10.09%):
+[t=2026-09-19T18:41:00Z,price=64200.00,mid_price=64200.50,open_interest=182100.00,volume=940000.00,spread=0.0120;
+ t=2026-09-19T18:42:00Z,price=64213.50,mid_price=64214.00,open_interest=182340.00,volume=942310.00,spread=0.0119;
+ t=2026-09-19T18:43:00Z,price=70680.00,mid_price=70680.10,open_interest=183000.00,volume=980000.00,spread=0.0140];
 position=long (...); funding_rate=0.000031 (as_of=...)
 ```
 
-Both the window size (1–1000 samples) and the format (`summary` or `raw`) are set per session when it's created, and can be changed afterwards; unset, they default to `1000` and `summary`, which is exactly the behavior above. A raw window costs roughly 40 tokens per sample, so a 1000-sample raw window is a large prompt — dial the window down when using `raw`.
+Both the window (1 minute to 30 days) and the format (`summary` or `raw`) are set per session when it's created, and can be changed afterwards; unset, they default to the last 24 hours and `summary`. However long the window, at most 1000 samples are read: a denser window is thinned evenly across its whole span. A raw window costs roughly 50 tokens per sample, so a full 1000-sample raw window is a large prompt — shorten the window when using `raw`.
 
 ## DecisionMaker: three ways to reach Jev (or not)
 

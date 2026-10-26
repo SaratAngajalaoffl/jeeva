@@ -484,7 +484,7 @@ mod tests {
             decision_frequency_seconds: 30.0,
             leverage: 1.0,
             position_size_usd: 100.0,
-            history_window_samples: 250,
+            history_window_seconds: 3600,
             history_format: HistoryFormat::Summary,
             wallet_id: wallet_id.map(|s| s.to_string()),
             status,
@@ -565,9 +565,11 @@ mod tests {
     use std::sync::Mutex;
 
     use async_trait::async_trait;
+    use chrono::{DateTime, Utc};
 
     use crate::decision::{
-        DriftOutcome, ExecutionError, HistoryError, LogError, OpenPosition, ReconcileTarget,
+        DriftOutcome, ExecutionError, HistoryError, HistorySample, LogError, OpenPosition,
+        ReconcileTarget,
     };
     use crate::market_data::MarketDataSample;
 
@@ -670,6 +672,20 @@ mod tests {
                 spread: 0.1,
                 mid_price: 100.0,
             }])
+        }
+
+        async fn samples_in_window(
+            &self,
+            symbol: &str,
+            _from: DateTime<Utc>,
+            to: DateTime<Utc>,
+        ) -> Result<Vec<HistorySample>, HistoryError> {
+            Ok(self
+                .recent_samples(symbol, 1)
+                .await?
+                .into_iter()
+                .map(|sample| HistorySample { time: to, sample })
+                .collect())
         }
     }
 

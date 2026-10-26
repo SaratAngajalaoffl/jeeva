@@ -11,6 +11,7 @@ import PriceVolumeChart, {
 } from "@/components/PriceVolumeChart";
 import DecisionHistoryPanel from "@/components/DecisionHistoryPanel";
 import Modal from "@/components/Modal";
+import { DisableSamplingConfirm } from "@/components/DisableSamplingConfirm";
 import { SamplingIcon } from "@/components/icons";
 import {
   attachSessionWallet,
@@ -47,6 +48,10 @@ import {
 } from "@/lib/api";
 import { Uptime } from "@/components/RelativeTime";
 import { formatShortDateTime } from "@/lib/format";
+import {
+  historyWindowSeconds,
+  type HistoryWindowUnit,
+} from "@/lib/historyWindow";
 import { SiteHeader } from "@/components/SiteHeader";
 import {
   Button,
@@ -145,7 +150,7 @@ function SessionStatusBadge({ status }: { status: TradingSession["status"] }) {
   );
 }
 
-type ConfigDialog = "sampling" | "new-session" | null;
+type ConfigDialog = "sampling" | "disable-sampling" | "new-session" | null;
 type DetailTab = "position" | "decisions" | "funding" | "sessions";
 type BookTab = "book" | "trades";
 
@@ -321,7 +326,11 @@ export default function MarketDataPage() {
   function handleSamplingClick() {
     if (!perp) return;
     if (perp.samplingEnabled) {
-      applyPatch({ samplingEnabled: false });
+      if ((activeSessionCount ?? 0) > 0) {
+        setDialog("disable-sampling");
+      } else {
+        applyPatch({ samplingEnabled: false });
+      }
     } else {
       setDialog("sampling");
     }
@@ -716,6 +725,24 @@ export default function MarketDataPage() {
         </Modal>
       )}
 
+      {dialog === "disable-sampling" && (
+        <Modal
+          title={`Disable sampling — ${symbol}`}
+          onClose={() => setDialog(null)}
+        >
+          <DisableSamplingConfirm
+            symbol={symbol}
+            openSessionCount={activeSessionCount ?? 0}
+            onCancel={() => setDialog(null)}
+            onConfirm={async () => {
+              await applyPatch({ samplingEnabled: false });
+              setDialog(null);
+              refreshSessions();
+            }}
+          />
+        </Modal>
+      )}
+
       {dialog === "new-session" && (
         <Modal
           title={`New trading session — ${symbol}`}
@@ -915,7 +942,9 @@ function NewSessionForm({
     useState("300");
   const [leverage, setLeverage] = useState("1");
   const [positionSizeUsd, setPositionSizeUsd] = useState("100");
-  const [historyWindowSamples, setHistoryWindowSamples] = useState("1000");
+  const [historyWindowAmount, setHistoryWindowAmount] = useState("24");
+  const [historyWindowUnit, setHistoryWindowUnit] =
+    useState<HistoryWindowUnit>("hours");
   const [historyFormat, setHistoryFormat] = useState<HistoryFormat>("summary");
   const [storeDecisionPayloads, setStoreDecisionPayloads] = useState(false);
   const [stopLossPct, setStopLossPct] = useState("");
@@ -1026,7 +1055,10 @@ function NewSessionForm({
         const decision = Number(decisionFrequencySeconds);
         const lev = Number(leverage);
         const size = Number(positionSizeUsd);
-        const history = Number(historyWindowSamples);
+        const history = historyWindowSeconds(
+          historyWindowAmount,
+          historyWindowUnit,
+        );
         const stopLoss =
           stopLossPct.trim() === "" ? null : Number(stopLossPct) / 100;
         if (
@@ -1036,9 +1068,7 @@ function NewSessionForm({
           lev <= 0 ||
           !Number.isFinite(size) ||
           size <= 0 ||
-          !Number.isInteger(history) ||
-          history < 1 ||
-          history > 1000 ||
+          history === null ||
           (stopLoss !== null &&
             (!Number.isFinite(stopLoss) || stopLoss <= 0 || stopLoss > 1))
         ) {
@@ -1077,7 +1107,7 @@ function NewSessionForm({
             decisionFrequencySeconds: decision,
             leverage: lev,
             positionSizeUsd: size,
-            historyWindowSamples: history,
+            historyWindowSeconds: history,
             historyFormat,
             storeDecisionPayloads,
             startTime: new Date(startTime).toISOString(),
@@ -1102,7 +1132,7 @@ function NewSessionForm({
           decisionFrequencySeconds: decision,
           leverage: lev,
           positionSizeUsd: size,
-          historyWindowSamples: history,
+          historyWindowSeconds: history,
           historyFormat,
           storeDecisionPayloads,
           stopLossPct: stopLoss,
@@ -1177,16 +1207,34 @@ function NewSessionForm({
           onChange={(e) => setPositionSizeUsd(e.target.value)}
         />
       </label>
-      <label className="flex flex-col gap-1">
-        <Label>Price history window (samples)</Label>
-        <Input
-          type="number"
-          min={1}
-          max={1000}
-          value={historyWindowSamples}
-          onChange={(e) => setHistoryWindowSamples(e.target.value)}
-        />
-      </label>
+      <div className="flex flex-col gap-1">
+        <Label>Price history window (last…)</Label>
+        <div className="flex gap-2">
+          <Input
+            type="number"
+            min={0}
+            step="any"
+            aria-label="Price history window length"
+            value={historyWindowAmount}
+            onChange={(e) => setHistoryWindowAmount(e.target.value)}
+          />
+          <Select
+            aria-label="Price history window unit"
+            value={historyWindowUnit}
+            onChange={(e) =>
+              setHistoryWindowUnit(e.target.value as HistoryWindowUnit)
+            }
+          >
+            <option value="minutes">minutes</option>
+            <option value="hours">hours</option>
+            <option value="days">days</option>
+          </Select>
+        </div>
+        <span className="text-xs text-subtext-0">
+          Only data sampled within this window is sent to the decision maker
+          (1 minute to 30 days).
+        </span>
+      </div>
       <label className="flex flex-col gap-1">
         <Label>Price history format</Label>
         <Select

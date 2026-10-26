@@ -42,7 +42,7 @@ function session(overrides: Partial<TradingSessionRow> = {}): TradingSessionRow 
     decisionFrequencySeconds: 300,
     leverage: 1,
     positionSizeUsd: 100,
-    historyWindowSamples: 1000,
+    historyWindowSeconds: 86400,
     historyFormat: "summary",
     storeDecisionPayloads: false,
     stopLossPct: null,

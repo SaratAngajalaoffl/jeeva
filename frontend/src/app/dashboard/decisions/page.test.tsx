@@ -42,7 +42,7 @@ const activeBtcSession: TradingSession = {
   decisionFrequencySeconds: 60,
   leverage: 2,
   positionSizeUsd: 100,
-  historyWindowSamples: 1000,
+  historyWindowSeconds: 86400,
   historyFormat: "summary",
   storeDecisionPayloads: false,
   stopLossPct: null,

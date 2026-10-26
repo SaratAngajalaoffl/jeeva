@@ -14,7 +14,7 @@ pub struct BacktestRun {
     pub decision_frequency_seconds: f64,
     pub leverage: f64,
     pub position_size_usd: f64,
-    pub history_window_samples: u32,
+    pub history_window_seconds: u32,
     pub history_format: HistoryFormat,
     pub start_time: DateTime<Utc>,
     pub end_time: DateTime<Utc>,

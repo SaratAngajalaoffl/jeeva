@@ -51,7 +51,7 @@ fn to_session_config(run: &BacktestRun) -> TradingSessionConfig {
         decision_frequency_seconds: run.decision_frequency_seconds,
         leverage: run.leverage,
         position_size_usd: run.position_size_usd,
-        history_window_samples: run.history_window_samples,
+        history_window_seconds: run.history_window_seconds,
         history_format: run.history_format,
         wallet_id: None,
         // Always Active: HardClosing/SoftClosing are session-level
@@ -182,7 +182,7 @@ struct PendingBacktestRow {
     decision_frequency_seconds: f64,
     leverage: f64,
     position_size_usd: f64,
-    history_window_samples: i32,
+    history_window_seconds: i32,
     history_format: String,
     start_time: DateTime<Utc>,
     end_time: DateTime<Utc>,
@@ -213,7 +213,7 @@ async fn claim_next_pending(pool: &PgPool) -> Option<PendingBacktestRow> {
             FOR UPDATE SKIP LOCKED
         )
         RETURNING id::text, symbol, decision_maker, decision_frequency_seconds, leverage,
-                  position_size_usd, history_window_samples, history_format, start_time, end_time,
+                  position_size_usd, history_window_seconds, history_format, start_time, end_time,
                   store_decision_payloads
         "#,
     )
@@ -230,7 +230,7 @@ async fn claim_next_pending(pool: &PgPool) -> Option<PendingBacktestRow> {
             decision_frequency_seconds,
             leverage,
             position_size_usd,
-            history_window_samples,
+            history_window_seconds,
             history_format,
             start_time,
             end_time,
@@ -242,7 +242,7 @@ async fn claim_next_pending(pool: &PgPool) -> Option<PendingBacktestRow> {
             decision_frequency_seconds,
             leverage,
             position_size_usd,
-            history_window_samples,
+            history_window_seconds,
             history_format,
             start_time,
             end_time,
@@ -282,7 +282,7 @@ pub async fn run(
                     decision_frequency_seconds: row.decision_frequency_seconds,
                     leverage: row.leverage,
                     position_size_usd: row.position_size_usd,
-                    history_window_samples: row.history_window_samples.max(1) as u32,
+                    history_window_seconds: row.history_window_seconds.max(0) as u32,
                     history_format,
                     start_time: row.start_time,
                     end_time: row.end_time,

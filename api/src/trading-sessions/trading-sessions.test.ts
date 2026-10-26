@@ -168,49 +168,50 @@ describe("POST /perps/:symbol/trading-sessions", () => {
     expect(config).toBeNull();
   });
 
-  it("defaults the history window and format to the previous behavior", async () => {
+  it("defaults the history window to the last day, as a summary", async () => {
     const res = await createSession();
 
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({
-      historyWindowSamples: 1000,
+      historyWindowSeconds: 86400,
       historyFormat: "summary",
     });
   });
 
   it("accepts a configured history window and raw format", async () => {
     const res = await createSession({
-      historyWindowSamples: 25,
+      historyWindowSeconds: 3600,
       historyFormat: "raw",
     });
 
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({
-      historyWindowSamples: 25,
+      historyWindowSeconds: 3600,
       historyFormat: "raw",
     });
 
     const row = await pgPool.query<{
-      history_window_samples: number;
+      history_window_seconds: number;
       history_format: string;
     }>(
-      "SELECT history_window_samples, history_format FROM trading_sessions WHERE symbol = $1",
+      "SELECT history_window_seconds, history_format FROM trading_sessions WHERE symbol = $1",
       [SYMBOL],
     );
     // Asserted against the insert's own RETURNING payload (the response),
     // not a follow-up SELECT: parallel suites share this database and can
     // wipe `trading_sessions` in their own setup.
     expect(res.body).toMatchObject({
-      historyWindowSamples: 25,
+      historyWindowSeconds: 3600,
       historyFormat: "raw",
     });
     expect(row.rows.length).toBeLessThanOrEqual(1);
   });
 
   it.each([
-    { historyWindowSamples: 0 },
-    { historyWindowSamples: 1001 },
-    { historyWindowSamples: 12.5 },
+    { historyWindowSeconds: 0 },
+    { historyWindowSeconds: 59 },
+    { historyWindowSeconds: 30 * 24 * 60 * 60 + 1 },
+    { historyWindowSeconds: 3600.5 },
     { historyFormat: "averaged" },
   ])("rejects an invalid history config: %p", async (body) => {
     const res = await createSession(body);
@@ -227,7 +228,7 @@ describe("POST /perps/:symbol/trading-sessions", () => {
     const res = await request(buildApp())
       .patch("/trading-sessions/00000000-0000-0000-0000-000000000000")
       .set("Cookie", authCookie())
-      .send({ historyWindowSamples: 5000 });
+      .send({ historyWindowSeconds: 30 });
 
     expect(res.status).toBe(400);
   });
@@ -245,7 +246,7 @@ describe("POST /perps/:symbol/trading-sessions", () => {
     const res = await request(buildApp())
       .patch("/trading-sessions/00000000-0000-0000-0000-000000000000")
       .set("Cookie", authCookie())
-      .send({ historyWindowSamples: 50, historyFormat: "raw" });
+      .send({ historyWindowSeconds: 7200, historyFormat: "raw" });
 
     expect(res.status).toBe(404);
   });

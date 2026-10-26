@@ -351,8 +351,8 @@ export interface TradingSession {
   decisionFrequencySeconds: number;
   leverage: number;
   positionSizeUsd: number;
-  /** How many recent market-data samples the engine reads for this session's decision context. */
-  historyWindowSamples: number;
+  /** How far back (seconds, ending at each cycle) the engine reads market data for this session's decision context. */
+  historyWindowSeconds: number;
   /** Whether that window reaches the decision maker raw, or averaged into a min/max/avg summary. */
   historyFormat: HistoryFormat;
   /** Whether every decision cycle's raw Jev request/response is persisted, not just the parsed fields. */
@@ -400,8 +400,8 @@ export interface CreateTradingSessionInput {
   decisionFrequencySeconds: number;
   leverage: number;
   positionSizeUsd: number;
-  /** Omit to accept the API default (the maximum window). */
-  historyWindowSamples?: number;
+  /** Omit to accept the API default (the last day). */
+  historyWindowSeconds?: number;
   /** Omit to accept the API default ("summary"). */
   historyFormat?: HistoryFormat;
   /** Omit to accept the API default (false). */
@@ -714,7 +714,7 @@ export interface BacktestRun {
   decisionFrequencySeconds: number;
   leverage: number;
   positionSizeUsd: number;
-  historyWindowSamples: number;
+  historyWindowSeconds: number;
   historyFormat: HistoryFormat;
   storeDecisionPayloads: boolean;
   startTime: string;
@@ -732,7 +732,7 @@ export interface CreateBacktestInput {
   decisionFrequencySeconds: number;
   leverage: number;
   positionSizeUsd: number;
-  historyWindowSamples?: number;
+  historyWindowSeconds?: number;
   historyFormat?: HistoryFormat;
   storeDecisionPayloads?: boolean;
   startTime: string;

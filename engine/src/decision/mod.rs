@@ -23,8 +23,9 @@ pub use execution::{
 pub use health::{FailureTracker, InMemoryFailureTracker, PerpHealthTracker};
 pub use history::{
     build_context, build_context_series, build_context_summary, effective_history_window,
-    HistoryError, HistoryFormat, MarketDataHistoryReader, PostgresMarketDataHistoryReader,
-    MAX_HISTORY_WINDOW_SAMPLES,
+    format_window, read_window, HistoryError, HistoryFormat, HistorySample,
+    MarketDataHistoryReader, PostgresMarketDataHistoryReader, MAX_HISTORY_SAMPLES,
+    MAX_HISTORY_WINDOW_SECONDS, MIN_HISTORY_WINDOW_SECONDS,
 };
 pub use hyperliquid_signing::{KeyError, PrivateKey};
 pub use live_execution::LiveExecutionAdapter;

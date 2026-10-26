@@ -37,9 +37,10 @@ pub struct TradingSessionConfig {
     pub decision_frequency_seconds: f64,
     pub leverage: f64,
     pub position_size_usd: f64,
-    /// How many recent market-data samples to read for this session's
-    /// decision context, and in what form (see `HistoryFormat`).
-    pub history_window_samples: u32,
+    /// How far back (in seconds, ending at the cycle's "now") to read
+    /// market data for this session's decision context, and in what
+    /// form (see `HistoryFormat`).
+    pub history_window_seconds: u32,
     pub history_format: HistoryFormat,
     pub wallet_id: Option<String>,
     pub status: TradingSessionStatus,

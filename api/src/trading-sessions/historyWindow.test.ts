@@ -1,30 +1,37 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_HISTORY_FORMAT,
-  DEFAULT_HISTORY_WINDOW_SAMPLES,
+  DEFAULT_HISTORY_WINDOW_SECONDS,
   HISTORY_FORMATS,
   isValidHistoryFormat,
-  isValidHistoryWindowSamples,
-  MAX_HISTORY_WINDOW_SAMPLES,
+  isValidHistoryWindowSeconds,
+  MAX_HISTORY_WINDOW_SECONDS,
+  MIN_HISTORY_WINDOW_SECONDS,
 } from "./historyWindow.js";
 
-describe("isValidHistoryWindowSamples", () => {
-  it.each([1, 60, 250, MAX_HISTORY_WINDOW_SAMPLES])("accepts %p", (value) => {
-    expect(isValidHistoryWindowSamples(value)).toBe(true);
+describe("isValidHistoryWindowSeconds", () => {
+  it.each([
+    MIN_HISTORY_WINDOW_SECONDS,
+    3600,
+    86400,
+    MAX_HISTORY_WINDOW_SECONDS,
+  ])("accepts %p", (value) => {
+    expect(isValidHistoryWindowSeconds(value)).toBe(true);
   });
 
   it.each([
     0,
+    59,
     -1,
-    1001,
-    1.5,
+    MAX_HISTORY_WINDOW_SECONDS + 1,
+    90.5,
     NaN,
     Infinity,
     "100",
     null,
     undefined,
   ])("rejects %p", (value) => {
-    expect(isValidHistoryWindowSamples(value)).toBe(false);
+    expect(isValidHistoryWindowSeconds(value)).toBe(false);
   });
 });
 
@@ -42,11 +49,8 @@ describe("isValidHistoryFormat", () => {
 });
 
 describe("defaults", () => {
-  it("preserves the pre-configurable behavior", () => {
-    // The engine previously always read up to 1000 samples and rendered
-    // the averaged summary.
-    expect(DEFAULT_HISTORY_WINDOW_SAMPLES).toBe(MAX_HISTORY_WINDOW_SAMPLES);
-    expect(DEFAULT_HISTORY_WINDOW_SAMPLES).toBe(1000);
+  it("reads the last day as an averaged summary", () => {
+    expect(DEFAULT_HISTORY_WINDOW_SECONDS).toBe(24 * 60 * 60);
     expect(DEFAULT_HISTORY_FORMAT).toBe("summary");
   });
 });

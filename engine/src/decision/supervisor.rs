@@ -106,12 +106,12 @@ fn flat_decision() -> JevDecision {
 }
 
 /// Runs a single decision cycle for one trading session: builds context
-/// from recent market history (reading this session's configured window
-/// and rendering it in this session's configured format), asks its
-/// configured `DecisionMaker` for a Target Direction (or, when the
-/// session is closing, skips straight to a forced Flat target), compares
-/// it to the current Position State, applies the resulting action, and
-/// always writes a decision-log row. Free of any scheduling concerns,
+/// from the market history recorded within this session's configured
+/// window ending at `now` (rendered in this session's configured
+/// format), asks its configured `DecisionMaker` for a Target Direction
+/// (or, when the session is closing, skips straight to a forced Flat
+/// target), compares it to the current Position State, applies the
+/// resulting action, and always writes a decision-log row. Free of any scheduling concerns,
 /// so it's directly testable.
 ///
 /// `min_confidence_to_shift` is the engine-wide floor for acting on a
@@ -155,13 +155,53 @@ pub async fn run_decision_cycle(
     };
     execution.mark_decision_started(symbol).await;
 
-    let samples = match history
-        .recent_samples(
-            symbol,
-            effective_history_window(config.history_window_samples),
-        )
-        .await
-    {
+    // A hard close only needs a price to flatten at, never fresh decision
+    // context — it must not stall just because the window is empty (e.g.
+    // sampling was turned off, which is exactly what triggers it).
+    if config.status == TradingSessionStatus::HardClosing {
+        let latest_mid_price = match history.recent_samples(symbol, 1).await {
+            Ok(samples) => samples.last().map(|sample| sample.mid_price),
+            Err(error) => {
+                tracing::error!(symbol, session_id, %error, "failed to read latest price for hard close");
+                None
+            }
+        };
+        let result = match latest_mid_price {
+            Some(price) => execution
+                .close(session_id, symbol, price)
+                .await
+                .map_err(|e| e.to_string()),
+            None => Err("no market data available to flatten at".to_string()),
+        };
+        let _ = decision_log
+            .write(DecisionLogEntry {
+                symbol,
+                session_id: Some(session_id),
+                context_summary: "hard close: force-flattening position",
+                decision: None,
+                position_action: Some(super::model::PositionAction::Close),
+                error: result.as_ref().err().map(String::as_str),
+                auto_flatten: false,
+                raw_request: None,
+                raw_response: None,
+            })
+            .await;
+
+        match result {
+            Ok(()) => lifecycle.mark_closed(session_id).await,
+            Err(error) => {
+                tracing::error!(symbol, session_id, %error, "hard close failed to flatten position; will retry")
+            }
+        }
+        return;
+    }
+
+    // Only data recorded inside the session's window ever reaches the
+    // decision maker: if sampling stopped, the window drains instead of
+    // replaying the last samples ever recorded.
+    let window_seconds = effective_history_window(config.history_window_seconds);
+    let window_start = now - chrono::Duration::seconds(i64::from(window_seconds));
+    let samples = match history.samples_in_window(symbol, window_start, now).await {
         Ok(samples) => samples,
         Err(error) => {
             tracing::error!(symbol, session_id, %error, "failed to read market data history");
@@ -183,12 +223,20 @@ pub async fn run_decision_cycle(
     };
 
     if samples.is_empty() {
-        let context_summary =
-            build_context(symbol, &samples, None, None, config.history_format, now);
+        let context_summary = build_context(
+            symbol,
+            &samples,
+            window_seconds,
+            None,
+            None,
+            config.history_format,
+            now,
+        );
         tracing::warn!(
             symbol,
             session_id,
-            "no market data available yet; skipping decision cycle"
+            window_seconds,
+            "no market data in the history window; skipping decision cycle"
         );
         let _ = decision_log
             .write(DecisionLogEntry {
@@ -197,7 +245,7 @@ pub async fn run_decision_cycle(
                 context_summary: &context_summary,
                 decision: None,
                 position_action: None,
-                error: Some("no market data available yet"),
+                error: Some("no market data in the history window"),
                 auto_flatten: false,
                 raw_request: None,
                 raw_response: None,
@@ -206,40 +254,21 @@ pub async fn run_decision_cycle(
         return;
     }
 
-    let latest_mid_price = samples.last().unwrap().mid_price;
-
-    if config.status == TradingSessionStatus::HardClosing {
-        let result = execution.close(session_id, symbol, latest_mid_price).await;
-        let error = result.as_ref().err().map(|e| e.to_string());
-        let _ = decision_log
-            .write(DecisionLogEntry {
-                symbol,
-                session_id: Some(session_id),
-                context_summary: "hard close: force-flattening position",
-                decision: None,
-                position_action: Some(super::model::PositionAction::Close),
-                error: error.as_deref(),
-                auto_flatten: false,
-                raw_request: None,
-                raw_response: None,
-            })
-            .await;
-
-        match result {
-            Ok(()) => lifecycle.mark_closed(session_id).await,
-            Err(error) => {
-                tracing::error!(symbol, session_id, %error, "hard close failed to flatten position; will retry")
-            }
-        }
-        return;
-    }
+    let latest_mid_price = samples.last().unwrap().sample.mid_price;
 
     let current_position = match execution.get_position(session_id, symbol).await {
         Ok(position) => position,
         Err(error) => {
             tracing::error!(symbol, session_id, %error, "failed to read current position");
-            let context_summary =
-                build_context(symbol, &samples, None, None, config.history_format, now);
+            let context_summary = build_context(
+                symbol,
+                &samples,
+                window_seconds,
+                None,
+                None,
+                config.history_format,
+                now,
+            );
             handle_cycle_failure(
                 symbol,
                 &error.to_string(),
@@ -268,6 +297,7 @@ pub async fn run_decision_cycle(
     let context_summary = build_context(
         symbol,
         &samples,
+        window_seconds,
         current_position.as_ref(),
         latest_funding.as_ref(),
         config.history_format,
@@ -813,7 +843,7 @@ mod tests {
     use super::super::decision_maker::DecisionError;
     use super::super::execution::{ExecutionError, OpenPosition};
     use super::super::health::InMemoryFailureTracker;
-    use super::super::history::{HistoryError, HistoryFormat};
+    use super::super::history::{HistoryError, HistoryFormat, HistorySample};
     use super::super::log::LogError;
     use super::super::model::{Direction, JevDecision, Probabilities, TargetDirection};
     use super::*;
@@ -829,7 +859,7 @@ mod tests {
             decision_frequency_seconds: frequency,
             leverage: 1.0,
             position_size_usd: 100.0,
-            history_window_samples: 250,
+            history_window_seconds: 3600,
             history_format: HistoryFormat::Summary,
             wallet_id: Some("test-wallet".to_string()),
             status,
@@ -873,6 +903,20 @@ mod tests {
                 spread: 0.1,
                 mid_price: 100.0,
             }])
+        }
+
+        async fn samples_in_window(
+            &self,
+            symbol: &str,
+            _from: DateTime<Utc>,
+            to: DateTime<Utc>,
+        ) -> Result<Vec<HistorySample>, HistoryError> {
+            Ok(self
+                .recent_samples(symbol, 1)
+                .await?
+                .into_iter()
+                .map(|sample| HistorySample { time: to, sample })
+                .collect())
         }
     }
 

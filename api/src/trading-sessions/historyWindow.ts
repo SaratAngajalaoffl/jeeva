@@ -1,27 +1,28 @@
 /**
  * How much historical price data a trading session sends to its decision
- * maker, and in what form. Both bounds mirror the engine's own read cap
- * (`MAX_HISTORY_WINDOW_SAMPLES`) — a larger window can't be honoured,
- * and the dashboard's history endpoint caps at the same 1000 rows.
+ * maker, and in what form. The window is a span of wall-clock time ending
+ * at each decision cycle — never "the last N samples", which would keep
+ * replaying stale data once sampling stops. Both bounds mirror the
+ * engine's own (`MIN/MAX_HISTORY_WINDOW_SECONDS`); however long the
+ * window, the engine thins it to at most 1000 samples.
  */
 
-export const MIN_HISTORY_WINDOW_SAMPLES = 1;
-export const MAX_HISTORY_WINDOW_SAMPLES = 1000;
+export const MIN_HISTORY_WINDOW_SECONDS = 60;
+export const MAX_HISTORY_WINDOW_SECONDS = 30 * 24 * 60 * 60;
 
-/** What the engine read (and the dashboard rendered) before this was configurable. */
-export const DEFAULT_HISTORY_WINDOW_SAMPLES = MAX_HISTORY_WINDOW_SAMPLES;
+export const DEFAULT_HISTORY_WINDOW_SECONDS = 24 * 60 * 60;
 export const DEFAULT_HISTORY_FORMAT: HistoryFormat = "summary";
 
 export type HistoryFormat = "summary" | "raw";
 
 export const HISTORY_FORMATS: readonly HistoryFormat[] = ["summary", "raw"];
 
-export function isValidHistoryWindowSamples(value: unknown): value is number {
+export function isValidHistoryWindowSeconds(value: unknown): value is number {
   return (
     typeof value === "number" &&
     Number.isInteger(value) &&
-    value >= MIN_HISTORY_WINDOW_SAMPLES &&
-    value <= MAX_HISTORY_WINDOW_SAMPLES
+    value >= MIN_HISTORY_WINDOW_SECONDS &&
+    value <= MAX_HISTORY_WINDOW_SECONDS
   );
 }
 

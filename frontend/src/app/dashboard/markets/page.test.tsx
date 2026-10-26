@@ -50,7 +50,7 @@ function session(overrides: Partial<TradingSession> = {}): TradingSession {
     decisionFrequencySeconds: 300,
     leverage: 1,
     positionSizeUsd: 100,
-    historyWindowSamples: 1000,
+    historyWindowSeconds: 86400,
     historyFormat: "summary",
     storeDecisionPayloads: false,
     stopLossPct: null,
@@ -98,7 +98,7 @@ describe("MarketsPage", () => {
     expect(screen.getByLabelText("ETH disable sampling")).toBeInTheDocument();
   });
 
-  it("disabling sampling directly patches the config with no dialog", async () => {
+  it("disabling sampling directly patches the config when no session is open", async () => {
     fetchPerpsMock.mockResolvedValue([{ ...btc, samplingEnabled: true }]);
     updatePerpConfigMock.mockResolvedValue({ ...btc, samplingEnabled: false });
 
@@ -106,6 +106,35 @@ describe("MarketsPage", () => {
     await screen.findAllByText("BTC");
 
     fireEvent.click(screen.getByLabelText("BTC disable sampling"));
+
+    await waitFor(() =>
+      expect(updatePerpConfigMock).toHaveBeenCalledWith("BTC", {
+        samplingEnabled: false,
+      }),
+    );
+  });
+
+  it("asks before disabling sampling on a market with open sessions", async () => {
+    fetchPerpsMock.mockResolvedValue([{ ...btc, samplingEnabled: true }]);
+    fetchAllTradingSessionsMock.mockResolvedValue([session()]);
+    updatePerpConfigMock.mockResolvedValue({ ...btc, samplingEnabled: false });
+
+    render(<MarketsPage />);
+    await screen.findAllByText("BTC");
+    await waitFor(() =>
+      expect(fetchAllTradingSessionsMock).toHaveBeenCalledTimes(1),
+    );
+
+    fireEvent.click(screen.getByLabelText("BTC disable sampling"));
+
+    expect(
+      await screen.findByText(/BTC has 1 open session/),
+    ).toBeInTheDocument();
+    expect(updatePerpConfigMock).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Disable and close sessions" }),
+    );
 
     await waitFor(() =>
       expect(updatePerpConfigMock).toHaveBeenCalledWith("BTC", {

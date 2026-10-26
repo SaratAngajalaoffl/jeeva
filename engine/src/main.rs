@@ -21,6 +21,7 @@ use sqlx::PgPool;
 const SAMPLING_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const DECISION_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const SESSION_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const SAMPLING_GUARD_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const BACKTEST_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const WALLET_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const POSTGRES_CONNECT_RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -139,6 +140,7 @@ async fn main() {
         _ = market_data::run(store.clone(), market_data_client, market_data_writer, SAMPLING_POLL_INTERVAL) => {},
         _ = wallets.clone().run(WALLET_POLL_INTERVAL) => {},
         _ = session::run(pool.clone(), session_store.clone(), SESSION_POLL_INTERVAL) => {},
+        _ = session::run_sampling_guard(pool.clone(), session_store.clone(), store.clone(), SAMPLING_GUARD_POLL_INTERVAL) => {},
         _ = decision::run(session_store.clone(), min_confidence_to_shift, history.clone(), decision_makers, wallets.clone(), mode_store.clone(), funding_history, decision_log.clone(), health, session_lifecycle.clone(), DECISION_POLL_INTERVAL) => {},
         _ = funding::run(wallets.clone(), funding_rate_source, funding_payment_writer, FUNDING_INTERVAL) => {},
         _ = engine::reconcile::run(session_store, wallets, mode_store, history, decision_log, session_lifecycle, RECONCILE_POLL_INTERVAL) => {},

@@ -62,7 +62,7 @@ const session: TradingSession = {
   decisionFrequencySeconds: 60,
   leverage: 5,
   positionSizeUsd: 100,
-  historyWindowSamples: 1000,
+  historyWindowSeconds: 86400,
   historyFormat: "raw",
   storeDecisionPayloads: false,
   stopLossPct: null,

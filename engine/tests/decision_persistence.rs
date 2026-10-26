@@ -442,26 +442,42 @@ mod decision_log {
 
 mod history {
     use super::*;
+    use chrono::{Duration, Utc};
+    use engine::decision::MAX_HISTORY_SAMPLES;
+
+    async fn insert_sample(pool: &PgPool, symbol: &str, time: chrono::DateTime<Utc>, price: f64) {
+        sqlx::query(
+            "INSERT INTO market_data (time, symbol, price, open_interest, volume, spread, mid_price) VALUES ($1, $2, $3, 1, 1, 1, $3)",
+        )
+        .bind(time)
+        .bind(symbol)
+        .bind(price)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn clear(pool: &PgPool, symbol: &str) {
+        sqlx::query("DELETE FROM market_data WHERE symbol = $1")
+            .bind(symbol)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
 
     #[tokio::test]
     async fn reads_back_recent_samples_oldest_first() {
         let pool = pool().await;
-        sqlx::query("DELETE FROM market_data WHERE symbol = $1")
-            .bind("TESTHIST1")
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        for price in [100.0, 101.0, 102.0] {
-            sqlx::query(
-                "INSERT INTO market_data (time, symbol, price, open_interest, volume, spread, mid_price) VALUES (now(), $1, $2, 1, 1, 1, $2)",
+        clear(&pool, "TESTHIST1").await;
+        let now = Utc::now();
+        for (i, price) in [100.0, 101.0, 102.0].into_iter().enumerate() {
+            insert_sample(
+                &pool,
+                "TESTHIST1",
+                now - Duration::seconds(2 - i as i64),
+                price,
             )
-            .bind("TESTHIST1")
-            .bind(price)
-            .execute(&pool)
-            .await
-            .unwrap();
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            .await;
         }
 
         let reader = PostgresMarketDataHistoryReader::new(pool.clone());
@@ -470,9 +486,6 @@ mod history {
         assert_eq!(samples.len(), 3);
         assert_eq!(samples[0].price, 100.0);
         assert_eq!(samples[2].price, 102.0);
-
-        let summary = build_context_summary("TESTHIST1", &samples, None, None, chrono::Utc::now());
-        assert!(summary.contains("price=102.00"));
     }
 
     #[tokio::test]
@@ -481,5 +494,85 @@ mod history {
         let reader = PostgresMarketDataHistoryReader::new(pool.clone());
         let samples = reader.recent_samples("TESTHISTNONE", 10).await.unwrap();
         assert!(samples.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_window_read_only_returns_samples_inside_the_window_with_their_timestamps() {
+        let pool = pool().await;
+        clear(&pool, "TESTHISTWIN").await;
+        let now = Utc::now();
+        // Recorded before the window opened, e.g. before sampling was
+        // switched off for a while.
+        insert_sample(&pool, "TESTHISTWIN", now - Duration::hours(3), 90.0).await;
+        insert_sample(&pool, "TESTHISTWIN", now - Duration::minutes(30), 100.0).await;
+        insert_sample(&pool, "TESTHISTWIN", now - Duration::minutes(1), 101.0).await;
+        // After `to`: a replay must never see it.
+        insert_sample(&pool, "TESTHISTWIN", now + Duration::minutes(1), 999.0).await;
+
+        let reader = PostgresMarketDataHistoryReader::new(pool.clone());
+        let samples = reader
+            .samples_in_window("TESTHISTWIN", now - Duration::hours(1), now)
+            .await
+            .unwrap();
+
+        let prices: Vec<f64> = samples.iter().map(|s| s.sample.price).collect();
+        assert_eq!(prices, vec![100.0, 101.0]);
+        let first_age = now - samples[0].time;
+        assert!((first_age - Duration::minutes(30)).num_milliseconds().abs() < 5);
+
+        let summary = build_context_summary("TESTHISTWIN", &samples, 3600, None, None, now);
+        assert!(summary.contains("window=last 1h"));
+        assert!(summary.contains("price=101.00"));
+    }
+
+    #[tokio::test]
+    async fn a_window_with_only_stale_data_reads_back_empty() {
+        let pool = pool().await;
+        clear(&pool, "TESTHISTSTALE").await;
+        let now = Utc::now();
+        insert_sample(&pool, "TESTHISTSTALE", now - Duration::days(2), 100.0).await;
+
+        let reader = PostgresMarketDataHistoryReader::new(pool.clone());
+        let samples = reader
+            .samples_in_window("TESTHISTSTALE", now - Duration::hours(1), now)
+            .await
+            .unwrap();
+        assert!(samples.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_dense_window_is_thinned_evenly_across_its_whole_span() {
+        let pool = pool().await;
+        clear(&pool, "TESTHISTDENSE").await;
+        let now = Utc::now();
+        let from = now - Duration::seconds(2 * i64::from(MAX_HISTORY_SAMPLES));
+        // Two samples per bucket: twice what the read may return.
+        sqlx::query(
+            "INSERT INTO market_data (time, symbol, price, open_interest, volume, spread, mid_price)
+             SELECT $2 + make_interval(secs => s), $1, s, 1, 1, 1, s
+             FROM generate_series(1, $3) AS s",
+        )
+        .bind("TESTHISTDENSE")
+        .bind(from)
+        .bind(2 * i32::try_from(MAX_HISTORY_SAMPLES).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let reader = PostgresMarketDataHistoryReader::new(pool.clone());
+        let samples = reader
+            .samples_in_window("TESTHISTDENSE", from, now)
+            .await
+            .unwrap();
+
+        assert!(samples.len() <= MAX_HISTORY_SAMPLES as usize);
+        assert!(samples.len() >= MAX_HISTORY_SAMPLES as usize - 1);
+        // Covers the whole window, not just its most recent end.
+        assert!(samples.first().unwrap().sample.price <= 2.0);
+        assert_eq!(
+            samples.last().unwrap().sample.price,
+            f64::from(2 * MAX_HISTORY_SAMPLES)
+        );
+        assert!(samples.windows(2).all(|pair| pair[0].time < pair[1].time));
     }
 }

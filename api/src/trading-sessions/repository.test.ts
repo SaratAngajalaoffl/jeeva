@@ -12,7 +12,7 @@ function session(overrides: Partial<TradingSession> = {}): TradingSession {
     decisionFrequencySeconds: 300,
     leverage: 1,
     positionSizeUsd: 100,
-    historyWindowSamples: 1000,
+    historyWindowSeconds: 86400,
     historyFormat: "summary",
     storeDecisionPayloads: false,
     stopLossPct: null,
@@ -26,13 +26,16 @@ function session(overrides: Partial<TradingSession> = {}): TradingSession {
 
 describe("mergeTradingSessionConfig", () => {
   it("returns the existing config unchanged for an empty patch", () => {
-    const existing = session({ historyWindowSamples: 40, historyFormat: "raw" });
+    const existing = session({
+      historyWindowSeconds: 3600,
+      historyFormat: "raw",
+    });
     expect(mergeTradingSessionConfig(existing, {})).toEqual({
       decisionMaker: "random",
       decisionFrequencySeconds: 300,
       leverage: 1,
       positionSizeUsd: 100,
-      historyWindowSamples: 40,
+      historyWindowSeconds: 3600,
       historyFormat: "raw",
       storeDecisionPayloads: false,
       stopLossPct: null,
@@ -40,13 +43,16 @@ describe("mergeTradingSessionConfig", () => {
   });
 
   it("applies only the fields the patch sets", () => {
-    const existing = session({ historyWindowSamples: 40, historyFormat: "raw" });
+    const existing = session({
+      historyWindowSeconds: 3600,
+      historyFormat: "raw",
+    });
     expect(mergeTradingSessionConfig(existing, { leverage: 5 })).toEqual({
       decisionMaker: "random",
       decisionFrequencySeconds: 300,
       leverage: 5,
       positionSizeUsd: 100,
-      historyWindowSamples: 40,
+      historyWindowSeconds: 3600,
       historyFormat: "raw",
       storeDecisionPayloads: false,
       stopLossPct: null,
@@ -58,11 +64,11 @@ describe("mergeTradingSessionConfig", () => {
 
     expect(
       mergeTradingSessionConfig(existing, { historyFormat: "raw" }),
-    ).toMatchObject({ historyWindowSamples: 1000, historyFormat: "raw" });
+    ).toMatchObject({ historyWindowSeconds: 86400, historyFormat: "raw" });
 
     expect(
-      mergeTradingSessionConfig(existing, { historyWindowSamples: 10 }),
-    ).toMatchObject({ historyWindowSamples: 10, historyFormat: "summary" });
+      mergeTradingSessionConfig(existing, { historyWindowSeconds: 600 }),
+    ).toMatchObject({ historyWindowSeconds: 600, historyFormat: "summary" });
   });
 
   it("applies every field when the patch sets them all", () => {
@@ -71,7 +77,7 @@ describe("mergeTradingSessionConfig", () => {
       decisionFrequencySeconds: 30,
       leverage: 10,
       positionSizeUsd: 250,
-      historyWindowSamples: 60,
+      historyWindowSeconds: 7200,
       historyFormat: "raw",
       storeDecisionPayloads: true,
       stopLossPct: 0.1,
@@ -82,7 +88,7 @@ describe("mergeTradingSessionConfig", () => {
       decisionFrequencySeconds: 30,
       leverage: 10,
       positionSizeUsd: 250,
-      historyWindowSamples: 60,
+      historyWindowSeconds: 7200,
       historyFormat: "raw",
       storeDecisionPayloads: true,
       stopLossPct: 0.1,

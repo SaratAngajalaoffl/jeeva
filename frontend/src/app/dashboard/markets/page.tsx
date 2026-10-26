@@ -30,6 +30,7 @@ import {
 } from "@/components/ui";
 import { Store } from "lucide-react";
 import Modal from "@/components/Modal";
+import { DisableSamplingConfirm } from "@/components/DisableSamplingConfirm";
 import Sparkline from "@/components/Sparkline";
 import { SamplingIcon, ViewIcon } from "@/components/icons";
 
@@ -51,7 +52,9 @@ type SortKey =
 
 type StatusFilter = "all" | "trading" | "sampling" | "inactive";
 
-type ConfigDialog = { type: "sampling"; perp: Perp };
+type ConfigDialog =
+  | { type: "sampling"; perp: Perp }
+  | { type: "disableSampling"; perp: Perp; openSessionCount: number };
 
 const TD = "border-b border-surface-1 py-2 pr-4";
 const PAGE_SIZE = 10;
@@ -149,7 +152,12 @@ export default function MarketsPage() {
 
   function handleSamplingClick(perp: Perp) {
     if (perp.samplingEnabled) {
-      applyPatch(perp.symbol, { samplingEnabled: false });
+      const openSessionCount = activeSessionCountBySymbol.get(perp.symbol) ?? 0;
+      if (openSessionCount > 0) {
+        setDialog({ type: "disableSampling", perp, openSessionCount });
+      } else {
+        applyPatch(perp.symbol, { samplingEnabled: false });
+      }
     } else {
       setDialog({ type: "sampling", perp });
     }
@@ -516,6 +524,27 @@ export default function MarketsPage() {
                   ...values,
                 });
                 setDialog(null);
+              }}
+            />
+          </Modal>
+        )}
+        {dialog?.type === "disableSampling" && (
+          <Modal
+            title={`Disable sampling — ${dialog.perp.symbol}`}
+            onClose={() => setDialog(null)}
+          >
+            <DisableSamplingConfirm
+              symbol={dialog.perp.symbol}
+              openSessionCount={dialog.openSessionCount}
+              onCancel={() => setDialog(null)}
+              onConfirm={async () => {
+                await applyPatch(dialog.perp.symbol, {
+                  samplingEnabled: false,
+                });
+                setDialog(null);
+                fetchAllTradingSessions()
+                  .then(setSessions)
+                  .catch(() => {});
               }}
             />
           </Modal>

@@ -6,9 +6,9 @@ import { isValidFrequencySeconds } from "../perps/frequency.js";
 import { isValidLeverage, isValidPositionSizeUsd } from "../perps/sizing.js";
 import {
   DEFAULT_HISTORY_FORMAT,
-  DEFAULT_HISTORY_WINDOW_SAMPLES,
+  DEFAULT_HISTORY_WINDOW_SECONDS,
   isValidHistoryFormat,
-  isValidHistoryWindowSamples,
+  isValidHistoryWindowSeconds,
 } from "../trading-sessions/historyWindow.js";
 import type { DecisionMaker } from "../trading-sessions/repository.js";
 import {
@@ -59,7 +59,7 @@ export function createBacktestsRouter(pgPool: Pool): Router {
       decisionFrequencySeconds,
       leverage,
       positionSizeUsd,
-      historyWindowSamples,
+      historyWindowSeconds,
       historyFormat,
       storeDecisionPayloads,
       startTime,
@@ -72,8 +72,8 @@ export function createBacktestsRouter(pgPool: Pool): Router {
       !isValidFrequencySeconds(decisionFrequencySeconds) ||
       !isValidLeverage(leverage) ||
       !isValidPositionSizeUsd(positionSizeUsd) ||
-      (historyWindowSamples !== undefined &&
-        !isValidHistoryWindowSamples(historyWindowSamples)) ||
+      (historyWindowSeconds !== undefined &&
+        !isValidHistoryWindowSeconds(historyWindowSeconds)) ||
       (historyFormat !== undefined && !isValidHistoryFormat(historyFormat)) ||
       (storeDecisionPayloads !== undefined &&
         typeof storeDecisionPayloads !== "boolean") ||
@@ -127,8 +127,8 @@ export function createBacktestsRouter(pgPool: Pool): Router {
       decisionFrequencySeconds,
       leverage,
       positionSizeUsd,
-      historyWindowSamples:
-        historyWindowSamples ?? DEFAULT_HISTORY_WINDOW_SAMPLES,
+      historyWindowSeconds:
+        historyWindowSeconds ?? DEFAULT_HISTORY_WINDOW_SECONDS,
       historyFormat: historyFormat ?? DEFAULT_HISTORY_FORMAT,
       storeDecisionPayloads,
       startTime,
