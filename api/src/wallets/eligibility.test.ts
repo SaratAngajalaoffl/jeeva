@@ -9,6 +9,7 @@ const liveWallet: Wallet = {
   label: "live wallet",
   kind: "live",
   publicAddress: "0x0000000000000000000000000000000000000001",
+  subAccountAddress: null,
   initialBalanceUsd: null,
   currentBalanceUsd: null,
   createdAt: "2026-01-01T00:00:00.000Z",
@@ -55,5 +56,18 @@ describe("live wallet balance eligibility", () => {
       getWalletBalanceUsd(liveWallet, client, "xyz:AAOI"),
     ).resolves.toBe(400);
     expect(getState).toHaveBeenCalledWith(liveWallet.publicAddress, "xyz");
+  });
+
+  it("reads a sub-account wallet's balance from the sub-account, not the signer", async () => {
+    const client = clientWithBalances();
+    const getState = vi.spyOn(client, "getClearinghouseState");
+    const subAccount = "0x0000000000000000000000000000000000000002";
+
+    await getWalletBalanceUsd(
+      { ...liveWallet, subAccountAddress: subAccount },
+      client,
+      "BTC",
+    );
+    expect(getState).toHaveBeenCalledWith(subAccount, undefined);
   });
 });

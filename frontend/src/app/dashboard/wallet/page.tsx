@@ -139,6 +139,18 @@ function WalletCard({
           <CopyButton value={wallet.publicAddress} />
         </div>
       )}
+
+      {wallet.subAccountAddress && (
+        <div className="flex items-center gap-2 rounded-lg border border-surface-1 bg-mantle/60 px-3 py-2">
+          <span className="text-xs uppercase tracking-wide text-subtext-0">
+            Sub-account
+          </span>
+          <span className="flex-1 truncate font-mono text-xs text-subtext-1">
+            {shortenAddress(wallet.subAccountAddress)}
+          </span>
+          <CopyButton value={wallet.subAccountAddress} />
+        </div>
+      )}
     </Card>
   );
 }
@@ -201,6 +213,7 @@ export default function WalletPage() {
   const [initialBalance, setInitialBalance] = useState("10000");
   const [publicAddress, setPublicAddress] = useState("");
   const [privateKey, setPrivateKey] = useState("");
+  const [subAccountAddress, setSubAccountAddress] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [demoMode, setDemoMode] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -270,6 +283,7 @@ export default function WalletPage() {
     setLabel("");
     setPublicAddress("");
     setPrivateKey("");
+    setSubAccountAddress("");
     setInitialBalance("10000");
     setKind("mock");
     setFormError(null);
@@ -297,7 +311,15 @@ export default function WalletPage() {
         setFormError("Enter both the public address and private key");
         return;
       }
-      input = { kind: "live", label, publicAddress, privateKey };
+      input = {
+        kind: "live",
+        label,
+        publicAddress,
+        privateKey,
+        ...(subAccountAddress.trim()
+          ? { subAccountAddress: subAccountAddress.trim() }
+          : {}),
+      };
     }
 
     setSubmitting(true);
@@ -540,6 +562,19 @@ export default function WalletPage() {
                     value={privateKey}
                     onChange={(e) => setPrivateKey(e.target.value)}
                   />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <Label>Sub-account address (optional)</Label>
+                  <Input
+                    value={subAccountAddress}
+                    placeholder="0x…"
+                    onChange={(e) => setSubAccountAddress(e.target.value)}
+                  />
+                  <span className="text-xs text-subtext-0">
+                    To trade a Hyperliquid sub-account, enter its address
+                    here and use the master account&apos;s key (or an API
+                    wallet it approved) above.
+                  </span>
                 </label>
               </>
             )}

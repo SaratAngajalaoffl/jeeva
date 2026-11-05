@@ -14,8 +14,8 @@ use super::execution::{
     ExecutionError, OpenPosition, ReconcileTarget,
 };
 use super::hyperliquid_signing::{
-    market_order_price, sign_order_action, KeyError, OrderAction, OrderRequest, OrderType,
-    PrivateKey, Signature,
+    market_order_price, sign_order_action, AccountAddress, KeyError, OrderAction, OrderRequest,
+    OrderType, PrivateKey, Signature,
 };
 use super::model::Direction;
 use crate::hyperliquid::{coin, dex};
@@ -155,6 +155,10 @@ pub struct LiveExecutionAdapter {
     base_url: String,
     http: reqwest::Client,
     key: PrivateKey,
+    /// The Hyperliquid sub-account this adapter trades, when the key
+    /// belongs to the master account (or its API wallet) rather than to
+    /// the traded account itself. `None` trades the key's own account.
+    vault_address: Option<AccountAddress>,
     is_mainnet: bool,
     slippage: f64,
     pool: PgPool,
@@ -192,6 +196,7 @@ impl LiveExecutionAdapter {
             base_url: base_url.into(),
             http: reqwest::Client::new(),
             key,
+            vault_address: None,
             is_mainnet,
             slippage: DEFAULT_MARKET_SLIPPAGE,
             pool,
@@ -209,10 +214,29 @@ impl LiveExecutionAdapter {
         self
     }
 
-    /// The wallet's public address, safe to expose read-only to
+    /// Routes this adapter's orders to a Hyperliquid sub-account: orders
+    /// are signed by the configured key but name `vault_address` as the
+    /// traded account, and every balance/position/order-status read
+    /// queries that sub-account instead of the signer.
+    pub fn with_vault_address(mut self, vault_address: Option<AccountAddress>) -> Self {
+        self.vault_address = vault_address;
+        self
+    }
+
+    /// The signing key's public address, safe to expose read-only to
     /// Express for dashboard display.
     pub fn public_address(&self) -> String {
         self.key.public_address()
+    }
+
+    /// The Hyperliquid account whose balance and positions this adapter
+    /// trades: the sub-account when one is configured, otherwise the
+    /// signing key's own account.
+    pub fn account_address(&self) -> String {
+        match &self.vault_address {
+            Some(address) => address.to_hex(),
+            None => self.public_address(),
+        }
     }
 
     /// The account's on-chain withdrawable USD balance, as reported by
@@ -432,7 +456,7 @@ impl LiveExecutionAdapter {
     ) -> Result<ClearinghouseState, ExecutionError> {
         let mut request = serde_json::json!({
             "type": "clearinghouseState",
-            "user": self.public_address(),
+            "user": self.account_address(),
         });
         if let Some(dex) = dex {
             request["dex"] = serde_json::Value::String(dex.to_string());
@@ -780,7 +804,7 @@ impl LiveExecutionAdapter {
             .post(format!("{}/info", self.base_url))
             .json(&serde_json::json!({
                 "type": "orderStatus",
-                "user": self.public_address(),
+                "user": self.account_address(),
                 "oid": client_order_id,
             }))
             .send()
@@ -928,7 +952,13 @@ impl LiveExecutionAdapter {
                 let pending_cloid = order.cloid.clone().expect("cloid generated above");
                 let action = OrderAction::single(order);
                 let nonce_ms = Utc::now().timestamp_millis() as u64;
-                let signature = sign_order_action(&self.key, &action, nonce_ms, self.is_mainnet)?;
+                let signature = sign_order_action(
+                    &self.key,
+                    &action,
+                    nonce_ms,
+                    self.is_mainnet,
+                    self.vault_address.as_ref(),
+                )?;
                 let pending = PendingOrder {
                     action,
                     client_order_id: pending_cloid,
@@ -962,7 +992,7 @@ impl LiveExecutionAdapter {
             ..
         } = pending;
 
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "action": &action,
             "nonce": nonce_ms,
             "signature": {
@@ -971,6 +1001,11 @@ impl LiveExecutionAdapter {
                 "v": signature.v,
             },
         });
+        // Must match the vault address folded into the signature, or the
+        // exchange recovers a different signer and rejects the order.
+        if let Some(vault_address) = &self.vault_address {
+            body["vaultAddress"] = serde_json::Value::String(vault_address.to_hex());
+        }
 
         let response: ExchangeResponse = self
             .http
@@ -1495,6 +1530,171 @@ mod tests {
             .place_order("xyz:AAOI", true, 1.0, 101.5, false)
             .await
             .unwrap();
+    }
+
+    const SUB_ACCOUNT: &str = "0x1111111111111111111111111111111111111111";
+
+    /// Opt-in check against the real Hyperliquid testnet (run with
+    /// `cargo test -- --ignored testnet_`). Signs a sub-account order with
+    /// a freshly generated, never-funded key: the exchange must reject it,
+    /// but its rejection names the signer it recovered from the
+    /// signature. Recovering our own address proves the exchange parses
+    /// the vault-address encoding exactly as we sign it — a wrong
+    /// encoding recovers some unrelated address instead.
+    #[tokio::test]
+    #[ignore = "hits the live Hyperliquid testnet"]
+    async fn testnet_recovers_our_signer_from_a_sub_account_order() {
+        use rand_core::{OsRng, RngCore};
+
+        let mut secret = [0u8; 32];
+        OsRng.fill_bytes(&mut secret);
+        let key = PrivateKey::from_hex(&hex::encode(secret)).unwrap();
+        let signer = key.public_address();
+
+        let pool = pool().await;
+        let wallet_id = "00000000-0000-0000-0000-0000000001f7";
+        reset_wallet_and_position(&pool, wallet_id, "00000000-0000-0000-0000-0000000001f8").await;
+        let adapter = LiveExecutionAdapter::new(
+            "https://api.hyperliquid-testnet.xyz",
+            key,
+            false,
+            pool,
+            wallet_id.to_string(),
+        )
+        .with_vault_address(Some(AccountAddress::from_hex(SUB_ACCOUNT).unwrap()));
+
+        let mids: serde_json::Value = reqwest::Client::new()
+            .post("https://api.hyperliquid-testnet.xyz/info")
+            .json(&json!({ "type": "allMids" }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let mid: f64 = mids["BTC"].as_str().unwrap().parse().unwrap();
+        let price = (mid / 10.0).round() * 10.0;
+
+        let error = adapter
+            .place_order("BTC", true, 0.001, price, false)
+            .await
+            .expect_err("an unfunded signer must be rejected");
+        println!("testnet response: {error}");
+        assert!(
+            error.0.to_lowercase().contains(&signer),
+            "exchange recovered a different signer than {signer}: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn sub_account_orders_name_the_vault_and_are_signed_for_it() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/info"))
+            .and(body_partial_json(json!({ "type": "meta" })))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "universe": [{ "name": "BTC" }] })),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/exchange"))
+            .and(body_partial_json(json!({ "vaultAddress": SUB_ACCOUNT })))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "status": "ok", "response": {} })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let pool = pool().await;
+        let wallet_id = "00000000-0000-0000-0000-0000000001f1";
+        reset_wallet_and_position(&pool, wallet_id, "00000000-0000-0000-0000-0000000001f2").await;
+        let adapter = adapter_against(&server, pool, wallet_id)
+            .await
+            .with_vault_address(Some(AccountAddress::from_hex(SUB_ACCOUNT).unwrap()));
+
+        adapter
+            .place_order("BTC", true, 0.001, 50000.0, false)
+            .await
+            .unwrap();
+
+        let requests = server.received_requests().await.unwrap();
+        let exchange = requests
+            .iter()
+            .find(|request| request.url.path() == "/exchange")
+            .expect("order was submitted");
+        let body: serde_json::Value = serde_json::from_slice(&exchange.body).unwrap();
+        let action: OrderAction = serde_json::from_value(body["action"].clone()).unwrap();
+        let nonce_ms = body["nonce"].as_u64().unwrap();
+        let vault = AccountAddress::from_hex(SUB_ACCOUNT).unwrap();
+        let key = PrivateKey::from_hex(TEST_KEY_HEX).unwrap();
+        let expected = sign_order_action(&key, &action, nonce_ms, true, Some(&vault)).unwrap();
+        let unvaulted = sign_order_action(&key, &action, nonce_ms, true, None).unwrap();
+        assert_eq!(body["signature"]["r"], expected.r_hex());
+        assert_ne!(body["signature"]["r"], unvaulted.r_hex());
+    }
+
+    #[tokio::test]
+    async fn own_account_orders_send_no_vault_address() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/info"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "universe": [{ "name": "BTC" }] })),
+            )
+            .mount(&server)
+            .await;
+        mount_ok_exchange(&server).await;
+
+        let pool = pool().await;
+        let wallet_id = "00000000-0000-0000-0000-0000000001f3";
+        reset_wallet_and_position(&pool, wallet_id, "00000000-0000-0000-0000-0000000001f4").await;
+        let adapter = adapter_against(&server, pool, wallet_id).await;
+
+        adapter
+            .place_order("BTC", true, 0.001, 50000.0, false)
+            .await
+            .unwrap();
+
+        let requests = server.received_requests().await.unwrap();
+        let exchange = requests
+            .iter()
+            .find(|request| request.url.path() == "/exchange")
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&exchange.body).unwrap();
+        assert!(body.get("vaultAddress").is_none());
+    }
+
+    #[tokio::test]
+    async fn sub_account_reads_query_the_sub_account_not_the_signer() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/info"))
+            .and(body_partial_json(json!({
+                "type": "clearinghouseState",
+                "user": SUB_ACCOUNT,
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "withdrawable": "20.0",
+                "assetPositions": [],
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let pool = pool().await;
+        let wallet_id = "00000000-0000-0000-0000-0000000001f5";
+        reset_wallet_and_position(&pool, wallet_id, "00000000-0000-0000-0000-0000000001f6").await;
+        let adapter = adapter_against(&server, pool, wallet_id)
+            .await
+            .with_vault_address(Some(AccountAddress::from_hex(SUB_ACCOUNT).unwrap()));
+
+        assert_eq!(adapter.account_address(), SUB_ACCOUNT);
+        assert_ne!(adapter.public_address(), SUB_ACCOUNT);
+        assert_eq!(adapter.account_withdrawable_usd("BTC").await.unwrap(), 20.0);
     }
 
     #[test]

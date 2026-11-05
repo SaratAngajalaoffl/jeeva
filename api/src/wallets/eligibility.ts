@@ -6,6 +6,7 @@ import {
   getWallet,
   getWalletSessionId,
   listWallets,
+  tradedAddress,
   type Wallet,
 } from "./repository.js";
 
@@ -18,16 +19,14 @@ export async function getWalletBalanceUsd(
     return wallet.currentBalanceUsd ?? 0;
   }
 
-  if (!wallet.publicAddress) {
+  const address = tradedAddress(wallet);
+  if (!address) {
     return 0;
   }
 
   const separator = symbol?.indexOf(":") ?? -1;
   const dex = separator >= 0 ? symbol?.slice(0, separator) : undefined;
-  const state = await hyperliquidClient.getClearinghouseState(
-    wallet.publicAddress,
-    dex,
-  );
+  const state = await hyperliquidClient.getClearinghouseState(address, dex);
   return state.withdrawableUsd;
 }
 

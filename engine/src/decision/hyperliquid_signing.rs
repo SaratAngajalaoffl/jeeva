@@ -68,6 +68,37 @@ impl PrivateKey {
     }
 }
 
+/// A 20-byte Hyperliquid account address. Used for a sub-account the
+/// signing key trades on behalf of: Hyperliquid sub-accounts have no key
+/// of their own, so their orders are signed by the master account (or an
+/// API wallet the master approved) and name the sub-account as the
+/// `vaultAddress`, which is also folded into the signed action hash.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AccountAddress([u8; 20]);
+
+impl AccountAddress {
+    /// Parses a `0x`-prefixed (or bare) 40-character hex address.
+    pub fn from_hex(hex_str: &str) -> Result<Self, KeyError> {
+        let trimmed = hex_str.trim();
+        let trimmed = trimmed
+            .strip_prefix("0x")
+            .or_else(|| trimmed.strip_prefix("0X"))
+            .unwrap_or(trimmed);
+        let bytes = hex::decode(trimmed)
+            .map_err(|e| KeyError(format!("account address is not valid hex: {e}")))?;
+        let bytes: [u8; 20] = bytes
+            .try_into()
+            .map_err(|_| KeyError("account address must be exactly 20 bytes".to_string()))?;
+        Ok(Self(bytes))
+    }
+
+    /// Lowercase, `0x`-prefixed hex, the form Hyperliquid's `/info` and
+    /// `/exchange` endpoints accept.
+    pub fn to_hex(&self) -> String {
+        format!("0x{}", hex::encode(self.0))
+    }
+}
+
 /// A single order within a Hyperliquid `order` action. Field names
 /// match Hyperliquid's wire format exactly (see docs.hyperliquid.xyz),
 /// so this struct is msgpack-encoded as-is for hashing and JSON-encoded
@@ -208,11 +239,15 @@ fn agent_struct_hash(source: &str, connection_id: &[u8; 32]) -> [u8; 32] {
 }
 
 /// Hashes the action for signing per Hyperliquid's L1-action scheme:
-/// msgpack-encode the action, append the 8-byte big-endian nonce and a
-/// single byte marking the absence of a vault address, then
-/// keccak256 the result to get the "connection id" wrapped in an
-/// EIP-712 `Agent` struct.
-fn connection_id(action: &OrderAction, nonce_ms: u64) -> Result<[u8; 32], KeyError> {
+/// msgpack-encode the action, append the 8-byte big-endian nonce, then
+/// either `0x00` (trading the signer's own account) or `0x01` followed by
+/// the 20-byte vault/sub-account address, and keccak256 the result to get
+/// the "connection id" wrapped in an EIP-712 `Agent` struct.
+fn connection_id(
+    action: &OrderAction,
+    nonce_ms: u64,
+    vault_address: Option<&AccountAddress>,
+) -> Result<[u8; 32], KeyError> {
     let mut buf = Vec::new();
     let mut serializer = rmp_serde::Serializer::new(&mut buf).with_struct_map();
     action
@@ -220,8 +255,13 @@ fn connection_id(action: &OrderAction, nonce_ms: u64) -> Result<[u8; 32], KeyErr
         .map_err(|e| KeyError(format!("failed to msgpack-encode order action: {e}")))?;
 
     buf.extend_from_slice(&nonce_ms.to_be_bytes());
-    // No vault address for a direct (non-vault) account.
-    buf.push(0x00);
+    match vault_address {
+        None => buf.push(0x00),
+        Some(address) => {
+            buf.push(0x01);
+            buf.extend_from_slice(&address.0);
+        }
+    }
 
     Ok(keccak256(&buf))
 }
@@ -237,14 +277,17 @@ fn eip712_hash(domain_separator: &[u8; 32], struct_hash: &[u8; 32]) -> [u8; 32] 
 /// Signs a Hyperliquid order action, returning both the signature and
 /// the nonce used (the exchange request must echo the same nonce).
 /// `is_mainnet` selects the EIP-712 `Agent.source` value Hyperliquid's
-/// scheme requires ("a" for mainnet, "b" for testnet).
+/// scheme requires ("a" for mainnet, "b" for testnet). `vault_address`
+/// is the sub-account being traded, if any; the `/exchange` request must
+/// then send the same address as `vaultAddress`.
 pub fn sign_order_action(
     key: &PrivateKey,
     action: &OrderAction,
     nonce_ms: u64,
     is_mainnet: bool,
+    vault_address: Option<&AccountAddress>,
 ) -> Result<Signature, KeyError> {
-    let connection_id = connection_id(action, nonce_ms)?;
+    let connection_id = connection_id(action, nonce_ms, vault_address)?;
     let source = if is_mainnet { "a" } else { "b" };
     let struct_hash = agent_struct_hash(source, &connection_id);
     let domain_separator = eip712_domain_separator();
@@ -338,8 +381,8 @@ mod tests {
     fn signing_is_deterministic_for_the_same_action_and_nonce() {
         let key = PrivateKey::from_hex(TEST_KEY_HEX).unwrap();
         let action = sample_order();
-        let sig1 = sign_order_action(&key, &action, 1_000, true).unwrap();
-        let sig2 = sign_order_action(&key, &action, 1_000, true).unwrap();
+        let sig1 = sign_order_action(&key, &action, 1_000, true, None).unwrap();
+        let sig2 = sign_order_action(&key, &action, 1_000, true, None).unwrap();
         assert_eq!(sig1, sig2);
     }
 
@@ -347,8 +390,8 @@ mod tests {
     fn signature_changes_when_the_nonce_changes() {
         let key = PrivateKey::from_hex(TEST_KEY_HEX).unwrap();
         let action = sample_order();
-        let sig1 = sign_order_action(&key, &action, 1_000, true).unwrap();
-        let sig2 = sign_order_action(&key, &action, 2_000, true).unwrap();
+        let sig1 = sign_order_action(&key, &action, 1_000, true, None).unwrap();
+        let sig2 = sign_order_action(&key, &action, 2_000, true, None).unwrap();
         assert_ne!(sig1, sig2);
     }
 
@@ -356,10 +399,10 @@ mod tests {
     fn client_order_id_changes_the_signed_order() {
         let key = PrivateKey::from_hex(TEST_KEY_HEX).unwrap();
         let mut action = sample_order();
-        let first_signature = sign_order_action(&key, &action, 1_000, true).unwrap();
+        let first_signature = sign_order_action(&key, &action, 1_000, true, None).unwrap();
         let OrderAction::Order { orders, .. } = &mut action;
         orders[0].cloid = Some("0x0123456789abcdef0123456789abcdef".to_string());
-        let second_signature = sign_order_action(&key, &action, 1_000, true).unwrap();
+        let second_signature = sign_order_action(&key, &action, 1_000, true, None).unwrap();
         assert_ne!(first_signature, second_signature);
     }
 
@@ -400,10 +443,10 @@ mod tests {
     fn signature_changes_when_the_order_changes() {
         let key = PrivateKey::from_hex(TEST_KEY_HEX).unwrap();
         let mut action = sample_order();
-        let sig1 = sign_order_action(&key, &action, 1_000, true).unwrap();
+        let sig1 = sign_order_action(&key, &action, 1_000, true, None).unwrap();
         let OrderAction::Order { orders, .. } = &mut action;
         orders[0].size = "0.2".to_string();
-        let sig2 = sign_order_action(&key, &action, 1_000, true).unwrap();
+        let sig2 = sign_order_action(&key, &action, 1_000, true, None).unwrap();
         assert_ne!(sig1, sig2);
     }
 
@@ -411,8 +454,8 @@ mod tests {
     fn signature_changes_between_mainnet_and_testnet_source() {
         let key = PrivateKey::from_hex(TEST_KEY_HEX).unwrap();
         let action = sample_order();
-        let mainnet_sig = sign_order_action(&key, &action, 1_000, true).unwrap();
-        let testnet_sig = sign_order_action(&key, &action, 1_000, false).unwrap();
+        let mainnet_sig = sign_order_action(&key, &action, 1_000, true, None).unwrap();
+        let testnet_sig = sign_order_action(&key, &action, 1_000, false, None).unwrap();
         assert_ne!(mainnet_sig, testnet_sig);
     }
 
@@ -423,9 +466,9 @@ mod tests {
         let key = PrivateKey::from_hex(TEST_KEY_HEX).unwrap();
         let action = sample_order();
         let nonce_ms = 42_000;
-        let sig = sign_order_action(&key, &action, nonce_ms, true).unwrap();
+        let sig = sign_order_action(&key, &action, nonce_ms, true, None).unwrap();
 
-        let connection_id = connection_id(&action, nonce_ms).unwrap();
+        let connection_id = connection_id(&action, nonce_ms, None).unwrap();
         let struct_hash = agent_struct_hash("a", &connection_id);
         let domain_separator = eip712_domain_separator();
         let digest = eip712_hash(&domain_separator, &struct_hash);
@@ -440,6 +483,84 @@ mod tests {
             VerifyingKey::recover_from_prehash(&digest, &ecdsa_sig, recovery_id).unwrap();
         let expected = VerifyingKey::from(key.0.clone());
         assert_eq!(recovered, expected);
+    }
+
+    /// Left-pads a hex signature component to 32 bytes: the Python SDK
+    /// formats r/s as integers, dropping leading zero nibbles.
+    fn component(hex_str: &str) -> [u8; 32] {
+        let padded = format!("{:0>64}", hex_str.trim_start_matches("0x"));
+        hex::decode(padded).unwrap().try_into().unwrap()
+    }
+
+    /// Reference signatures produced by Hyperliquid's official Python SDK
+    /// (`hyperliquid.utils.signing.sign_l1_action`) for `sample_order()`,
+    /// `TEST_KEY_HEX`, nonce 42000 and no expiry. Pinning to the SDK's
+    /// output is what proves the vault-address encoding matches the
+    /// exchange's, not just that it differs from the direct-account one.
+    #[test]
+    fn signatures_match_the_official_sdk_with_and_without_a_vault() {
+        let key = PrivateKey::from_hex(TEST_KEY_HEX).unwrap();
+        let action = sample_order();
+        let vault = AccountAddress::from_hex("0x1111111111111111111111111111111111111111").unwrap();
+        let cases: [(Option<&AccountAddress>, bool, &str, &str, u8); 4] = [
+            (
+                None,
+                true,
+                "0x9e732307667ddccad7794f1299d69ce130cf92b373af07bf8204f226edb8dd8f",
+                "0x34cd86926deb45e95b188b1358ca774e179e30d143f28fbc078abcac47f1d1a7",
+                28,
+            ),
+            (
+                None,
+                false,
+                "0x392294cda98db3a747154012fda2dcbe2e0a2baba7d0d721fa2ee2ac54c59c5f",
+                "0x772a392ae1eef40a5f95ebfd38a77b0fe2e7ed956902f6406cbfd75840f3cf2a",
+                28,
+            ),
+            (
+                Some(&vault),
+                true,
+                "0x5f12b6cac160138fe81f7fbb8507c9002160c057f9af1f4125ebb9a5fc75b7ed",
+                "0xfb5be637bdc21a7dcc9ea82fced12a847340e71816b88c15ad026ece32bdbf5",
+                27,
+            ),
+            (
+                Some(&vault),
+                false,
+                "0x2c368eac5d46bd1c8fa218815840643a4c78569c18da66354265a919d30057e",
+                "0x340db101bb5c75822c6a7edc2349ffed740e833682e5cbcf886fa8a333b4a5a6",
+                27,
+            ),
+        ];
+        for (vault_address, is_mainnet, r, s, v) in cases {
+            let sig = sign_order_action(&key, &action, 42_000, is_mainnet, vault_address).unwrap();
+            assert_eq!(
+                sig.r,
+                component(r),
+                "r for vault={vault_address:?} mainnet={is_mainnet}"
+            );
+            assert_eq!(
+                sig.s,
+                component(s),
+                "s for vault={vault_address:?} mainnet={is_mainnet}"
+            );
+            assert_eq!(
+                sig.v, v,
+                "v for vault={vault_address:?} mainnet={is_mainnet}"
+            );
+        }
+    }
+
+    #[test]
+    fn parses_and_normalizes_an_account_address() {
+        let address =
+            AccountAddress::from_hex(" 0xABCDEFabcdef0123456789abcdef0123456789AB ").unwrap();
+        assert_eq!(
+            address.to_hex(),
+            "0xabcdefabcdef0123456789abcdef0123456789ab"
+        );
+        assert!(AccountAddress::from_hex("0x1234").is_err());
+        assert!(AccountAddress::from_hex("0xzz").is_err());
     }
 
     #[test]
