@@ -8,20 +8,9 @@ export interface Wallet {
   label: string;
   kind: WalletKind;
   publicAddress: string | null;
-  /**
-   * The Hyperliquid sub-account a live wallet trades, if any. Its key
-   * belongs to the master account (or an API wallet the master
-   * approved) and only signs; balances and positions live here.
-   */
-  subAccountAddress: string | null;
   initialBalanceUsd: number | null;
   currentBalanceUsd: number | null;
   createdAt: string;
-}
-
-/** The Hyperliquid account a live wallet's balance is read from. */
-export function tradedAddress(wallet: Wallet): string | null {
-  return wallet.subAccountAddress ?? wallet.publicAddress;
 }
 
 export class WalletAlreadyExistsError extends Error {
@@ -38,7 +27,6 @@ interface WalletRow {
   label: string;
   kind: WalletKind;
   public_address: string | null;
-  sub_account_address: string | null;
   initial_balance_usd: string | null;
   current_balance_usd: string | null;
   created_at: Date;
@@ -50,7 +38,6 @@ function toWallet(row: WalletRow): Wallet {
     label: row.label,
     kind: row.kind,
     publicAddress: row.public_address,
-    subAccountAddress: row.sub_account_address,
     initialBalanceUsd:
       row.initial_balance_usd === null ? null : Number(row.initial_balance_usd),
     currentBalanceUsd:
@@ -60,7 +47,7 @@ function toWallet(row: WalletRow): Wallet {
 }
 
 const WALLET_COLUMNS =
-  "id, label, kind, public_address, sub_account_address, initial_balance_usd, current_balance_usd, created_at";
+  "id, label, kind, public_address, initial_balance_usd, current_balance_usd, created_at";
 
 export async function listWallets(pool: Pool): Promise<Wallet[]> {
   const result = await pool.query<WalletRow>(
@@ -92,8 +79,6 @@ export interface CreateLiveWalletInput {
   label: string;
   publicAddress: string;
   privateKey: string;
-  /** Lowercase `0x` + 40 hex; see `Wallet.subAccountAddress`. */
-  subAccountAddress?: string | null;
 }
 
 export type CreateWalletInput = CreateMockWalletInput | CreateLiveWalletInput;
@@ -104,7 +89,6 @@ async function insertWallet(
     label: string;
     kind: WalletKind;
     publicAddress: string | null;
-    subAccountAddress: string | null;
     encryptedPrivateKey: string | null;
     initialBalanceUsd: number | null;
     currentBalanceUsd: number | null;
@@ -112,14 +96,13 @@ async function insertWallet(
 ): Promise<Wallet> {
   try {
     const result = await pool.query<WalletRow>(
-      `INSERT INTO wallets (label, kind, public_address, sub_account_address, encrypted_private_key, initial_balance_usd, current_balance_usd)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO wallets (label, kind, public_address, encrypted_private_key, initial_balance_usd, current_balance_usd)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING ${WALLET_COLUMNS}`,
       [
         params.label,
         params.kind,
         params.publicAddress,
-        params.subAccountAddress,
         params.encryptedPrivateKey,
         params.initialBalanceUsd,
         params.currentBalanceUsd,
@@ -148,7 +131,6 @@ export async function createWallet(
       label: input.label,
       kind: "mock",
       publicAddress: null,
-      subAccountAddress: null,
       encryptedPrivateKey: null,
       initialBalanceUsd: input.initialBalanceUsd,
       currentBalanceUsd: input.initialBalanceUsd,
@@ -159,7 +141,6 @@ export async function createWallet(
     label: input.label,
     kind: "live",
     publicAddress: input.publicAddress,
-    subAccountAddress: input.subAccountAddress ?? null,
     encryptedPrivateKey: encryptPrivateKey(input.privateKey),
     initialBalanceUsd: null,
     currentBalanceUsd: null,

@@ -24,30 +24,6 @@ function isValidKind(value: unknown): value is WalletKind {
   return value === "mock" || value === "live";
 }
 
-const ADDRESS_PATTERN = /^0x[0-9a-f]{40}$/;
-
-/**
- * An omitted or blank sub-account means the key trades its own account
- * (`null`); anything else must be a 20-byte hex address, lowercased to
- * match what the engine and Hyperliquid's `/info` expect. `undefined`
- * marks an invalid value.
- */
-export function normalizeSubAccountAddress(
-  value: unknown,
-): string | null | undefined {
-  if (value === undefined || value === null) {
-    return null;
-  }
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  const trimmed = value.trim().toLowerCase();
-  if (!trimmed) {
-    return null;
-  }
-  return ADDRESS_PATTERN.test(trimmed) ? trimmed : undefined;
-}
-
 export function createWalletsRouter(
   db: Db,
   pgPool: Pool,
@@ -98,14 +74,8 @@ export function createWalletsRouter(
   });
 
   router.post("/", async (req, res) => {
-    const {
-      kind,
-      label,
-      initialBalanceUsd,
-      publicAddress,
-      privateKey,
-      subAccountAddress,
-    } = req.body ?? {};
+    const { kind, label, initialBalanceUsd, publicAddress, privateKey } =
+      req.body ?? {};
 
     if (!isValidKind(kind) || typeof label !== "string" || !label.trim()) {
       res.status(400).json({ error: "invalid request" });
@@ -144,18 +114,11 @@ export function createWalletsRouter(
         return;
       }
 
-      const normalizedSubAccount = normalizeSubAccountAddress(subAccountAddress);
-      if (normalizedSubAccount === undefined) {
-        res.status(400).json({ error: "invalid sub-account address" });
-        return;
-      }
-
       const wallet = await createWallet(pgPool, {
         kind: "live",
         label,
         publicAddress,
         privateKey,
-        subAccountAddress: normalizedSubAccount,
       });
       res.status(201).json(wallet);
     } catch (error) {

@@ -110,8 +110,6 @@ interface ClearinghouseStateResponse {
   withdrawable: string;
 }
 
-export const HYPERLIQUID_TESTNET_URL = "https://api.hyperliquid-testnet.xyz";
-
 export function createHyperliquidClient(
   baseUrl = "https://api.hyperliquid.xyz",
 ): HyperliquidClient {

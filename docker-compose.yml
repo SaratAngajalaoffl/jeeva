@@ -78,9 +78,6 @@ services:
       - OPENROUTER_API_KEY
       - OPENROUTER_BASE_URL
       - MIN_SAMPLING_FREQUENCY_SECONDS
-      # Live wallet balances are read from testnet when the engine trades
-      # there.
-      - HYPERLIQUID_TESTNET
     ports:
       - "4000:4000"
     volumes:
