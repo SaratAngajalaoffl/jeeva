@@ -224,6 +224,8 @@ export interface Wallet {
   label: string;
   kind: WalletKind;
   publicAddress: string | null;
+  /** Hyperliquid sub-account traded by a live wallet's key, if any. */
+  subAccountAddress: string | null;
   initialBalanceUsd: number | null;
   currentBalanceUsd: number | null;
   createdAt: string;
@@ -261,7 +263,13 @@ export async function fetchSelectableWallets(
 
 export type CreateWalletInput =
   | { kind: "mock"; label: string; initialBalanceUsd: number }
-  | { kind: "live"; label: string; publicAddress: string; privateKey: string };
+  | {
+      kind: "live";
+      label: string;
+      publicAddress: string;
+      privateKey: string;
+      subAccountAddress?: string;
+    };
 
 export async function createWallet(
   input: CreateWalletInput,

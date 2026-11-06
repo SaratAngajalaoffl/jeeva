@@ -7,7 +7,9 @@ use aes_gcm::{Aes256Gcm, Nonce};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use sqlx::PgPool;
 
-use crate::decision::{ExecutionAdapter, LiveExecutionAdapter, MockExecutionAdapter, PrivateKey};
+use crate::decision::{
+    AccountAddress, ExecutionAdapter, LiveExecutionAdapter, MockExecutionAdapter, PrivateKey,
+};
 use crate::mode::EngineMode;
 
 const DEFAULT_MOCK_SLIPPAGE_BPS: f64 = 5.0;
@@ -142,8 +144,8 @@ impl WalletRegistry {
     }
 
     async fn refresh(&self) {
-        let rows = match sqlx::query_as::<_, (String, String, Option<String>)>(
-            "SELECT id::text AS id, kind, encrypted_private_key FROM wallets",
+        let rows = match sqlx::query_as::<_, (String, String, Option<String>, Option<String>)>(
+            "SELECT id::text AS id, kind, encrypted_private_key, sub_account_address FROM wallets",
         )
         .fetch_all(&self.pool)
         .await
@@ -163,7 +165,7 @@ impl WalletRegistry {
         };
 
         let mut next = HashMap::new();
-        for (id, kind_str, encrypted_private_key) in rows {
+        for (id, kind_str, encrypted_private_key, sub_account_address) in rows {
             let Some(kind) = WalletKind::from_db(&kind_str) else {
                 tracing::error!(wallet_id = %id, kind = %kind_str, "unknown wallet kind; skipping");
                 continue;
@@ -194,13 +196,30 @@ impl WalletRegistry {
                             continue;
                         }
                     };
-                    Arc::new(LiveExecutionAdapter::new(
-                        base_url.clone(),
-                        key,
-                        is_mainnet,
-                        self.pool.clone(),
-                        id.clone(),
-                    ))
+                    // Never fall back to the signer's own account when a
+                    // sub-account is configured but unreadable: that would
+                    // trade the master account instead of the sub-account.
+                    let vault_address = match sub_account_address
+                        .as_deref()
+                        .map(AccountAddress::from_hex)
+                    {
+                        None => None,
+                        Some(Ok(address)) => Some(address),
+                        Some(Err(error)) => {
+                            tracing::error!(wallet_id = %id, %error, "live wallet sub-account address is invalid; skipping");
+                            continue;
+                        }
+                    };
+                    Arc::new(
+                        LiveExecutionAdapter::new(
+                            base_url.clone(),
+                            key,
+                            is_mainnet,
+                            self.pool.clone(),
+                            id.clone(),
+                        )
+                        .with_vault_address(vault_address),
+                    )
                 }
             };
 

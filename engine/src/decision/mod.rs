@@ -27,7 +27,7 @@ pub use history::{
     MarketDataHistoryReader, PostgresMarketDataHistoryReader, MAX_HISTORY_SAMPLES,
     MAX_HISTORY_WINDOW_SECONDS, MIN_HISTORY_WINDOW_SECONDS,
 };
-pub use hyperliquid_signing::{KeyError, PrivateKey};
+pub use hyperliquid_signing::{AccountAddress, KeyError, PrivateKey};
 pub use live_execution::LiveExecutionAdapter;
 pub use log::{DecisionLogEntry, DecisionLogWriter, LogError, PostgresDecisionLogWriter};
 pub use model::{

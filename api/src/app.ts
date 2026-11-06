@@ -12,6 +12,7 @@ import { createBacktestsRouter } from "./backtests/routes.js";
 import { createCachedHyperliquidClient } from "./hyperliquid/cache.js";
 import {
   createHyperliquidClient,
+  HYPERLIQUID_TESTNET_URL,
   HyperliquidRateLimitError,
   type HyperliquidClient,
 } from "./hyperliquid/client.js";
@@ -85,12 +86,22 @@ export function createApp(deps: AppDeps = {}): Express {
       createPerpsRouter(deps.db, hyperliquidClient, deps.pgPool),
     );
     app.use("/engine-mode", createEngineModeRouter(deps.db, deps.pgPool));
+    // Live wallet balances must come from the network the engine trades
+    // on: with HYPERLIQUID_TESTNET=true the engine places orders on
+    // testnet, so a mainnet balance read would report a testnet wallet
+    // as empty and never let it be attached to a session. Market data
+    // above stays on mainnet, matching the engine's own sampling.
+    const accountClient =
+      deps.hyperliquidClient ??
+      (process.env.HYPERLIQUID_TESTNET === "true"
+        ? createHyperliquidClient(HYPERLIQUID_TESTNET_URL)
+        : hyperliquidClient);
     app.use(
       "/wallets",
-      createWalletsRouter(deps.db, deps.pgPool, hyperliquidClient),
+      createWalletsRouter(deps.db, deps.pgPool, accountClient),
     );
     app.use(
-      createTradingSessionsRouter(deps.db, deps.pgPool, hyperliquidClient),
+      createTradingSessionsRouter(deps.db, deps.pgPool, accountClient),
     );
   }
 

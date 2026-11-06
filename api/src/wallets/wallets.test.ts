@@ -44,6 +44,53 @@ async function seedHold(symbol: string, reason = "drift policy halt") {
   );
 }
 
+describe("live wallet sub-accounts", () => {
+  // Creating a live wallet encrypts its key; any 32-byte test key works.
+  process.env.WALLET_ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString("base64");
+
+  const liveWallet = {
+    kind: "live",
+    label: "Sub-account",
+    publicAddress: "0x00000000000000000000000000000000000000aa",
+    privateKey:
+      "0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318",
+  };
+
+  it("stores a sub-account address, normalized to lowercase", async () => {
+    const res = await request(buildApp())
+      .post("/wallets")
+      .set("Cookie", authCookie())
+      .send({
+        ...liveWallet,
+        subAccountAddress: " 0xABCDEF0000000000000000000000000000000001 ",
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.subAccountAddress).toBe(
+      "0xabcdef0000000000000000000000000000000001",
+    );
+  });
+
+  it("treats a blank sub-account as trading the key's own account", async () => {
+    const res = await request(buildApp())
+      .post("/wallets")
+      .set("Cookie", authCookie())
+      .send({ ...liveWallet, subAccountAddress: "" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.subAccountAddress).toBeNull();
+  });
+
+  it("rejects a malformed sub-account address", async () => {
+    const res = await request(buildApp())
+      .post("/wallets")
+      .set("Cookie", authCookie())
+      .send({ ...liveWallet, subAccountAddress: "0x1234" });
+
+    expect(res.status).toBe(400);
+  });
+});
+
 describe("live execution holds", () => {
   it("rejects unauthenticated requests", async () => {
     const res = await request(buildApp()).get(`/wallets/${walletId}/holds`);
