@@ -81,6 +81,33 @@ describe("WalletPage", () => {
     expect(screen.getByText("Create wallet")).toBeInTheDocument();
   });
 
+  it("lets the operator pick a live wallet when demo mode is off", async () => {
+    fetchWalletsMock.mockResolvedValue([]);
+    fetchEngineModeMock.mockResolvedValue({ mode: "live", demoMode: false });
+
+    render(<WalletPage />);
+    await screen.findByText(/No wallets yet\./);
+    await waitFor(() => expect(fetchEngineModeMock).toHaveBeenCalled());
+    fireEvent.click(screen.getAllByText("Add wallet")[0]);
+
+    const option = screen.getByRole("option", { name: "Live" });
+    expect(option).not.toBeDisabled();
+  });
+
+  it("disables the live wallet option on a demo-mode deployment", async () => {
+    fetchWalletsMock.mockResolvedValue([]);
+    fetchEngineModeMock.mockResolvedValue({ mode: "mock", demoMode: true });
+
+    render(<WalletPage />);
+    await screen.findByText(/No wallets yet\./);
+    fireEvent.click(screen.getAllByText("Add wallet")[0]);
+
+    const option = await screen.findByRole("option", {
+      name: /Live \(disabled/,
+    });
+    expect(option).toBeDisabled();
+  });
+
   it("lists existing wallets with balance and address", async () => {
     fetchWalletsMock.mockResolvedValue([
       {
