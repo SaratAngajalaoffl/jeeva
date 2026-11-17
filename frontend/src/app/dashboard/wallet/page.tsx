@@ -527,8 +527,8 @@ export default function WalletPage() {
                 onChange={(e) => setKind(e.target.value as WalletKind)}
               >
                 <option value="mock">Mock</option>
-                <option value="live" disabled>
-                  Live (disabled — paper trading only)
+                <option value="live" disabled={demoMode}>
+                  {demoMode ? "Live (disabled — paper trading only)" : "Live"}
                 </option>
               </Select>
             </label>
